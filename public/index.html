@@ -2324,6 +2324,20 @@
         border-top: 0.5px solid var(--border);
       }
 
+      .sb-user {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 11px;
+        font-size: 13px;
+        color: var(--text-secondary);
+      }
+
+      .sb-user i {
+        font-size: 16px;
+        color: var(--accent);
+      }
+
       .sb-footer-btn {
         display: flex;
         align-items: center;
@@ -2538,6 +2552,9 @@
           <button class="sb-tab" id="sb-tab-remember" onclick="switchTab('remember')"><i class="ti ti-plus"></i><span>Remember</span></button>
           <button class="sb-tab" id="sb-tab-graph" onclick="switchTab('graph')"><i class="ti ti-affiliate"></i><span>Graph</span></button>
         </nav>
+        <div class="sb-user" id="sb-user-display">
+          <i class="ti ti-user-circle"></i><span id="sb-username-text"></span>
+        </div>
         <div class="sb-footer">
           <button class="sb-footer-btn" onclick="openMenu()"><i class="ti ti-settings"></i><span>Settings</span></button>
         </div>
@@ -3013,6 +3030,8 @@
           if (!res.ok) throw new Error(`Server error: ${res.status}`)
           WORKER_URL = url
           AUTH_TOKEN = tok
+          localStorage.setItem('sb_url', url)
+          localStorage.setItem('sb_token', tok)
           document.getElementById('auth-connect-step').style.display = 'none'
           document.getElementById('auth-user-step').style.display = ''
           document.getElementById('auth-error').textContent = ''
@@ -3043,7 +3062,7 @@
         try {
           const res = await fetch(`${WORKER_URL}/list?n=1`, {
             headers: {
-              Authorization: `Bearer ${key}`,
+              Authorization: `Bearer ${AUTH_TOKEN}`,
               'X-Second-Brain-User': username,
               'X-Second-Brain-User-Key': key
             }
@@ -3051,11 +3070,10 @@
           if (res.status === 401) throw new Error('Invalid credentials')
           if (!res.ok) throw new Error(`Server error: ${res.status}`)
           localStorage.setItem('sb_url', WORKER_URL)
-          localStorage.setItem('sb_token', key)
+          localStorage.setItem('sb_token', AUTH_TOKEN)
           localStorage.setItem('sb_username', username)
           localStorage.setItem('sb_key', key)
           localStorage.setItem('sb_auth_mode', 'user')
-          AUTH_TOKEN = key
           showApp()
         } catch (e) {
           err.textContent = e.message || 'Could not log in.'
@@ -3109,15 +3127,23 @@
         const key = document.getElementById('key-reveal-value').textContent
         const username = localStorage.getItem('sb_username')
         localStorage.setItem('sb_url', WORKER_URL)
-        localStorage.setItem('sb_token', key)
+        localStorage.setItem('sb_token', AUTH_TOKEN)
         localStorage.setItem('sb_auth_mode', 'user')
-        AUTH_TOKEN = key
         showApp()
       }
 
       function showApp() {
         document.getElementById('auth-overlay').style.display = 'none'
         document.getElementById('app').style.display = 'flex'
+        const username = localStorage.getItem('sb_username')
+        const hasKey = localStorage.getItem('sb_key')
+        const disp = document.getElementById('sb-user-display')
+        if (username && hasKey) {
+          disp.style.display = 'flex'
+          document.getElementById('sb-username-text').textContent = username
+        } else {
+          disp.style.display = 'none'
+        }
         loadRecent()
         loadTags()
         updateStatus()
@@ -3218,7 +3244,11 @@
         document.getElementById('key-reveal').style.display = 'none'
         document.getElementById('auth-url').value = window.location.origin
         document.getElementById('auth-token').value = ''
+        document.getElementById('auth-key').value = ''
+        document.getElementById('auth-create-username').value = ''
+        document.getElementById('auth-username').innerHTML = ''
         document.getElementById('auth-error').textContent = ''
+        document.getElementById('sb-user-display').style.display = 'none'
       }
 
       function switchTab(tab) {
