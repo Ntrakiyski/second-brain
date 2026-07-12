@@ -327,30 +327,6 @@
         box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
       }
 
-      #auth-overlay select {
-        width: 100%;
-        padding: 14px 16px;
-        background: var(--bg-muted);
-        border: 1.5px solid var(--border);
-        border-radius: 13px;
-        color: var(--text);
-        font-family: var(--font-sans);
-        font-size: 15px;
-        appearance: none;
-        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%23888' viewBox='0 0 24 24'%3E%3Cpath d='M7 10l5 5 5-5z'/%3E%3C/svg%3E");
-        background-repeat: no-repeat;
-        background-position: right 12px center;
-        cursor: pointer;
-        box-sizing: border-box;
-        margin-bottom: 0;
-      }
-
-      #auth-overlay select:focus {
-        border-color: var(--accent);
-        box-shadow: 0 0 0 3px var(--accent-soft);
-        outline: none;
-      }
-
       .key-reveal-card {
         width: 100%;
         background: var(--bg-muted);
@@ -444,20 +420,6 @@
 
       #auth-create-btn:active {
         transform: scale(0.985);
-      }
-
-      .auth-legacy-link {
-        display: block;
-        text-align: center;
-        color: var(--text-secondary);
-        font-size: 13px;
-        text-decoration: none;
-        margin-top: 12px;
-        transition: color 0.15s;
-      }
-
-      .auth-legacy-link:hover {
-        color: var(--text);
       }
 
       #auth-error {
@@ -2535,22 +2497,13 @@
           <button class="auth-tab" id="auth-tab-create" onclick="switchAuthTab('create')">Create Account</button>
         </div>
         <form id="auth-signin-form" class="field-group" onsubmit="connect(); return false">
-          <input type="text" name="username" value="user" autocomplete="username" style="display: none" />
           <input type="url" id="auth-url" autocomplete="off" autocapitalize="none" />
-          <select id="auth-username"></select>
-          <input type="password" id="auth-key" placeholder="API key" autocomplete="current-password" />
+          <input type="password" id="auth-token" placeholder="Deployment token" autocomplete="current-password" />
           <button id="auth-connect" type="submit">Connect</button>
-          <a href="#" class="auth-legacy-link" onclick="switchAuthTab('legacy'); return false">Use deployment token only</a>
-        </form>
-        <form id="auth-legacy-form" class="field-group" style="display:none" onsubmit="connectLegacy(); return false">
-          <input type="url" id="auth-legacy-url" autocomplete="off" autocapitalize="none" />
-          <input type="password" id="auth-token" placeholder="Bearer token" autocomplete="current-password" />
-          <button id="auth-connect-legacy" type="submit">Connect</button>
-          <a href="#" class="auth-legacy-link" onclick="switchAuthTab('signin'); return false">Back to sign in</a>
         </form>
         <form id="auth-create-form" class="field-group" style="display:none" onsubmit="createAccount(); return false">
           <input type="text" id="auth-create-username" placeholder="Choose a username" autocomplete="off" maxlength="32" />
-          <button id="auth-create-btn" type="submit">Create Account</button>
+          <button id="auth-create-btn" type="submit">Generate API Key</button>
         </form>
         <div id="key-reveal" style="display:none">
           <div class="key-reveal-card">
@@ -2997,26 +2950,21 @@
         applyTheme()
         const origin = window.location.origin
         document.getElementById('auth-url').value = origin
-        document.getElementById('auth-legacy-url').value = origin
 
         const url = localStorage.getItem('sb_url') || origin
         const tok = localStorage.getItem('sb_token')
-        const savedUser = localStorage.getItem('sb_username')
-        const savedKey = localStorage.getItem('sb_key')
-        const authMode = localStorage.getItem('sb_auth_mode')
         if (tok) {
           WORKER_URL = url
           AUTH_TOKEN = tok
           showApp()
-        } else {
-          loadUsers()
         }
       }
 
       function authHeaders(extra) {
-        const headers = Object.assign(authHeaders(), extra || {})
+        const headers = Object.assign({}, extra || {})
         const user = localStorage.getItem('sb_username')
         const key = localStorage.getItem('sb_key')
+        headers['Authorization'] = `Bearer ${AUTH_TOKEN}`
         if (user && key) {
           headers['X-Second-Brain-User'] = user
           headers['X-Second-Brain-User-Key'] = key
@@ -3024,41 +2972,12 @@
         return headers
       }
 
-      async function loadUsers() {
-        try {
-          const res = await fetch(`${WORKER_URL || window.location.origin}/api/users`, {
-            headers: { Authorization: `Bearer ${AUTH_TOKEN || ''}` }
-          })
-          if (!res.ok) return
-          const data = await res.json()
-          const sel = document.getElementById('auth-username')
-          sel.innerHTML = ''
-          if (data.users && data.users.length > 0) {
-            data.users.forEach(u => {
-              const opt = document.createElement('option')
-              opt.value = u.username
-              opt.textContent = u.username
-              sel.appendChild(opt)
-            })
-            const savedUser = localStorage.getItem('sb_username')
-            if (savedUser) sel.value = savedUser
-            switchAuthTab('signin')
-          } else {
-            switchAuthTab('create')
-          }
-        } catch (e) {
-          switchAuthTab('create')
-        }
-      }
-
       function switchAuthTab(tab) {
         document.querySelectorAll('.auth-tab').forEach(t => t.classList.remove('active'))
-        document.querySelectorAll('.auth-tab-legacy').forEach(t => t.classList.remove('active'))
         const tabBtn = document.getElementById(`auth-tab-${tab}`)
         if (tabBtn) tabBtn.classList.add('active')
         document.getElementById('auth-signin-form').style.display = tab === 'signin' ? '' : 'none'
         document.getElementById('auth-create-form').style.display = tab === 'create' ? '' : 'none'
-        document.getElementById('auth-legacy-form').style.display = tab === 'legacy' ? '' : 'none'
         document.getElementById('key-reveal').style.display = 'none'
         document.getElementById('auth-error').textContent = ''
       }
@@ -3071,11 +2990,11 @@
           err.textContent = 'Please enter a username.'
           return
         }
-        btn.textContent = 'Creating...'
+        btn.textContent = 'Generating...'
         btn.disabled = true
         err.textContent = ''
         try {
-          const res = await fetch(`${WORKER_URL || window.location.origin}/api/users`, {
+          const res = await fetch(`${window.location.origin}/api/users`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -3089,11 +3008,11 @@
           document.getElementById('key-reveal').style.display = ''
           document.getElementById('key-reveal-value').textContent = data.key
           localStorage.setItem('sb_username', data.username)
-          loadUsers()
+          localStorage.setItem('sb_key', data.key)
         } catch (e) {
           err.textContent = e.message || 'Could not create account.'
         } finally {
-          btn.textContent = 'Create Account'
+          btn.textContent = 'Generate API Key'
           btn.disabled = false
         }
       }
@@ -3107,53 +3026,22 @@
       }
 
       function dismissKeyReveal() {
-        switchAuthTab('signin')
-        loadUsers()
+        const url = window.location.origin
+        const key = document.getElementById('key-reveal-value').textContent
+        const username = localStorage.getItem('sb_username')
+        localStorage.setItem('sb_url', url)
+        localStorage.setItem('sb_token', key)
+        localStorage.setItem('sb_auth_mode', 'user')
+        WORKER_URL = url
+        AUTH_TOKEN = key
+        showApp()
       }
 
       async function connect() {
         const url = document.getElementById('auth-url').value.trim().replace(/\/$/, '')
-        const key = document.getElementById('auth-key').value.trim()
-        const username = document.getElementById('auth-username').value
-        const err = document.getElementById('auth-error')
-        const btn = document.getElementById('auth-connect')
-        if (!url || !key) {
-          err.textContent = 'Please fill in both fields.'
-          return
-        }
-        btn.textContent = 'Connecting...'
-        btn.disabled = true
-        err.textContent = ''
-        try {
-          const res = await fetch(`${url}/list?n=1`, {
-            headers: {
-              Authorization: `Bearer ${key}`,
-              'X-Second-Brain-User': username,
-              'X-Second-Brain-User-Key': key
-            }
-          })
-          if (res.status === 401) throw new Error('Invalid credentials')
-          if (!res.ok) throw new Error(`Server error: ${res.status}`)
-          localStorage.setItem('sb_url', url)
-          localStorage.setItem('sb_token', key)
-          localStorage.setItem('sb_username', username)
-          localStorage.setItem('sb_key', key)
-          localStorage.setItem('sb_auth_mode', 'user')
-          WORKER_URL = url
-          AUTH_TOKEN = key
-          showApp()
-        } catch (e) {
-          err.textContent = e.message || 'Could not connect.'
-          btn.textContent = 'Connect'
-          btn.disabled = false
-        }
-      }
-
-      async function connectLegacy() {
-        const url = document.getElementById('auth-legacy-url').value.trim().replace(/\/$/, '')
         const tok = document.getElementById('auth-token').value.trim()
         const err = document.getElementById('auth-error')
-        const btn = document.getElementById('auth-connect-legacy')
+        const btn = document.getElementById('auth-connect')
         if (!url || !tok) {
           err.textContent = 'Please fill in both fields.'
           return
@@ -3277,11 +3165,8 @@
         document.getElementById('app').style.display = 'none'
         document.getElementById('auth-overlay').style.display = 'flex'
         document.getElementById('auth-url').value = window.location.origin
-        document.getElementById('auth-legacy-url').value = window.location.origin
         document.getElementById('auth-token').value = ''
-        document.getElementById('auth-key').value = ''
         document.getElementById('auth-error').textContent = ''
-        loadUsers()
       }
 
       function switchTab(tab) {
