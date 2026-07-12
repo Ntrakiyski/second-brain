@@ -6,17 +6,20 @@ This document describes the process used to build the **Shared Memory** (v2) fea
 
 ```
 docs/
-├── shared-memory/       # <-- v2 multi-user feature (this one)
-│   ├── GOAL.md          #    What we set out to build
-│   ├── PRD.md           #    Full product spec (user stories, decisions, scope)
-│   ├── tasks/           #    14 tracer-bullet tickets, one per file
+├── shared-memory/          # <-- v2 multi-user feature (this one)
+│   ├── GOAL.md             #    What we set out to build
+│   ├── PRD.md              #    Full product spec (user stories, decisions, scope)
+│   ├── tasks/              #    14 tracer-bullet tickets, one per file
 │   │   ├── 01-auth-infrastructure.md
 │   │   ├── ...
-│   │   └── README.md    #    Ticket dependency graph + status
-│   ├── CURRENT_STATE.md #    Post-mortem snapshot of what was built
-│   └── skills-lock.json #    Skills installed at time of build
-├── CONTRIBUTION.md      # <-- this file
-└── <next-feature>/      #    Future feature folder (same structure)
+│   │   └── README.md       #    Ticket dependency graph + status
+│   ├── CONTEXT.md           #    Glossary of domain terms (from domain-modeling)
+│   ├── adr/                 #    Architectural Decision Records (if any)
+│   │   └── 0001-slug.md
+│   ├── CURRENT_STATE.md    #    Post-mortem snapshot of what was built
+│   └── skills-lock.json    #    Skills installed at time of build
+├── CONTRIBUTION.md         # <-- this file
+└── <next-feature>/          #    Future feature folder (same structure)
 ```
 
 When starting a new feature or version, create a folder under `docs/` named after it, and follow the process below.
@@ -33,9 +36,19 @@ Start with a single markdown file describing what you want to build. Keep it sho
 Extend Second Brain from single-user to multi-user...
 ```
 
+**Recommended skill:** `grill-with-docs` — a relentless interview that stress-tests your plan and simultaneously builds documentation. It combines two sub-skills:
+
+- **`grilling`** — Walks down every branch of the design tree, one question at a time. Each question waits for your answer before continuing. Resolves ambiguities, surface edge cases, and forces precision about the boundaries between concepts. The AI provides a recommended answer with each question.
+
+- **`domain-modeling`** — Produces two artifacts while the grilling runs:
+  - `CONTEXT.md` — a glossary of domain terms. Each term has a tight 1–2 sentence definition and an `_Avoid_` list of rejected synonyms. Keeps the project's ubiquitous language sharp.
+  - `docs/adr/` — Architectural Decision Records. Each ADR captures a decision that is (1) hard to reverse, (2) surprising without context, and (3) the result of a real trade-off. ADRs are numbered sequentially and can be a single paragraph.
+
+Run the `grill-with-docs` skill with your initial GOAL.md as context. The AI will grill you to tighten the goal, then write the refined GOAL.md based on what you settled on.
+
 ### 2. PRD — convert GOAL.md to PRD.md
 
-Use the **to-prod** skill (or equivalent) to convert the GOAL.md into a full Product Requirements Document. The PRD should include:
+Use the **`to-spec`** skill to convert the GOAL.md (now sharpened by grilling and grounded in a domain glossary) into a full Product Requirements Document. The PRD should include:
 
 - **User stories** — who needs what and why
 - **Implementation decisions** — architecture choices, auth flow, data model changes
@@ -43,11 +56,11 @@ Use the **to-prod** skill (or equivalent) to convert the GOAL.md into a full Pro
 - **Out-of-scope items** — explicit boundaries to prevent scope creep
 - **Migration plan** — how existing data moves to the new schema
 
-Run: interact with the AI agent with the GOAL.md as context and ask it to convert it into a detailed PRD. The AI will interview you to resolve ambiguities, then produce `PRD.md`.
+Run: provide the GOAL.md, CONTEXT.md, and any ADRs as input. The AI will synthesize the discussion into `PRD.md`.
 
 ### 3. Decompose — break PRD into tickets
 
-Use the **decompose-into-slices** skill to break the PRD into independent, vertically-sliced tickets. Each ticket should:
+Use the **`decompose-into-slices`** skill to break the PRD into independent, vertically-sliced tickets. Each ticket should:
 
 - Be independently testable (has its own acceptance criteria)
 - Have a clear "done" state
@@ -63,7 +76,7 @@ The result is a `tasks/` directory with numbered markdown files and a `README.md
 
 ### 4. Implement — TDD, one ticket at a time
 
-Work sequentially following the dependency graph. For each ticket:
+Work sequentially following the dependency graph. For each ticket, load the **`tdd`** and **`implement`** skills:
 
 1. Read the ticket file for exact changes
 2. Write failing tests first (red)
@@ -79,7 +92,7 @@ Work sequentially following the dependency graph. For each ticket:
 
 ### 5. Code Review — audit for security and correctness
 
-After all tickets are implemented and tests pass, run a code review:
+After all tickets are implemented and tests pass, run the **`review`** and **`security-review`** skills:
 
 - **Security:** STRIDE analysis (timing attacks, injection, auth bypass, info leaks)
 - **Correctness:** ownership checks on every mutation, visibility on every read
@@ -101,7 +114,7 @@ Fix critical and high-severity findings before shipping.
 4. Deploy to Cloudflare: `npm run deploy`
 5. Smoke-test in browser: create accounts, verify visibility, test forget/recall/capture
 
-### 7. Document — changelog and agents update
+### 7. Document — changelog, agents, and current state
 
 After shipping:
 
@@ -110,19 +123,52 @@ After shipping:
 - Write `CURRENT_STATE.md` in the feature folder as a post-mortem snapshot
 - Lock installed skills in `skills-lock.json`
 
+## Full Pipeline Summary
+
+```
+GOAL.md ──→ grill-with-docs ──→ GOAL.md (sharpened)  +  CONTEXT.md  +  adr/
+                                        │
+                                        ▼
+                                    to-spec
+                                        │
+                                        ▼
+                                     PRD.md
+                                        │
+                                        ▼
+                              decompose-into-slices
+                                        │
+                                        ▼
+                                  tasks/ (N tickets)
+                                        │
+                                        ▼
+                              tdd + implement (per ticket)
+                                        │
+                                        ▼
+                          review + security-review
+                                        │
+                                        ▼
+                                   ship (deploy)
+                                        │
+                                        ▼
+                        CHANGELOG + AGENTS + CURRENT_STATE
+```
+
 ## Skills Used
 
-| Skill | Purpose |
-|-------|---------|
-| `to-prod` | Convert GOAL.md → PRD.md |
-| `decompose-into-slices` | Break PRD → numbered tickets |
-| `implement` | Execute tickets with TDD |
-| `review` | Security and correctness audit |
-| `security-review` | STRIDE threat modeling |
-| `tdd` | Test-driven development workflow |
-| `write-docs` | Authoring CHANGELOG and AGENTS |
-| `cloudflare` | Cloudflare Workers, D1, Vectorize platform |
-| `workers-best-practices` | Worker-specific anti-patterns |
+| Skill | Stage | What it produces |
+|-------|-------|-----------------|
+| `grill-with-docs` | 1. Goal | Sharpened GOAL.md + CONTEXT.md + ADRs |
+| └ `grilling` | 1. Goal | Relentless one-question-at-a-time interview |
+| └ `domain-modeling` | 1. Goal | Glossary (`CONTEXT.md`) + decisions (`docs/adr/`) |
+| `to-spec` | 2. PRD | Full PRD from GOAL + CONTEXT + ADRs |
+| `decompose-into-slices` | 3. Tickets | Numbered tracer-bullet tickets with dependency graph |
+| `tdd` | 4. Implement | Red-green-refactor cycle |
+| `implement` | 4. Implement | Execute each ticket's changes |
+| `review` | 5. Review | Security and correctness audit |
+| `security-review` | 5. Review | STRIDE threat modeling |
+| `cloudflare` | All | Cloudflare Workers, D1, Vectorize platform reference |
+| `workers-best-practices` | 4–5 | Worker-specific anti-patterns |
+| `write-docs` | 7. Document | CHANGELOG, AGENTS, CONTRIBUTION authoring |
 
 ## Test Command Reference
 
