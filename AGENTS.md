@@ -1,5 +1,11 @@
 # AGENTS.md
 
+## Project: Second Brain v2 — Multi-User Shared Memory
+
+**Deployment:** [https://second-brain.nikolaytrakiyski.workers.dev](https://second-brain.nikolaytrakiyski.workers.dev/)
+
+**Docs:** `docs/shared-memory/` — PRD, GOAL, task tickets, current state
+
 ## Quick Commands
 
 ```bash
@@ -26,24 +32,51 @@ npm run typecheck        # generates worker-configuration.d.ts first, then tsc
 - `vitest.setup.ts` mocks `agents/mcp` and `@cloudflare/workers-oauth-provider` — these can't resolve in Node.
 - Tests run in `node` environment with `globals: true` (no need to import `describe`/`it`/`expect`).
 - To run a single test: `npm test -- test/unit/edges.test.ts`
+- **D1Mock** (`test/helpers/d1-mock.ts`, ~690+ lines) simulates D1 with `prepare().bind().all()/first()/run()`. Handler order matters — use `s.includes()` with guards.
+- **`req()` helper** (`test/helpers/make-request.ts`): exactly 3 args `(method, path, opts)` where opts = `{body?, token?, userCredentials?}`.
+- **User credentials in tests:** `userCredentials: { username, key }` sets `X-Second-Brain-User` / `X-Second-Brain-User-Key` headers.
+- **Legacy entries** in tests use `owner_user_id: "_system"` — these are public and visible to all users.
 
 ## Architecture
 
-**Single-file Worker.** The entire backend is `src/index.ts` (~3,500 lines). There is no router framework — URL pathname matching with if/else chains.
+**Single-file Worker.** The entire backend is `src/index.ts` (~4,200 lines). There is no router framework — URL pathname matching with if/else chains.
 
 **Two handler paths** wrapped in OAuthProvider:
-- `apiHandler` — serves `/mcp` (MCP protocol)
+- `apiHandler` — serves `/mcp` (MCP protocol), resolves per-user identity from `X-Second-Brain-User` + `X-Second-Brain-User-Key` headers
 - `defaultHandler` — all REST routes + static assets from `public/`
+
+**Multi-user auth layers:**
+1. **Deployment token** (`AUTH_TOKEN`) — Bearer header, checked first on every request
+2. **User credentials** — `X-Second-Brain-User` (username) + `X-Second-Brain-User-Key` (`sbu_xxx.yyy` format)
+3. **Visibility enforcement** — `buildVisibilityClause(userId)` adds `(owner_user_id = ? OR tags NOT LIKE '%"private"%')` to all queries
+4. **Ownership checks** — forget/link/unlink/update verify `owner_user_id` before mutating
+
+**Key functions:**
+- `buildVisibilityClause(userId)` — returns SQL fragment for per-user scoping (`src/index.ts:~1373`)
+- `resolveUser(request, env)` — validates user headers against `users` table (`src/index.ts:~656`)
+- `requireAuthAsync(request, env)` — auth gate returning `{ error, user_id, username }` (`src/index.ts:~701`)
+- `forgetEntry(id, env)` — deletes entry + cascades edges/vectors, no ownership check (caller must check)
+- `escapeLikePattern(s)` — escapes `%` and `_` for LIKE queries (`src/index.ts:~623`)
+- `compressionEligibilitySql(prefix, ownerUserId?)` — per-user compression scope (`src/index.ts:~63`)
+
+**Database tables:**
+- `entries` — `id, content, tags, source, vector_ids, created_at, recall_count, importance_score, owner_user_id, ...`
+- `edges` — `id, source_id, target_id, type, weight, provenance, metadata, created_at, updated_at`
+- `users` — `id, username, normalized_username, auth_key_hash, auth_key_prefix, status, created_at`
 
 **Integrations** (`src/integrations/`) use a provider pattern:
 - `framework.ts` — interfaces (`IntegrationProvider`, `MirrorStore`)
 - `index.ts` — registry (currently: Notion only)
 - `notion.ts` — Notion sync implementation
 
-Adding a new integration: create `src/integrations/<name>.ts`, export an `IntegrationProvider`, register it in `index.ts`.
-
 ## Key Gotchas
 
+- **Auth is two-layer.** Every request needs `Bearer <AUTH_TOKEN>` (deployment token). User-specific requests also need `X-Second-Brain-User` + `X-Second-Brain-User-Key` headers. Neither layer is optional for user-scoped operations.
+- **`AUTH_TOKEN` is the deployment token only.** User API keys (`sbu_xxx.yyy`) go in `X-Second-Brain-User-Key`, never as Bearer. Confusing these causes "Invalid credentials".
+- **`forgetEntry()` has no ownership check.** Always verify `owner_user_id` BEFORE calling it. The REST `POST /forget` and MCP `forget` handlers do this; direct calls don't.
+- **`_system` user** owns all pre-migration entries (public, visible to everyone). Their `status` is `'inactive'` so they can't authenticate.
+- **Visibility clause format:** `(owner_user_id = ? OR tags NOT LIKE '%"private"%')`. Private entries must include `"private"` in the JSON tags array.
+- **`escapeLikePattern(s)` must be used** on any user-supplied value going into a `LIKE` pattern. Missing escapes allow % and _ injection.
 - **No `node_modules` in tests.** `agents/mcp` and `@cloudflare/workers-oauth-provider` are mocked in `vitest.setup.ts`. If you add a new Cloudflare binding import, it likely needs a mock.
 - **`ctx.waitUntil()` is used heavily.** Async work (vectorization, classification, pattern derivation) runs outside the request lifecycle. Don't await these in request handlers.
 - **Tags are metadata.** `status:*` and `kind:*` tags are reserved prefixes — no schema column backs them. Adding new metadata is a tag convention, not a migration.
@@ -51,7 +84,6 @@ Adding a new integration: create `src/integrations/<name>.ts`, export an `Integr
 - **D1 bound params capped at 100.** All batch queries chunk IDs with `D1_MAX_BOUND_PARAMS`.
 - **Vectorize rejects >20 IDs per `getByIds` call.** Tag-scoped recall batches with `VECTORIZE_GET_BY_IDS_BATCH`.
 - **Vectorize topK capped at 50** when `returnMetadata="all"`. The recall path uses a multiplier then widens conditionally.
-- **`AUTH_TOKEN`** is the only secret. It's used for both Bearer auth and the OAuth login page form.
 - **No `.env` file.** Cloudflare Workers use `.dev.vars` for local secrets (copy `.dev.vars.example`).
 
 ## Cloudflare Resources
@@ -65,7 +97,11 @@ Configured in `wrangler.jsonc`:
 
 ## Database
 
-`db/schema.sql` defines two tables: `entries` and `edges`. The Worker also runs `CREATE TABLE IF NOT EXISTS` and `ALTER TABLE ADD COLUMN` on startup in `initializeDatabase()` — schema changes can go in either place, but the startup code is what actually matters for existing deployments.
+`db/schema.sql` defines tables: `entries`, `edges`, `users`. The Worker also runs `CREATE TABLE IF NOT EXISTS` and `ALTER TABLE ADD COLUMN` on startup in `initializeDatabase()` — schema changes can go in either place, but the startup code is what actually matters for existing deployments.
+
+- `users` table: `id, username, normalized_username, auth_key_hash, auth_key_prefix, status, created_at`
+- User auth keys are never stored — only the HMAC-SHA-256 hash (`auth_key_hash`) of the secret portion
+- The `owner_user_id` column on entries was added via migration; startup backfills unowned entries to `_system`
 
 ## Coverage
 
