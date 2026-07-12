@@ -297,6 +297,169 @@
         transform: scale(0.985);
       }
 
+      .auth-tabs {
+        display: flex;
+        gap: 4px;
+        background: var(--bg-muted);
+        border-radius: 10px;
+        padding: 4px;
+        margin-bottom: 20px;
+        width: 100%;
+      }
+
+      .auth-tab {
+        flex: 1;
+        padding: 10px;
+        border: none;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--text-secondary);
+        font-family: var(--font-sans);
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.15s;
+      }
+
+      .auth-tab.active {
+        background: var(--bg);
+        color: var(--text);
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+      }
+
+      #auth-overlay select {
+        width: 100%;
+        padding: 14px 16px;
+        background: var(--bg-muted);
+        border: 1.5px solid var(--border);
+        border-radius: 13px;
+        color: var(--text);
+        font-family: var(--font-sans);
+        font-size: 15px;
+        appearance: none;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%23888' viewBox='0 0 24 24'%3E%3Cpath d='M7 10l5 5 5-5z'/%3E%3C/svg%3E");
+        background-repeat: no-repeat;
+        background-position: right 12px center;
+        cursor: pointer;
+        box-sizing: border-box;
+        margin-bottom: 0;
+      }
+
+      #auth-overlay select:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px var(--accent-soft);
+        outline: none;
+      }
+
+      .key-reveal-card {
+        width: 100%;
+        background: var(--bg-muted);
+        border: 2px solid var(--accent);
+        border-radius: 13px;
+        padding: 20px;
+        text-align: center;
+      }
+
+      .key-reveal-label {
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--accent);
+        margin-bottom: 12px;
+      }
+
+      .key-reveal-key {
+        font-family: var(--font-mono);
+        font-size: 13px;
+        color: var(--text);
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 12px;
+        word-break: break-all;
+        margin-bottom: 12px;
+      }
+
+      .key-reveal-copy {
+        width: 100%;
+        padding: 10px;
+        background: var(--accent);
+        color: var(--on-accent);
+        border: none;
+        border-radius: 8px;
+        font-family: var(--font-sans);
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        margin-bottom: 12px;
+        transition: background 0.15s;
+      }
+
+      .key-reveal-copy:hover {
+        background: var(--accent-press);
+      }
+
+      .key-reveal-warning {
+        font-size: 12px;
+        color: var(--text-secondary);
+        margin-bottom: 12px;
+      }
+
+      .key-reveal-done {
+        width: 100%;
+        padding: 10px;
+        background: transparent;
+        color: var(--text-secondary);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        font-family: var(--font-sans);
+        font-size: 13px;
+        cursor: pointer;
+        transition: all 0.15s;
+      }
+
+      .key-reveal-done:hover {
+        background: var(--bg-muted);
+        color: var(--text);
+      }
+
+      #auth-create-btn {
+        width: 100%;
+        padding: 15px;
+        background: var(--accent);
+        color: var(--on-accent);
+        border: none;
+        border-radius: 13px;
+        font-family: var(--font-sans);
+        font-size: 15px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 0.18s, transform 0.12s var(--ease);
+      }
+
+      #auth-create-btn:hover {
+        background: var(--accent-press);
+      }
+
+      #auth-create-btn:active {
+        transform: scale(0.985);
+      }
+
+      .auth-legacy-link {
+        display: block;
+        text-align: center;
+        color: var(--text-secondary);
+        font-size: 13px;
+        text-decoration: none;
+        margin-top: 12px;
+        transition: color 0.15s;
+      }
+
+      .auth-legacy-link:hover {
+        color: var(--text);
+      }
+
       #auth-error {
         font-size: 13px;
         color: var(--danger);
@@ -1187,6 +1350,28 @@
         padding: 4px 6px;
         font-size: 10.5px;
         color: var(--text-tertiary);
+      }
+
+      /* Owner badge + privacy icon in recent cards */
+      .card-meta-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 4px;
+      }
+      .owner-badge {
+        font-size: 10.5px;
+        color: var(--text-tertiary);
+        font-family: var(--font-sans);
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+      }
+      .owner-badge i { font-size: 12px; }
+      .privacy-icon {
+        font-size: 12px;
+        color: var(--text-tertiary);
+        flex-shrink: 0;
       }
 
       #recent-list .card-action-btn:hover {
@@ -2345,19 +2530,37 @@
           <i class="ti ti-brain"></i>
         </div>
         <h1>Second Brain</h1>
-        <p>Enter your Bearer token to connect to your personal memory layer.</p>
-        <form
-          class="field-group"
-          onsubmit="
-            connect()
-            return false
-          "
-        >
+        <div class="auth-tabs">
+          <button class="auth-tab active" id="auth-tab-signin" onclick="switchAuthTab('signin')">Sign In</button>
+          <button class="auth-tab" id="auth-tab-create" onclick="switchAuthTab('create')">Create Account</button>
+        </div>
+        <form id="auth-signin-form" class="field-group" onsubmit="connect(); return false">
           <input type="text" name="username" value="user" autocomplete="username" style="display: none" />
           <input type="url" id="auth-url" autocomplete="off" autocapitalize="none" />
-          <input type="password" id="auth-token" placeholder="Bearer token" autocomplete="current-password" />
+          <select id="auth-username"></select>
+          <input type="password" id="auth-key" placeholder="API key" autocomplete="current-password" />
           <button id="auth-connect" type="submit">Connect</button>
+          <a href="#" class="auth-legacy-link" onclick="switchAuthTab('legacy'); return false">Use deployment token only</a>
         </form>
+        <form id="auth-legacy-form" class="field-group" style="display:none" onsubmit="connectLegacy(); return false">
+          <input type="url" id="auth-legacy-url" autocomplete="off" autocapitalize="none" />
+          <input type="password" id="auth-token" placeholder="Bearer token" autocomplete="current-password" />
+          <button id="auth-connect-legacy" type="submit">Connect</button>
+          <a href="#" class="auth-legacy-link" onclick="switchAuthTab('signin'); return false">Back to sign in</a>
+        </form>
+        <form id="auth-create-form" class="field-group" style="display:none" onsubmit="createAccount(); return false">
+          <input type="text" id="auth-create-username" placeholder="Choose a username" autocomplete="off" maxlength="32" />
+          <button id="auth-create-btn" type="submit">Create Account</button>
+        </form>
+        <div id="key-reveal" style="display:none">
+          <div class="key-reveal-card">
+            <div class="key-reveal-label">Your API Key</div>
+            <div class="key-reveal-key" id="key-reveal-value"></div>
+            <button class="key-reveal-copy" onclick="copyKey()">Copy</button>
+            <div class="key-reveal-warning">Save this key now. It will not be shown again.</div>
+            <button class="key-reveal-done" onclick="dismissKeyReveal()">I've saved it</button>
+          </div>
+        </div>
         <div id="auth-error"></div>
       </div>
     </div>
@@ -2448,6 +2651,14 @@
                 <i class="ti ti-tag" style="color: var(--text-tertiary); font-size: 13px; flex-shrink: 0"></i>
                 <select class="filter-field" id="tag-filter-recent" onchange="onTagChange(this.value)">
                   <option value="">All tags</option>
+                </select>
+                <select class="filter-field" id="user-filter-recent" onchange="onUserFilterChange(this.value)" style="min-width: 0">
+                  <option value="">All users</option>
+                </select>
+                <select class="filter-field" id="vis-filter-recent" onchange="onVisFilterChange(this.value)" style="min-width: 0">
+                  <option value="">All entries</option>
+                  <option value="public">Public only</option>
+                  <option value="private">My private</option>
                 </select>
                 <select class="filter-field" id="time-filter-recent" onchange="onTimeRangeChange(this.value)" style="min-width: 0">
                   <option value="">All time</option>
@@ -2776,30 +2987,173 @@
         pendingForgetCard = null
       let currentTab = 'recall',
         selectedTag = '',
-        selectedTimeRange = ''
+        selectedTimeRange = '',
+        selectedUser = '',
+        selectedVisibility = ''
       let currentCount = 0
       let vectorizeGraceMs = 300000
 
       function init() {
         applyTheme()
-        // Auto-populate URL from the current page origin (UI is hosted on the same Worker)
         const origin = window.location.origin
         document.getElementById('auth-url').value = origin
+        document.getElementById('auth-legacy-url').value = origin
 
         const url = localStorage.getItem('sb_url') || origin
         const tok = localStorage.getItem('sb_token')
+        const savedUser = localStorage.getItem('sb_username')
+        const savedKey = localStorage.getItem('sb_key')
+        const authMode = localStorage.getItem('sb_auth_mode')
         if (tok) {
           WORKER_URL = url
           AUTH_TOKEN = tok
           showApp()
+        } else {
+          loadUsers()
         }
+      }
+
+      function authHeaders(extra) {
+        const headers = Object.assign(authHeaders(), extra || {})
+        const user = localStorage.getItem('sb_username')
+        const key = localStorage.getItem('sb_key')
+        if (user && key) {
+          headers['X-Second-Brain-User'] = user
+          headers['X-Second-Brain-User-Key'] = key
+        }
+        return headers
+      }
+
+      async function loadUsers() {
+        try {
+          const res = await fetch(`${WORKER_URL || window.location.origin}/api/users`, {
+            headers: { Authorization: `Bearer ${AUTH_TOKEN || ''}` }
+          })
+          if (!res.ok) return
+          const data = await res.json()
+          const sel = document.getElementById('auth-username')
+          sel.innerHTML = ''
+          if (data.users && data.users.length > 0) {
+            data.users.forEach(u => {
+              const opt = document.createElement('option')
+              opt.value = u.username
+              opt.textContent = u.username
+              sel.appendChild(opt)
+            })
+            const savedUser = localStorage.getItem('sb_username')
+            if (savedUser) sel.value = savedUser
+            switchAuthTab('signin')
+          } else {
+            switchAuthTab('create')
+          }
+        } catch (e) {
+          switchAuthTab('create')
+        }
+      }
+
+      function switchAuthTab(tab) {
+        document.querySelectorAll('.auth-tab').forEach(t => t.classList.remove('active'))
+        document.querySelectorAll('.auth-tab-legacy').forEach(t => t.classList.remove('active'))
+        const tabBtn = document.getElementById(`auth-tab-${tab}`)
+        if (tabBtn) tabBtn.classList.add('active')
+        document.getElementById('auth-signin-form').style.display = tab === 'signin' ? '' : 'none'
+        document.getElementById('auth-create-form').style.display = tab === 'create' ? '' : 'none'
+        document.getElementById('auth-legacy-form').style.display = tab === 'legacy' ? '' : 'none'
+        document.getElementById('key-reveal').style.display = 'none'
+        document.getElementById('auth-error').textContent = ''
+      }
+
+      async function createAccount() {
+        const username = document.getElementById('auth-create-username').value.trim()
+        const err = document.getElementById('auth-error')
+        const btn = document.getElementById('auth-create-btn')
+        if (!username) {
+          err.textContent = 'Please enter a username.'
+          return
+        }
+        btn.textContent = 'Creating...'
+        btn.disabled = true
+        err.textContent = ''
+        try {
+          const res = await fetch(`${WORKER_URL || window.location.origin}/api/users`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${AUTH_TOKEN || ''}`
+            },
+            body: JSON.stringify({ username })
+          })
+          const data = await res.json()
+          if (!res.ok) throw new Error(data.error || 'Failed to create account')
+          document.getElementById('auth-create-form').style.display = 'none'
+          document.getElementById('key-reveal').style.display = ''
+          document.getElementById('key-reveal-value').textContent = data.key
+          localStorage.setItem('sb_username', data.username)
+          loadUsers()
+        } catch (e) {
+          err.textContent = e.message || 'Could not create account.'
+        } finally {
+          btn.textContent = 'Create Account'
+          btn.disabled = false
+        }
+      }
+
+      function copyKey() {
+        const key = document.getElementById('key-reveal-value').textContent
+        navigator.clipboard.writeText(key)
+        const btn = document.querySelector('.key-reveal-copy')
+        btn.textContent = 'Copied!'
+        setTimeout(() => { btn.textContent = 'Copy' }, 2000)
+      }
+
+      function dismissKeyReveal() {
+        switchAuthTab('signin')
+        loadUsers()
       }
 
       async function connect() {
         const url = document.getElementById('auth-url').value.trim().replace(/\/$/, '')
-        const tok = document.getElementById('auth-token').value.trim()
+        const key = document.getElementById('auth-key').value.trim()
+        const username = document.getElementById('auth-username').value
         const err = document.getElementById('auth-error')
         const btn = document.getElementById('auth-connect')
+        if (!url || !key) {
+          err.textContent = 'Please fill in both fields.'
+          return
+        }
+        btn.textContent = 'Connecting...'
+        btn.disabled = true
+        err.textContent = ''
+        try {
+          const res = await fetch(`${url}/list?n=1`, {
+            headers: {
+              Authorization: `Bearer ${key}`,
+              'X-Second-Brain-User': username,
+              'X-Second-Brain-User-Key': key
+            }
+          })
+          if (res.status === 401) throw new Error('Invalid credentials')
+          if (!res.ok) throw new Error(`Server error: ${res.status}`)
+          localStorage.setItem('sb_url', url)
+          localStorage.setItem('sb_token', key)
+          localStorage.setItem('sb_username', username)
+          localStorage.setItem('sb_key', key)
+          localStorage.setItem('sb_auth_mode', 'user')
+          WORKER_URL = url
+          AUTH_TOKEN = key
+          showApp()
+        } catch (e) {
+          err.textContent = e.message || 'Could not connect.'
+          btn.textContent = 'Connect'
+          btn.disabled = false
+        }
+      }
+
+      async function connectLegacy() {
+        const url = document.getElementById('auth-legacy-url').value.trim().replace(/\/$/, '')
+        const tok = document.getElementById('auth-token').value.trim()
+        const err = document.getElementById('auth-error')
+        const btn = document.getElementById('auth-connect-legacy')
         if (!url || !tok) {
           err.textContent = 'Please fill in both fields.'
           return
@@ -2813,6 +3167,7 @@
           if (!res.ok) throw new Error(`Server error: ${res.status}`)
           localStorage.setItem('sb_url', url)
           localStorage.setItem('sb_token', tok)
+          localStorage.setItem('sb_auth_mode', 'legacy')
           WORKER_URL = url
           AUTH_TOKEN = tok
           showApp()
@@ -2834,7 +3189,7 @@
 
       async function loadTags() {
         try {
-          const res = await fetch(`${WORKER_URL}/tags`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
+          const res = await fetch(`${WORKER_URL}/tags`, { headers: authHeaders() })
           const tags = await res.json()
           ;['tag-filter-recent', 'tag-filter-recall'].forEach((id) => {
             const sel = document.getElementById(id)
@@ -2863,6 +3218,16 @@
       function onTimeRangeChange(val) {
         selectedTimeRange = val
         applyRecentFilters()
+      }
+
+      function onUserFilterChange(val) {
+        selectedUser = val
+        loadRecent()
+      }
+
+      function onVisFilterChange(val) {
+        selectedVisibility = val
+        loadRecent()
       }
 
       function applyRecentFilters() {
@@ -2904,13 +3269,19 @@
         closeMenu()
         localStorage.removeItem('sb_url')
         localStorage.removeItem('sb_token')
+        localStorage.removeItem('sb_username')
+        localStorage.removeItem('sb_key')
+        localStorage.removeItem('sb_auth_mode')
         WORKER_URL = ''
         AUTH_TOKEN = ''
         document.getElementById('app').style.display = 'none'
         document.getElementById('auth-overlay').style.display = 'flex'
-        document.getElementById('auth-url').value = ''
+        document.getElementById('auth-url').value = window.location.origin
+        document.getElementById('auth-legacy-url').value = window.location.origin
         document.getElementById('auth-token').value = ''
+        document.getElementById('auth-key').value = ''
         document.getElementById('auth-error').textContent = ''
+        loadUsers()
       }
 
       function switchTab(tab) {
@@ -2927,7 +3298,7 @@
 
       async function updateStatus() {
         try {
-          const res = await fetch(`${WORKER_URL}/count`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
+          const res = await fetch(`${WORKER_URL}/count`, { headers: authHeaders() })
           const data = await res.json()
           currentCount = data.count ?? 0
           const text = currentCount === 0 ? 'always remembers' : `${currentCount} memor${currentCount === 1 ? 'y' : 'ies'} stored`
@@ -2939,7 +3310,7 @@
 
       async function checkVectorize() {
         try {
-          const res = await fetch(`${WORKER_URL}/health`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
+          const res = await fetch(`${WORKER_URL}/health`, { headers: authHeaders() })
           const data = await res.json()
           renderVectorizeBanner(vectorizeHealthBanner(data))
         } catch {}
@@ -2954,7 +3325,7 @@
       async function apiMcp(toolName, args) {
         const res = await fetch(`${WORKER_URL}/mcp`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', Authorization: `Bearer ${AUTH_TOKEN}` },
+          headers: authHeaders({ 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' }),
           body: JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method: 'tools/call', params: { name: toolName, arguments: args } }),
         })
         const text = await res.text()
@@ -2968,14 +3339,15 @@
       async function apiCapture(content, tags, source) {
         const res = await fetch(`${WORKER_URL}/capture`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+          headers: authHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({ content, tags, source: source || 'web-ui' }),
         })
         return res.json()
       }
 
-      async function apiList(n = 50) {
-        const res = await fetch(`${WORKER_URL}/list?n=${n}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
+      async function apiList(n = 50, params = {}) {
+        const qs = new URLSearchParams({ n: String(n), ...params })
+        const res = await fetch(`${WORKER_URL}/list?${qs}`, { headers: authHeaders() })
         return res.json()
       }
 
@@ -3009,7 +3381,7 @@
           // always outrank expanded ones (worker applies a graph-distance penalty)
           const params = new URLSearchParams({ query, topK: '5', hops: '1' })
           if (selectedTag) params.set('tag', selectedTag)
-          const recallRes = await fetch(`${WORKER_URL}/recall?${params}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
+          const recallRes = await fetch(`${WORKER_URL}/recall?${params}`, { headers: authHeaders() })
           const data = await recallRes.json()
           // Server/auth errors must not render as "no results" — let the catch handle them
           if (!recallRes.ok || !data.ok) throw new Error(data.error || 'recall failed')
@@ -3042,7 +3414,7 @@
                 .join('\n\n')
             const res = await fetch(`${WORKER_URL}/chat`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+              headers: authHeaders({ 'Content-Type': 'application/json' }),
               body: JSON.stringify({ query, memories }),
             })
 
@@ -3127,7 +3499,10 @@
         btn.classList.add('spinning')
         list.innerHTML = `<div class="empty-state"><i class="ti ti-clock"></i><span>Loading...</span></div>`
         try {
-          allEntries = await apiList(50)
+          const params = {}
+          if (selectedUser) params.user = selectedUser
+          if (selectedVisibility) params.visibility = selectedVisibility
+          allEntries = await apiList(50, params)
           renderRecent(allEntries)
           updateStatus()
           loadTags()
@@ -3159,6 +3534,24 @@
         if (!entries.length) {
           list.innerHTML = `<div class="empty-state"><i class="ti ti-brain"></i><span>No memories yet.<br>Use Remember to add some.</span></div>`
           return
+        }
+        // Populate user filter from entries
+        const userSel = document.getElementById('user-filter-recent')
+        if (userSel) {
+          const usernames = [...new Set(entries.map(e => e.owner_username).filter(Boolean))]
+          if (usernames.length > 1) {
+            const prev = userSel.value
+            userSel.innerHTML = '<option value="">All users</option>'
+            usernames.forEach(u => {
+              const opt = document.createElement('option')
+              opt.value = u
+              opt.textContent = u
+              userSel.appendChild(opt)
+            })
+            userSel.value = prev
+          } else {
+            userSel.innerHTML = '<option value="">All users</option>'
+          }
         }
         const groups = {},
           now = new Date()
@@ -3225,10 +3618,15 @@
         const card = document.createElement('div')
         card.className = 'memory-card' + (isSynthesized ? ' card--synthesized' : '') + (isRolledUp ? ' card--rolled-up' : '')
         card.dataset.id = entry.id
+
+        const privacyIcon = entry.is_private ? '<i class="ti ti-lock privacy-icon" title="Private"></i>' : ''
+        const ownerBadge = entry.owner_username ? `<span class="owner-badge"><i class="ti ti-user"></i>${escHtml(entry.owner_username)}</span>` : ''
+
         card.innerHTML = `
 <div class="card-content" style="cursor: pointer;">${escHtml(entry.content)}</div>
 <div class="card-footer">
   <div class="card-tags">${tags.map((t) => `<span class="tag-chip${t === 'synthesized' ? ' tag-chip--synthesized' : ''}">${escHtml(t)}</span>`).join('')}${vecChip}</div>
+  <div class="card-meta-row">${privacyIcon}${ownerBadge}</div>
   <div class="card-actions">
     <button class="card-action-btn" onclick="openAppend('${escAttr(entry.id)}', '${escAttr(entry.content.slice(0, 80))}')"><i class="ti ti-writing"></i> Append</button>
     <button class="card-action-btn edit-btn"><i class="ti ti-pencil"></i> Edit</button>
@@ -3352,7 +3750,7 @@
         try {
           const res = await fetch(`${WORKER_URL}/update`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+            headers: authHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({ id: pendingEditId, content: newContent }),
           })
           if (!res.ok) throw new Error(`Server error: ${res.status}`)
@@ -3429,7 +3827,7 @@
 
       async function loadMenuStats() {
         try {
-          const res = await fetch(`${WORKER_URL}/stats`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
+          const res = await fetch(`${WORKER_URL}/stats`, { headers: authHeaders() })
           const data = await res.json()
           document.getElementById('stats-count').textContent = (data.count ?? 0).toLocaleString()
           document.getElementById('stats-importance').textContent = data.avg_importance != null ? data.avg_importance.toFixed(1) + ' / 5' : '—'
@@ -3451,7 +3849,7 @@
       async function loadPatterns() {
         const el = document.getElementById('patterns-section')
         try {
-          const res = await fetch(`${WORKER_URL}/list?n=20&tag=auto-pattern`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
+          const res = await fetch(`${WORKER_URL}/list?n=20&tag=auto-pattern`, { headers: authHeaders() })
           const rows = await res.json()
           const patterns = (Array.isArray(rows) ? rows : []).filter((e) => {
             let tags = []
@@ -3493,7 +3891,7 @@
         try {
           const res = await fetch(`${WORKER_URL}/patterns/resolve`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+            headers: authHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({ id, action }),
           })
           const data = await res.json()
@@ -3553,7 +3951,7 @@
         const row = document.getElementById('digest-row-' + tag)
         try {
           const res = await fetch(`${WORKER_URL}/digest?tag=${encodeURIComponent(tag)}`, {
-            headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
+            headers: authHeaders(),
           })
           const data = await res.json()
           if (data.synthesis) {
@@ -3609,7 +4007,7 @@
           while (remaining > 0) {
             const res = await fetch(`${WORKER_URL}/vectorize-pending`, {
               method: 'POST',
-              headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
+              headers: authHeaders(),
             })
             if (!res.ok) throw new Error(`Server error: ${res.status}`)
             const data = await res.json()
@@ -3640,7 +4038,7 @@
       async function loadIntegrations() {
         const el = document.getElementById('integration-notion')
         try {
-          const res = await fetch(`${WORKER_URL}/integrations`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
+          const res = await fetch(`${WORKER_URL}/integrations`, { headers: authHeaders() })
           const data = await res.json()
           notionInfo = (data.integrations || []).find((i) => i.provider === 'notion') || null
           renderNotionCard()
@@ -3698,7 +4096,7 @@
         try {
           const res = await fetch(`${WORKER_URL}/integrations/notion/connect`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+            headers: authHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({ token }),
           })
           const data = await res.json()
@@ -3726,7 +4124,7 @@
             guard++
             const res = await fetch(`${WORKER_URL}/integrations/notion/sync`, {
               method: 'POST',
-              headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
+              headers: authHeaders(),
             })
             const data = await res.json()
             if (!res.ok || !data.ok) throw new Error(data.error || 'Sync failed')
@@ -3766,7 +4164,7 @@
         try {
           const res = await fetch(`${WORKER_URL}/integrations/notion/disconnect`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+            headers: authHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({ purge }),
           })
           const data = await res.json()
@@ -3806,7 +4204,7 @@
           while (remaining > 0) {
             const res = await fetch(`${WORKER_URL}/classify-pending`, {
               method: 'POST',
-              headers: { Authorization: `Bearer ${AUTH_TOKEN}` }
+              headers: authHeaders()
             })
             if (!res.ok) throw new Error(`Server error: ${res.status}`)
             const data = await res.json()
@@ -3837,7 +4235,7 @@
         try {
           // /export returns everything — entries AND edges — in one shot; /list caps
           // at 100 rows, which used to silently truncate bigger brains
-          const res = await fetch(`${WORKER_URL}/export`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
+          const res = await fetch(`${WORKER_URL}/export`, { headers: authHeaders() })
           if (!res.ok) throw new Error(`Server error: ${res.status}`)
           const data = await res.json()
           const entries = data.entries || []
@@ -3946,7 +4344,7 @@
       async function loadRelated(id, el) {
         try {
           const res = await fetch(`${WORKER_URL}/connections?id=${encodeURIComponent(id)}`, {
-            headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
+            headers: authHeaders(),
           })
           const data = await res.json()
           if (!data.ok || !data.connections || !data.connections.length) {
@@ -3974,7 +4372,7 @@
               try {
                 await fetch(`${WORKER_URL}/unlink`, {
                   method: 'POST',
-                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+                  headers: authHeaders({ 'Content-Type': 'application/json' }),
                   body: JSON.stringify({ source_id: id, target_id: row.dataset.id, type: row.dataset.type }),
                 })
               } catch {}
@@ -3992,7 +4390,7 @@
       // (offline etc.) so the graph never dead-ends.
       async function openNodeView(node) {
         try {
-          const res = await fetch(`${WORKER_URL}/entry?id=${encodeURIComponent(node.id)}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
+          const res = await fetch(`${WORKER_URL}/entry?id=${encodeURIComponent(node.id)}`, { headers: authHeaders() })
           const data = await res.json()
           if (data.ok && data.entry) {
             openView({ id: data.entry.id, content: data.entry.content, tags: data.entry.tags }, null)
@@ -4009,7 +4407,7 @@
         const emptyEl = document.getElementById('graph-empty')
         if (!canvas) return
         try {
-          const res = await fetch(`${WORKER_URL}/graph`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } })
+          const res = await fetch(`${WORKER_URL}/graph`, { headers: authHeaders() })
           const data = await res.json()
           if (!data.ok || !data.nodes || !data.nodes.length) {
             graphState = null

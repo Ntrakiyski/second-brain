@@ -138,4 +138,81 @@ describe("GET /list", () => {
     expect(v1.vector_ids).toBe('["v1"]');
     expect(v2.vector_ids).toBe("[]");
   });
+
+  it("includes owner_username and is_private in response", async () => {
+    db.users.push({ id: "u1", username: "alice", normalized_username: "alice", auth_key_hash: "", auth_key_prefix: "", status: "active", created_at: 1000 });
+    db.entries.push(
+      { id: "pub", content: "Public note", tags: "[]", source: "api", created_at: 1000, vector_ids: "[]", owner_user_id: "u1" },
+      { id: "pub2", content: "Public note 2", tags: "[]", source: "api", created_at: 2000, vector_ids: "[]", owner_user_id: "u1" },
+    );
+
+    const res = await worker.fetch(req("GET", "/list"), env, ctx);
+    const data = await res.json() as any[];
+    const pub = data.find((e: any) => e.id === "pub");
+    expect(pub).toBeDefined();
+    expect(pub.owner_username).toBe("alice");
+    expect(pub.is_private).toBe(false);
+  });
+
+  it("filters by ?user=username", async () => {
+    db.users.push(
+      { id: "u1", username: "alice", normalized_username: "alice", auth_key_hash: "", auth_key_prefix: "", status: "active", created_at: 1000 },
+      { id: "u2", username: "bob", normalized_username: "bob", auth_key_hash: "", auth_key_prefix: "", status: "active", created_at: 1000 },
+    );
+    db.entries.push(
+      { id: "a1", content: "Alice note", tags: "[]", source: "api", created_at: 1000, vector_ids: "[]", owner_user_id: "u1" },
+      { id: "b1", content: "Bob note", tags: "[]", source: "api", created_at: 2000, vector_ids: "[]", owner_user_id: "u2" },
+    );
+
+    const res = await worker.fetch(req("GET", "/list?user=alice"), env, ctx);
+    const data = await res.json() as any[];
+    expect(data).toHaveLength(1);
+    expect(data[0].id).toBe("a1");
+  });
+
+  it("filters by ?visibility=public", async () => {
+    db.users.push({ id: "u1", username: "alice", normalized_username: "alice", auth_key_hash: "", auth_key_prefix: "", status: "active", created_at: 1000 });
+    db.entries.push(
+      { id: "pub", content: "Public note", tags: "[]", source: "api", created_at: 1000, vector_ids: "[]", owner_user_id: "u1" },
+      { id: "priv", content: "Private note", tags: '["private"]', source: "api", created_at: 2000, vector_ids: "[]", owner_user_id: "u1" },
+    );
+
+    const res = await worker.fetch(req("GET", "/list?visibility=public"), env, ctx);
+    const data = await res.json() as any[];
+    expect(data).toHaveLength(1);
+    expect(data[0].id).toBe("pub");
+  });
+
+  it("filters by ?visibility=private (own private only)", async () => {
+    db.users.push(
+      { id: "u1", username: "alice", normalized_username: "alice", auth_key_hash: "", auth_key_prefix: "", status: "active", created_at: 1000 },
+      { id: "u2", username: "bob", normalized_username: "bob", auth_key_hash: "", auth_key_prefix: "", status: "active", created_at: 1000 },
+    );
+    db.entries.push(
+      { id: "a-priv", content: "Alice private", tags: '["private"]', source: "api", created_at: 1000, vector_ids: "[]", owner_user_id: "u1" },
+      { id: "b-priv", content: "Bob private", tags: '["private"]', source: "api", created_at: 2000, vector_ids: "[]", owner_user_id: "u2" },
+    );
+
+    // System user (default token) has no private entries, so visibility=private returns empty
+    const res = await worker.fetch(req("GET", "/list?visibility=private"), env, ctx);
+    const data = await res.json() as any[];
+    expect(data).toHaveLength(0);
+  });
+
+  it("combines ?user= and ?visibility=public", async () => {
+    db.users.push(
+      { id: "u1", username: "alice", normalized_username: "alice", auth_key_hash: "", auth_key_prefix: "", status: "active", created_at: 1000 },
+      { id: "u2", username: "bob", normalized_username: "bob", auth_key_hash: "", auth_key_prefix: "", status: "active", created_at: 1000 },
+    );
+    db.entries.push(
+      { id: "a-pub", content: "Alice public", tags: "[]", source: "api", created_at: 1000, vector_ids: "[]", owner_user_id: "u1" },
+      { id: "a-priv", content: "Alice private", tags: '["private"]', source: "api", created_at: 2000, vector_ids: "[]", owner_user_id: "u1" },
+      { id: "b-pub", content: "Bob public", tags: "[]", source: "api", created_at: 3000, vector_ids: "[]", owner_user_id: "u2" },
+    );
+
+    const res = await worker.fetch(req("GET", "/list?user=alice&visibility=public"), env, ctx);
+    const data = await res.json() as any[];
+    expect(data).toHaveLength(1);
+    expect(data[0].id).toBe("a-pub");
+  });
 });

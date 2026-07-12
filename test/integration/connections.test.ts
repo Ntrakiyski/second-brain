@@ -7,8 +7,8 @@ import { D1Mock } from "../helpers/d1-mock";
 
 const ctx = { waitUntil: (_: Promise<any>) => {} } as any;
 
-function seedEntry(db: D1Mock, id: string, content: string, tags: string[] = []) {
-  db.entries.push({ id, content, tags: JSON.stringify(tags), source: "api", created_at: 1000, vector_ids: "[]" });
+function seedEntry(db: D1Mock, id: string, content: string, tags: string[] = [], owner_user_id = "") {
+  db.entries.push({ id, content, tags: JSON.stringify(tags), source: "api", created_at: 1000, vector_ids: "[]", owner_user_id });
 }
 
 function pushEdge(db: D1Mock, source_id: string, target_id: string, type: string, weight = 0.5) {
@@ -67,5 +67,30 @@ describe("GET /connections", () => {
     const data = await res.json() as any;
     expect(data.ok).toBe(true);
     expect(data.connections).toEqual([]);
+  });
+
+  it("excludes other users' private entries from connections", async () => {
+    seedEntry(db, "a", "My entry", [], "u1");
+    seedEntry(db, "b", "Other private", ["private"], "u2");
+    seedEntry(db, "c", "Other public", [], "u2");
+    pushEdge(db, "a", "b", "relates_to", 0.7);
+    pushEdge(db, "a", "c", "relates_to", 0.7);
+
+    const res = await worker.fetch(req("GET", "/connections?id=a"), env, ctx);
+    const data = await res.json() as any;
+    const ids = data.connections.map((c: any) => c.id);
+    expect(ids).toContain("c");
+    expect(ids).not.toContain("b");
+  });
+
+  it("shows cross-user public connections", async () => {
+    seedEntry(db, "a", "User1 note", [], "u1");
+    seedEntry(db, "b", "User2 note", [], "u2");
+    pushEdge(db, "a", "b", "relates_to", 0.8);
+
+    const res = await worker.fetch(req("GET", "/connections?id=a"), env, ctx);
+    const data = await res.json() as any;
+    expect(data.connections).toHaveLength(1);
+    expect(data.connections[0].id).toBe("b");
   });
 });

@@ -80,6 +80,47 @@ describe("runGraphPass", () => {
     await expect(runGraphPass(env, ctx)).resolves.toBeUndefined();
     expect(db.edges).toHaveLength(0);
   });
+
+  it("creates cross-user edges only between public entries", async () => {
+    db.entries.push(
+      { id: "pub-a", content: "User1 public", tags: "[]", source: "api", created_at: 2, vector_ids: "[]", owner_user_id: "u1" },
+      { id: "pub-b", content: "User2 public", tags: "[]", source: "api", created_at: 1, vector_ids: "[]", owner_user_id: "u2" },
+    );
+    const env = makeTestEnv(db, {
+      VECTORIZE: makeVectorizeMock({
+        query: vi.fn().mockResolvedValue({ matches: [
+          { id: "pub-a", score: 1.0, metadata: { parentId: "pub-a" } },
+          { id: "pub-b", score: 0.85, metadata: { parentId: "pub-b" } },
+        ] }),
+      }),
+    });
+    const { ctx } = makeCtx();
+    await runGraphPass(env, ctx);
+
+    const e = db.edges.find((x: any) => x.type === "relates_to");
+    expect(e).toBeTruthy();
+    expect([e.source_id, e.target_id].sort()).toEqual(["pub-a", "pub-b"]);
+  });
+
+  it("does not create edges involving other users' private entries", async () => {
+    db.entries.push(
+      { id: "priv-other", content: "Other private", tags: '["private"]', source: "api", created_at: 2, vector_ids: "[]", owner_user_id: "u2" },
+      { id: "pub-a", content: "My public", tags: "[]", source: "api", created_at: 1, vector_ids: "[]", owner_user_id: "u1" },
+    );
+    const env = makeTestEnv(db, {
+      VECTORIZE: makeVectorizeMock({
+        query: vi.fn().mockResolvedValue({ matches: [
+          { id: "priv-other", score: 1.0, metadata: { parentId: "priv-other" } },
+          { id: "pub-a", score: 0.9, metadata: { parentId: "pub-a" } },
+        ] }),
+      }),
+    });
+    const { ctx } = makeCtx();
+    await runGraphPass(env, ctx);
+
+    // No edge should be created because the only neighbor is another user's private entry
+    expect(db.edges).toHaveLength(0);
+  });
 });
 
 describe("scheduled handler", () => {

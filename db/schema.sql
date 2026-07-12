@@ -10,11 +10,27 @@ CREATE TABLE IF NOT EXISTS entries (
   recall_count         INTEGER DEFAULT 0,
   importance_score     INTEGER DEFAULT 0,
   contradiction_wins   INTEGER DEFAULT 0,
-  contradiction_losses INTEGER DEFAULT 0
+  contradiction_losses INTEGER DEFAULT 0,
+  owner_user_id    TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_entries_created_at ON entries(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_entries_source ON entries(source);
+CREATE INDEX IF NOT EXISTS idx_entries_owner ON entries(owner_user_id);
+
+-- User model for multi-user support
+CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY,
+  username TEXT NOT NULL UNIQUE,
+  normalized_username TEXT NOT NULL UNIQUE,
+  auth_key_hash TEXT NOT NULL,
+  auth_key_prefix TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at INTEGER NOT NULL,
+  last_used_at INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_normalized_username ON users(normalized_username);
 
 -- Relationship graph (issue #16). One additive table — old code ignores it and
 -- rollback is a no-op. Designed to never need an ALTER: type/provenance are free

@@ -119,6 +119,25 @@ describe("expandGraph", () => {
     const byId = Object.fromEntries(out.map(n => [n.id, n.hop]));
     expect(byId).toEqual({ b: 1, c: 2 });
   });
+
+  it("skips other users' private entries when userId provided", async () => {
+    db.entries.push(
+      { id: "priv-other", content: "Other private", tags: JSON.stringify(["private"]), source: "api", created_at: 1, vector_ids: "[]", owner_user_id: "u2" },
+      { id: "pub", content: "Public note", tags: "[]", source: "api", created_at: 1, vector_ids: "[]", owner_user_id: "u1" },
+    );
+    db.edges.push(edge("a", "priv-other", 0.9), edge("a", "pub", 0.8));
+    const out = await expandGraph(["a"], { hops: 1 }, env, "u1");
+    expect(out.map(n => n.id)).toEqual(["pub"]);
+  });
+
+  it("includes own private entries when userId provided", async () => {
+    db.entries.push(
+      { id: "mine", content: "My private", tags: JSON.stringify(["private"]), source: "api", created_at: 1, vector_ids: "[]", owner_user_id: "u1" },
+    );
+    db.edges.push(edge("a", "mine", 0.9));
+    const out = await expandGraph(["a"], { hops: 1 }, env, "u1");
+    expect(out.map(n => n.id)).toEqual(["mine"]);
+  });
 });
 
 describe("inferEdgesOnWrite", () => {
@@ -166,6 +185,56 @@ describe("inferEdgesOnWrite", () => {
 
   it("writes nothing when there are no qualifying neighbors", async () => {
     await inferEdgesOnWrite("new", [{ id: "a", score: 0.3 }], env);
+    expect(db.edges).toHaveLength(0);
+  });
+});
+
+describe("createEdge visibility", () => {
+  let env: Env;
+  let db: D1Mock;
+
+  beforeEach(() => {
+    db = makeTestDb();
+    env = makeTestEnv(db);
+  });
+
+  it("rejects edge between private entries of different owners", async () => {
+    db.entries.push(
+      { id: "a", content: "A private", tags: '["private"]', source: "api", created_at: 1, vector_ids: "[]", owner_user_id: "u1" },
+      { id: "b", content: "B private", tags: '["private"]', source: "api", created_at: 1, vector_ids: "[]", owner_user_id: "u2" },
+    );
+    const result = await createEdge("a", "b", "relates_to", {}, env);
+    expect(result).toBeNull();
+    expect(db.edges).toHaveLength(0);
+  });
+
+  it("allows edge between public entries of different owners", async () => {
+    db.entries.push(
+      { id: "a", content: "A public", tags: "[]", source: "api", created_at: 1, vector_ids: "[]", owner_user_id: "u1" },
+      { id: "b", content: "B public", tags: "[]", source: "api", created_at: 1, vector_ids: "[]", owner_user_id: "u2" },
+    );
+    const result = await createEdge("a", "b", "relates_to", {}, env);
+    expect(result).not.toBeNull();
+    expect(db.edges).toHaveLength(1);
+  });
+
+  it("allows edge between entries of the same owner (both private)", async () => {
+    db.entries.push(
+      { id: "a", content: "A private", tags: '["private"]', source: "api", created_at: 1, vector_ids: "[]", owner_user_id: "u1" },
+      { id: "b", content: "B private", tags: '["private"]', source: "api", created_at: 1, vector_ids: "[]", owner_user_id: "u1" },
+    );
+    const result = await createEdge("a", "b", "relates_to", {}, env);
+    expect(result).not.toBeNull();
+    expect(db.edges).toHaveLength(1);
+  });
+
+  it("rejects edge from private to public of different owner", async () => {
+    db.entries.push(
+      { id: "a", content: "A private", tags: '["private"]', source: "api", created_at: 1, vector_ids: "[]", owner_user_id: "u1" },
+      { id: "b", content: "B public", tags: "[]", source: "api", created_at: 1, vector_ids: "[]", owner_user_id: "u2" },
+    );
+    const result = await createEdge("a", "b", "relates_to", {}, env);
+    expect(result).toBeNull();
     expect(db.edges).toHaveLength(0);
   });
 });

@@ -34,4 +34,53 @@ describe("Auth", () => {
       expect(res.status).toBe(401);
     });
   }
+
+  for (const [method, path, body] of PROTECTED_ROUTES) {
+    it(`${method} ${path} — bearer token alone → not 401 (legacy mode)`, async () => {
+      const res = await worker.fetch(req(method, path, { body }), env, ctx);
+      expect(res.status).not.toBe(401);
+    });
+  }
+
+  it("POST /capture — bearer + valid user headers → 200", async () => {
+    // First create a user
+    const createRes = await worker.fetch(req("POST", "/api/users", { body: { username: "alice" } }), env, ctx);
+    const { key } = await createRes.json() as any;
+
+    const res = await worker.fetch(
+      req("POST", "/capture", { body: { content: "test entry" }, userCredentials: { username: "alice", key } }),
+      env, ctx
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json() as any;
+    expect(data.ok).toBe(true);
+  });
+
+  it("POST /capture — bearer + invalid key → 401", async () => {
+    await worker.fetch(req("POST", "/api/users", { body: { username: "alice" } }), env, ctx);
+    const res = await worker.fetch(
+      req("POST", "/capture", { body: { content: "test" }, userCredentials: { username: "alice", key: "wrong-key" } }),
+      env, ctx
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("POST /capture — bearer + unknown username → 401", async () => {
+    const res = await worker.fetch(
+      req("POST", "/capture", { body: { content: "test" }, userCredentials: { username: "unknown", key: "anything" } }),
+      env, ctx
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("POST /capture — user headers without bearer → 401", async () => {
+    await worker.fetch(req("POST", "/api/users", { body: { username: "alice" } }), env, ctx);
+    const createRes = await worker.fetch(req("POST", "/api/users", { body: { username: "alice" } }), env, ctx);
+    // Even with valid user headers, no bearer token means 401
+    const res = await worker.fetch(
+      req("POST", "/capture", { body: { content: "test" }, token: null, userCredentials: { username: "alice", key: "whatever" } }),
+      env, ctx
+    );
+    expect(res.status).toBe(401);
+  });
 });

@@ -1,8 +1,15 @@
 import { COMPRESSION_IMPORTANCE_THRESHOLD, COMPRESSION_MIN_RECALL } from "../../src/index";
 
+function extractValue(s: string, args: any[], index: number): string | undefined {
+  if (args[index] !== undefined) return args[index] as string;
+  const match = s.match(/'([^']+)'/);
+  return match ? match[1] : undefined;
+}
+
 export class D1Mock {
   entries: any[] = [];
   edges: any[] = [];
+  users: any[] = [];
 
   prepare(sql: string) {
     const s = sql.replace(/\s+/g, " ").trim();
@@ -11,9 +18,26 @@ export class D1Mock {
     const makeStmt = (args: any[]) => ({
       async run() {
         if (s.startsWith("INSERT INTO entries")) {
-          const [id, content, tags, source, created_at, vector_ids] = args;
-          db.entries.push({ id, content, tags, source, created_at, vector_ids, recall_count: 0, importance_score: 0, contradiction_wins: 0, contradiction_losses: 0 });
+          const [id, content, tags, source, created_at, vector_ids, owner_user_id] = args;
+          db.entries.push({ id, content, tags, source, created_at, vector_ids, recall_count: 0, importance_score: 0, contradiction_wins: 0, contradiction_losses: 0, owner_user_id: owner_user_id ?? "" });
           return { meta: { changes: 1 } };
+        }
+        if (s.startsWith("INSERT INTO users")) {
+          const [id, username, normalized_username, auth_key_hash, auth_key_prefix, created_at] = args;
+          const existing = db.users.find((u: any) => u.normalized_username === normalized_username);
+          if (existing) throw new Error("UNIQUE constraint failed");
+          const statusMatch = s.match(/'(\w+)'/);
+          const status = statusMatch ? statusMatch[1] : "active";
+          db.users.push({ id, username, normalized_username, auth_key_hash, auth_key_prefix, status, created_at, last_used_at: null });
+          return { meta: { changes: 1 } };
+        }
+        if (s.startsWith("UPDATE entries SET owner_user_id")) {
+          const [owner_user_id] = args;
+          let count = 0;
+          for (const row of db.entries) {
+            if (row.owner_user_id === "") { row.owner_user_id = owner_user_id; count++; }
+          }
+          return { meta: { changes: count } };
         }
         if (s.startsWith("UPDATE entries SET content = ?, vector_ids")) {
           const [content, vector_ids, id] = args;
@@ -139,12 +163,64 @@ export class D1Mock {
           db.edges = db.edges.filter((e: any) => !(e.provenance === "inferred" && e.weight < weight && e.updated_at < age));
           return { meta: { changes: before - db.edges.length } };
         }
+        if (s.startsWith("UPDATE users SET status")) {
+          const userId = args[0] as string;
+          const user = db.users.find((u: any) => u.id === userId);
+          if (user) user.status = "inactive";
+          return { meta: { changes: user ? 1 : 0 } };
+        }
+        if (s.startsWith("DELETE FROM entries WHERE owner_user_id") && s.includes("tags LIKE")) {
+          const [ownerId] = args;
+          const before = db.entries.length;
+          db.entries = db.entries.filter((e: any) => !(e.owner_user_id === ownerId && (JSON.parse(e.tags ?? "[]") as string[]).includes("private")));
+          return { meta: { changes: before - db.entries.length } };
+        }
         return { meta: {} };
       },
       async first() {
-        if (s.includes("SELECT vector_ids FROM entries WHERE id")) {
-          const row = db.entries.find((e: any) => e.id === args[0]);
-          return row ? { vector_ids: row.vector_ids } : null;
+        if (s.includes("SELECT id, auth_key_hash FROM users WHERE normalized_username")) {
+          const normalized = extractValue(s, args, 0) ?? "";
+          const row = db.users.find((u: any) => u.normalized_username === normalized && u.status === "active");
+          return row ? { id: row.id, auth_key_hash: row.auth_key_hash } : null;
+        }
+        if (s.includes("SELECT id, username, status FROM users WHERE username")) {
+          const username = extractValue(s, args, 0) ?? "";
+          const row = db.users.find((u: any) => u.username === username);
+          return row ? { id: row.id, username: row.username, status: row.status } : null;
+        }
+        if (s.includes("SELECT status FROM users WHERE username")) {
+          const username = extractValue(s, args, 0) ?? "";
+          const row = db.users.find((u: any) => u.username === username);
+          return row ? { status: row.status } : null;
+        }
+        if (s.includes("SELECT id, username, status FROM users WHERE id")) {
+          const userId = args[0] as string;
+          const row = db.users.find((u: any) => u.id === userId);
+          return row ? { id: row.id, username: row.username, status: row.status } : null;
+        }
+        if (s.includes("SELECT username FROM users WHERE id")) {
+          const userId = args[0] as string;
+          const row = db.users.find((u: any) => u.id === userId);
+          return row ? { username: row.username } : null;
+        }
+        if (s.includes("SELECT id FROM users WHERE username")) {
+          const username = extractValue(s, args, 0) ?? "";
+          const row = db.users.find((u: any) => u.username === username);
+          return row ? { id: row.id } : null;
+        }
+        if (s.includes("SELECT owner_user_id FROM entries")) {
+          if (s.includes("WHERE content =")) {
+            const content = extractValue(s, args, 0) ?? "";
+            const row = db.entries.find((e: any) => e.content === content);
+            return row ? { owner_user_id: row.owner_user_id } : null;
+          }
+          if (s.includes("WHERE id =")) {
+            const id = extractValue(s, args, 0) ?? "";
+            const row = db.entries.find((e: any) => e.id === id);
+            return row ? { owner_user_id: row.owner_user_id } : null;
+          }
+          const row = db.entries[0];
+          return row ? { owner_user_id: row.owner_user_id } : null;
         }
         if (s.includes("COUNT(*) as count") && s.includes("AVG(importance_score)")) {
           const count = db.entries.length;
@@ -194,6 +270,38 @@ export class D1Mock {
         return null;
       },
       async all() {
+        if (s.includes("SELECT id, username, status FROM users WHERE status")) {
+          const activeUsers = db.users.filter((u: any) => u.status === "active");
+          return { results: activeUsers.map((u: any) => ({ id: u.id, username: u.username, status: u.status })) };
+        }
+        if (s.includes("SELECT id FROM users WHERE status = 'active' ORDER BY created_at ASC")) {
+          const activeUsers = db.users.filter((u: any) => u.status === "active").sort((a: any, b: any) => a.created_at - b.created_at);
+          const limitMatch = s.match(/LIMIT (\d+)/);
+          const limit = limitMatch ? parseInt(limitMatch[1], 10) : activeUsers.length;
+          return { results: activeUsers.slice(0, limit).map((u: any) => ({ id: u.id })) };
+        }
+        if (s.includes("SELECT id FROM users WHERE username") && !s.includes("FROM entries")) {
+          const username = extractValue(s, args, 0) ?? "";
+          const matches = db.users.filter((u: any) => u.username === username);
+          return { results: matches.map((u: any) => ({ id: u.id })) };
+        }
+        if (s.includes("SELECT id, username FROM users WHERE id IN")) {
+          const results = db.users
+            .filter((u: any) => args.includes(u.id))
+            .map((u: any) => ({ id: u.id, username: u.username }));
+          return { results };
+        }
+        if (s.includes("SELECT username FROM users WHERE id =")) {
+          const userId = args[0] as string;
+          const user = db.users.find((u: any) => u.id === userId);
+          return { results: user ? [{ username: user.username }] : [] };
+        }
+        if (s.includes("SELECT tags, owner_user_id FROM entries WHERE id =")) {
+          // createEdge visibility check.
+          const entryId = args[0] as string;
+          const entry = db.entries.find((e: any) => e.id === entryId);
+          return { results: entry ? [{ tags: entry.tags ?? "[]", owner_user_id: (entry as any).owner_user_id ?? "" }] : [] };
+        }
         if (
           s === "SELECT id FROM entries WHERE tags LIKE ?" ||
           s === "SELECT id, vector_ids FROM entries WHERE tags LIKE ?" ||
@@ -204,6 +312,97 @@ export class D1Mock {
           const results = db.entries
             .filter((e: any) => (JSON.parse(e.tags ?? "[]") as string[]).includes(tag))
             .map((e: any) => ({ id: e.id, vector_ids: e.vector_ids ?? "[]", content: e.content, tags: e.tags, source: e.source, created_at: e.created_at }));
+          return { results };
+        }
+        if (s.includes("FROM entries WHERE vector_ids != '[]'")) {
+          // reindexAllVectors query — entries with existing vectors.
+          const results = db.entries
+            .filter((e: any) => e.vector_ids && e.vector_ids !== "[]")
+            .map((e: any) => ({
+              id: e.id, content: e.content, tags: e.tags, source: e.source,
+              created_at: e.created_at, vector_ids: e.vector_ids,
+              owner_user_id: (e as any).owner_user_id ?? "",
+            }));
+          return { results };
+        }
+        if (s.includes("SELECT id, content, tags, source, created_at, vector_ids, owner_user_id FROM entries")) {
+          // GET /list query — returns all matching entries with owner_user_id.
+          const limit = Number(args[args.length - 1]);
+          let rows = [...db.entries] as any[];
+          const whereIdx = s.indexOf("WHERE");
+          const orderIdx = s.indexOf("ORDER BY");
+          const whereClause = whereIdx !== -1 && orderIdx !== -1
+            ? s.substring(whereIdx + 5, orderIdx)
+            : whereIdx !== -1
+              ? s.substring(whereIdx + 5)
+              : "";
+
+          // Apply user filter if present
+          if (whereClause.includes("owner_user_id = (SELECT id FROM users WHERE username = ?)")) {
+            const username = args[0] as string;
+            const user = db.users.find((u: any) => u.username === username);
+            if (user) {
+              rows = rows.filter(e => e.owner_user_id === user.id);
+            } else {
+              rows = [];
+            }
+          }
+
+          // Apply tag filter if present
+          if (whereClause.includes("tags LIKE ?")) {
+            const tagIdx = whereClause.indexOf("tags LIKE ?");
+            // Count how many bindings come before this one
+            const beforeStr = whereClause.substring(0, tagIdx);
+            const bindCount = (beforeStr.match(/\?/g) || []).length;
+            const pattern = String(args[bindCount]);
+            const tag = pattern.replace(/%"/g, "").replace(/"%/g, "");
+            rows = rows.filter(e => (JSON.parse(e.tags ?? "[]") as string[]).includes(tag));
+          }
+
+          // Apply date filters
+          if (whereClause.includes("created_at >= ?")) {
+            const idx = whereClause.indexOf("created_at >= ?");
+            const beforeStr = whereClause.substring(0, idx);
+            const bindCount = (beforeStr.match(/\?/g) || []).length;
+            const after = Number(args[bindCount]);
+            rows = rows.filter(e => e.created_at >= after);
+          }
+          if (whereClause.includes("created_at <= ?")) {
+            const idx = whereClause.indexOf("created_at <= ?");
+            const beforeStr = whereClause.substring(0, idx);
+            const bindCount = (beforeStr.match(/\?/g) || []).length;
+            const before = Number(args[bindCount]);
+            rows = rows.filter(e => e.created_at <= before);
+          }
+
+          // Apply visibility filter
+          if (whereClause.includes("tags NOT LIKE") && !whereClause.includes("owner_user_id = ? OR")) {
+            // Public only
+            rows = rows.filter(e => !(JSON.parse(e.tags ?? "[]") as string[]).includes("private"));
+          } else if (whereClause.includes("owner_user_id = ? AND tags LIKE")) {
+            // Own private only - find the bind index for this clause
+            const idx = whereClause.indexOf("owner_user_id = ? AND tags LIKE");
+            const beforeStr = whereClause.substring(0, idx);
+            const bindCount = (beforeStr.match(/\?/g) || []).length;
+            const userId = args[bindCount] as string;
+            rows = rows.filter(e => e.owner_user_id === userId && (JSON.parse(e.tags ?? "[]") as string[]).includes("private"));
+          } else if (whereClause.includes("owner_user_id = ? OR tags NOT LIKE")) {
+            // Default visibility (own + public) - find the bind index
+            const idx = whereClause.indexOf("owner_user_id = ? OR tags NOT LIKE");
+            const beforeStr = whereClause.substring(0, idx);
+            const bindCount = (beforeStr.match(/\?/g) || []).length;
+            const userId = args[bindCount] as string;
+            rows = rows.filter(e => e.owner_user_id === userId || !(JSON.parse(e.tags ?? "[]") as string[]).includes("private"));
+          }
+
+          const results = rows
+            .sort((a: any, b: any) => b.created_at - a.created_at)
+            .slice(0, limit)
+            .map((e: any) => ({
+              id: e.id, content: e.content, tags: e.tags, source: e.source,
+              created_at: e.created_at, vector_ids: e.vector_ids ?? "[]",
+              owner_user_id: e.owner_user_id ?? "",
+            }));
           return { results };
         }
         if (s.includes("WHERE content LIKE") && s.includes("ORDER BY created_at DESC LIMIT")) {
@@ -230,7 +429,7 @@ export class D1Mock {
             })
             .sort((a: any, b: any) => b.created_at - a.created_at)
             .slice(0, limit)
-            .map((e: any) => ({ id: e.id, content: e.content }));
+            .map((e: any) => ({ id: e.id, content: e.content, owner_user_id: (e as any).owner_user_id ?? "", tags: e.tags ?? "[]" }));
           return { results: rows };
         }
         if (s.includes("FROM edges WHERE source_id IN") && s.includes("OR target_id IN")) {
@@ -253,11 +452,32 @@ export class D1Mock {
             .map((e: any) => ({ source_id: e.source_id, target_id: e.target_id }));
           return { results };
         }
-        if (s.includes("SELECT id, content, tags, importance_score, created_at FROM entries WHERE id IN")) {
+        if (s.includes("SELECT id, content, tags, importance_score, created_at FROM entries WHERE id IN") || s.includes("SELECT id, content, tags, importance_score, created_at, owner_user_id FROM entries WHERE id IN")) {
           // buildGraph node hydration.
           const results = db.entries
             .filter((e: any) => args.includes(e.id))
-            .map((e: any) => ({ id: e.id, content: e.content, tags: e.tags, importance_score: e.importance_score ?? 0, created_at: e.created_at }));
+            .map((e: any) => ({ id: e.id, content: e.content, tags: e.tags, importance_score: e.importance_score ?? 0, created_at: e.created_at, owner_user_id: e.owner_user_id ?? "" }));
+          return { results };
+        }
+        if (s.includes("SELECT id, owner_user_id, tags FROM entries WHERE id IN")) {
+          // recallEntries post-fusion visibility filter.
+          const results = db.entries
+            .filter((e: any) => args.includes(e.id))
+            .map((e: any) => ({ id: e.id, owner_user_id: (e as any).owner_user_id ?? "", tags: e.tags ?? "[]" }));
+          return { results };
+        }
+        if (s.includes("SELECT id, tags, owner_user_id FROM entries WHERE id IN")) {
+          // filterVisibleIds: visibility check for graph traversal.
+          const results = db.entries
+            .filter((e: any) => args.includes(e.id))
+            .map((e: any) => ({ id: e.id, tags: e.tags ?? "[]", owner_user_id: (e as any).owner_user_id ?? "" }));
+          return { results };
+        }
+        if (s.includes("SELECT id, vector_ids FROM entries WHERE owner_user_id") && s.includes("tags LIKE")) {
+          const ownerId = args[0] as string;
+          const results = db.entries
+            .filter((e: any) => e.owner_user_id === ownerId && (JSON.parse(e.tags ?? "[]") as string[]).includes("private"))
+            .map((e: any) => ({ id: e.id, vector_ids: e.vector_ids ?? "[]" }));
           return { results };
         }
         if (s.includes("SELECT id, tags FROM entries WHERE id IN")) {
@@ -267,13 +487,13 @@ export class D1Mock {
             .map((e: any) => ({ id: e.id, tags: e.tags }));
           return { results };
         }
-        if (s.includes("SELECT id, content, tags, source, created_at FROM entries WHERE id IN") && !s.includes("tags NOT LIKE")) {
+        if (s.includes("SELECT id, content, tags, source, created_at") && s.includes("FROM entries WHERE id IN") && !s.includes("tags NOT LIKE")) {
           // Graph node hydration (/connections, /graph). The `tags NOT LIKE` guard
           // keeps this from shadowing recall's hydration query (same columns, but it
           // applies the auto-pattern/deprecated/kind filters itself further down).
           const results = db.entries
             .filter((e: any) => args.includes(e.id))
-            .map((e: any) => ({ id: e.id, content: e.content, tags: e.tags, source: e.source, created_at: e.created_at }));
+            .map((e: any) => ({ id: e.id, content: e.content, tags: e.tags, source: e.source, created_at: e.created_at, owner_user_id: e.owner_user_id ?? "" }));
           return { results };
         }
         if (s.includes("SELECT id, recall_count, importance_score") && s.includes("WHERE id IN")) {
@@ -312,9 +532,11 @@ export class D1Mock {
         if (s.includes("SELECT id, content FROM entries") && s.includes("WHERE tags LIKE") && s.includes("ORDER BY created_at DESC")) {
           // compressTag raw entries query — tag match, system-tag exclusion, and the
           // recall/age/contradiction eligibility predicate (cutoff is the 2nd bind param).
+          // When userId is provided (3rd bind param), filter by owner_user_id or public visibility.
           const tagPattern = args[0] as string;
           const tag = tagPattern.replace(/%"/g, "").replace(/"%/g, "");
           const cutoff = Number(args[1]);
+          const userId = args.length > 2 ? (args[2] as string) : undefined;
           const results = [...db.entries]
             .filter((e: any) => {
               const tags: string[] = JSON.parse(e.tags ?? "[]");
@@ -324,6 +546,12 @@ export class D1Mock {
               const rc = e.recall_count; // NULL/undefined → recall clause is falsy → protected (matches SQL)
               if (!(rc === 0 || (rc < COMPRESSION_MIN_RECALL && e.created_at < cutoff))) return false;
               if (!(e.contradiction_wins == null || e.contradiction_wins === 0)) return false;
+              // Per-user visibility: owner's entries OR public entries
+              if (userId) {
+                const isOwner = e.owner_user_id === userId;
+                const isPublic = !tags.includes("private");
+                if (!isOwner && !isPublic) return false;
+              }
               return true;
             })
             .sort((a: any, b: any) => b.created_at - a.created_at)
@@ -400,9 +628,19 @@ export class D1Mock {
             .map((e: any) => ({ id: e.id, content: e.content, tags: e.tags, source: e.source, created_at: e.created_at }));
           return { results: rows };
         }
-        if (s.startsWith("SELECT id, content, tags, source, created_at, recall_count, importance_score, contradiction_wins, contradiction_losses FROM entries ORDER BY created_at DESC")) {
-          // GET /export: every entry, newest first, no LIMIT.
-          const results = [...db.entries]
+        if (s.includes("recall_count, importance_score, contradiction_wins, contradiction_losses FROM entries") && s.includes("ORDER BY created_at DESC") && !s.includes("LIMIT")) {
+          // GET /export: entries with optional WHERE filters, newest first, no LIMIT.
+          let rows = [...db.entries] as any[];
+          if (s.includes("owner_user_id = ? AND tags NOT LIKE ?")) {
+            const userId = args[0] as string;
+            rows = rows.filter(e => e.owner_user_id === userId && !(JSON.parse(e.tags ?? "[]") as string[]).includes("private"));
+          } else if (s.includes("owner_user_id = ? AND tags LIKE ?")) {
+            const userId = args[0] as string;
+            rows = rows.filter(e => e.owner_user_id === userId && (JSON.parse(e.tags ?? "[]") as string[]).includes("private"));
+          } else if (s.includes("tags NOT LIKE ?")) {
+            rows = rows.filter(e => !(JSON.parse(e.tags ?? "[]") as string[]).includes("private"));
+          }
+          const results = rows
             .sort((a: any, b: any) => b.created_at - a.created_at)
             .map((e: any) => ({
               id: e.id, content: e.content, tags: e.tags, source: e.source, created_at: e.created_at,
@@ -419,7 +657,7 @@ export class D1Mock {
           }));
           return { results };
         }
-        if (s.includes("ORDER BY created_at DESC LIMIT")) {
+        if (s.includes("ORDER BY created_at DESC LIMIT") && s.includes("FROM entries")) {
           const limit = Number(args[args.length - 1]);
           const filterArgs = args.slice(0, -1);
           let argIdx = 0;
@@ -437,6 +675,13 @@ export class D1Mock {
             const before = Number(filterArgs[argIdx++]);
             rows = rows.filter((e: any) => e.created_at <= before);
           }
+          if (s.includes("owner_user_id = ?")) {
+            const userId = String(filterArgs[argIdx++]);
+            rows = rows.filter((e: any) => {
+              const tags: string[] = JSON.parse(e.tags ?? "[]");
+              return e.owner_user_id === userId || !tags.includes("private");
+            });
+          }
           rows.sort((a: any, b: any) => b.created_at - a.created_at);
           return { results: rows.slice(0, limit) };
         }
@@ -452,5 +697,5 @@ export class D1Mock {
 
   async exec(_sql: string) { }
   async batch(stmts: any[]) { return Promise.all(stmts.map((s: any) => s.run())); }
-  reset() { this.entries = []; this.edges = []; }
+  reset() { this.entries = []; this.edges = []; this.users = []; }
 }

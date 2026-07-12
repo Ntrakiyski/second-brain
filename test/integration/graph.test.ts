@@ -7,8 +7,8 @@ import { D1Mock } from "../helpers/d1-mock";
 
 const ctx = { waitUntil: (_: Promise<any>) => {} } as any;
 
-function seedEntry(db: D1Mock, id: string, content: string, tags: string[] = [], importance = 0) {
-  db.entries.push({ id, content, tags: JSON.stringify(tags), source: "api", created_at: 1000, vector_ids: "[]", importance_score: importance });
+function seedEntry(db: D1Mock, id: string, content: string, tags: string[] = [], importance = 0, owner_user_id = "") {
+  db.entries.push({ id, content, tags: JSON.stringify(tags), source: "api", created_at: 1000, vector_ids: "[]", importance_score: importance, owner_user_id });
 }
 
 function pushEdge(db: D1Mock, source_id: string, target_id: string, type = "relates_to", weight = 0.7) {
@@ -90,5 +90,44 @@ describe("GET /graph", () => {
     const res = await worker.fetch(req("GET", "/graph?limit=4"), env, ctx);
     const data = await res.json() as any;
     expect(data.nodes).toHaveLength(4);
+  });
+
+  it("excludes other users' private entries from graph nodes", async () => {
+    seedEntry(db, "pub", "Public note", [], 0, "u1");
+    seedEntry(db, "priv-other", "Other private", ["private"], 0, "u2");
+    seedEntry(db, "mine", "My note", [], 0, "u1");
+    pushEdge(db, "pub", "priv-other");
+    pushEdge(db, "pub", "mine");
+
+    const res = await worker.fetch(req("GET", "/graph"), env, ctx);
+    const data = await res.json() as any;
+    const nodeIds = data.nodes.map((n: any) => n.id);
+    expect(nodeIds).toContain("pub");
+    expect(nodeIds).toContain("mine");
+    expect(nodeIds).not.toContain("priv-other");
+  });
+
+  it("includes user's own private entries in graph", async () => {
+    // Create system user so getSystemUserId returns a known ID
+    db.users.push({ id: "sys", username: "_system", normalized_username: "_system", auth_key_hash: "", auth_key_prefix: "", status: "active", created_at: 1000 });
+    seedEntry(db, "mine", "My private", ["private"], 0, "sys");
+    seedEntry(db, "other", "Other public", [], 0, "u2");
+    pushEdge(db, "mine", "other");
+
+    const res = await worker.fetch(req("GET", "/graph"), env, ctx);
+    const data = await res.json() as any;
+    const nodeIds = data.nodes.map((n: any) => n.id);
+    expect(nodeIds).toContain("mine");
+  });
+
+  it("shows edges between public entries across users", async () => {
+    seedEntry(db, "a", "User1 public", [], 0, "u1");
+    seedEntry(db, "b", "User2 public", [], 0, "u2");
+    pushEdge(db, "a", "b");
+
+    const res = await worker.fetch(req("GET", "/graph"), env, ctx);
+    const data = await res.json() as any;
+    expect(data.edges).toHaveLength(1);
+    expect(data.edges[0]).toMatchObject({ source: "a", target: "b" });
   });
 });

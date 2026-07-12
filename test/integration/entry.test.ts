@@ -40,6 +40,8 @@ describe("GET /entry", () => {
       tags: ["work", "kind:semantic"],
       source: "api",
       created_at: 1234,
+      owner_username: "",
+      is_private: false,
     });
   });
 

@@ -60,11 +60,15 @@ export const COMPRESSION_MIN_AGE_MS = 60 * 86400000; // entries with fewer than 
 // Returns a SQL boolean fragment for "this entry is eligible for compression".
 // Contains exactly one `?` placeholder — bind `Date.now() - COMPRESSION_MIN_AGE_MS`.
 // columnPrefix: "" for bare columns (compressTag), "entries." for json_each-joined queries.
-export function compressionEligibilitySql(columnPrefix = ""): string {
+export function compressionEligibilitySql(columnPrefix = "", ownerUserId?: string): string {
   const p = columnPrefix;
-  return `(${p}importance_score IS NULL OR ${p}importance_score < ${COMPRESSION_IMPORTANCE_THRESHOLD})
+  let sql = `(${p}importance_score IS NULL OR ${p}importance_score < ${COMPRESSION_IMPORTANCE_THRESHOLD})
       AND (${p}recall_count = 0 OR (${p}recall_count < ${COMPRESSION_MIN_RECALL} AND ${p}created_at < ?))
       AND (${p}contradiction_wins IS NULL OR ${p}contradiction_wins = 0)`;
+  if (ownerUserId) {
+    sql += ` AND ((${p}owner_user_id = ?) OR (${p}tags NOT LIKE '%"private"%'))`;
+  }
+  return sql;
 }
 
 // ─── Model constants ──────────────────────────────────────────────────────────
@@ -202,6 +206,17 @@ export async function createEdge(
   if (!isValidEdgeType(type)) return null;
   if (sourceId === targetId) return null;
 
+  // Visibility check: private entries can only connect to same-owner entries.
+  // A private entry must not link to any entry owned by a different user.
+  const srcRow = await env.DB.prepare("SELECT tags, owner_user_id FROM entries WHERE id = ?").bind(sourceId).first() as { tags: string; owner_user_id: string } | null;
+  const tgtRow = await env.DB.prepare("SELECT tags, owner_user_id FROM entries WHERE id = ?").bind(targetId).first() as { tags: string; owner_user_id: string } | null;
+  if (srcRow && tgtRow) {
+    const srcPrivate = JSON.parse(srcRow.tags ?? "[]").includes("private");
+    const tgtPrivate = JSON.parse(tgtRow.tags ?? "[]").includes("private");
+    if (srcPrivate && srcRow.owner_user_id !== tgtRow.owner_user_id) return null;
+    if (tgtPrivate && tgtRow.owner_user_id !== srcRow.owner_user_id) return null;
+  }
+
   let source = sourceId;
   let target = targetId;
   if (isSymmetric(type) && source > target) [source, target] = [target, source];
@@ -283,6 +298,7 @@ export async function expandGraph(
   seedIds: string[],
   opts: { hops: number; fanoutCap?: number; maxNodes?: number; includeDeprecated?: boolean },
   env: Env,
+  userId?: string,
 ): Promise<GraphNeighbor[]> {
   const hops = Math.max(0, Math.min(GRAPH_MAX_HOPS, opts.hops));
   if (hops === 0 || seedIds.length === 0) return [];
@@ -328,6 +344,14 @@ export async function expandGraph(
       allowed = candidates.filter(c => !deprecated.has(c.id));
     }
 
+    // Visibility filter: skip other users' private entries
+    if (userId && allowed.length) {
+      const candidateIds = [...new Set(allowed.map(c => c.id))];
+      const visibleIds = await filterVisibleIds(candidateIds, userId, env);
+      const visibleSet = new Set(visibleIds);
+      allowed = allowed.filter(c => visibleSet.has(c.id));
+    }
+
     const nextFrontier: string[] = [];
     for (const c of allowed) {
       if (visited.has(c.id)) continue; // first (strongest) wins; dedupe across this hop
@@ -342,6 +366,26 @@ export async function expandGraph(
   return out;
 }
 
+// Filter entry IDs to only those visible to the given user: own entries + all public.
+// Used by expandGraph and runGraphPass to enforce visibility during traversal.
+async function filterVisibleIds(ids: string[], userId: string, env: Env): Promise<string[]> {
+  if (!ids.length) return [];
+  const visible: string[] = [];
+  for (let i = 0; i < ids.length; i += D1_MAX_BOUND_PARAMS) {
+    const batch = ids.slice(i, i + D1_MAX_BOUND_PARAMS);
+    const ph = batch.map(() => "?").join(", ");
+    const { results } = await env.DB.prepare(
+      `SELECT id, tags, owner_user_id FROM entries WHERE id IN (${ph})`
+    ).bind(...batch).all() as { results: { id: string; tags: string; owner_user_id: string }[] };
+    for (const r of results) {
+      const tags: string[] = JSON.parse(r.tags ?? "[]");
+      if (tags.includes("private") && r.owner_user_id !== userId) continue;
+      visible.push(r.id);
+    }
+  }
+  return visible;
+}
+
 // Hydrate graph node ids into full entry rows (id → row), batched within the D1
 // bound-param limit. Shared by /connections and /graph.
 async function hydrateGraphEntries(ids: string[], env: Env): Promise<Map<string, Record<string, any>>> {
@@ -350,7 +394,7 @@ async function hydrateGraphEntries(ids: string[], env: Env): Promise<Map<string,
     const batch = ids.slice(i, i + D1_MAX_BOUND_PARAMS);
     const ph = batch.map(() => "?").join(", ");
     const { results } = await env.DB.prepare(
-      `SELECT id, content, tags, source, created_at FROM entries WHERE id IN (${ph})`
+      `SELECT id, content, tags, source, created_at, owner_user_id FROM entries WHERE id IN (${ph})`
     ).bind(...batch).all() as { results: Record<string, any>[] };
     for (const r of results) map.set(r.id as string, r);
   }
@@ -370,8 +414,8 @@ export interface Connection {
 
 // 1-hop neighborhood of an entry, hydrated and annotated with edge type/weight.
 // Backs both the `connections` MCP tool and GET /connections.
-export async function getConnections(id: string, type: string | undefined, env: Env): Promise<Connection[]> {
-  let neighbors = await expandGraph([id], { hops: 1 }, env);
+export async function getConnections(id: string, type: string | undefined, env: Env, userId?: string): Promise<Connection[]> {
+  let neighbors = await expandGraph([id], { hops: 1 }, env, userId);
   if (type) neighbors = neighbors.filter(n => n.viaType === type);
   if (!neighbors.length) return [];
 
@@ -380,10 +424,13 @@ export async function getConnections(id: string, type: string | undefined, env: 
   for (const n of neighbors) {
     const row = rows.get(n.id);
     if (!row) continue; // neighbor was deleted (cascade should prevent this) — skip dangling
+    // Visibility filter: exclude other users' private entries
+    const tags: string[] = JSON.parse(row.tags ?? "[]");
+    if (userId && tags.includes("private") && (row as any).owner_user_id !== userId) continue;
     out.push({
       id: n.id,
       content: row.content as string,
-      tags: JSON.parse(row.tags ?? "[]"),
+      tags,
       source: row.source as string,
       created_at: row.created_at as number,
       type: n.viaType,
@@ -414,13 +461,13 @@ export interface GraphView {
 // whole graph — uncapped unless the caller passes an explicit limit. Only edges whose
 // BOTH endpoints are in the returned node set are included, so the client never has
 // to handle dangling edges.
-export async function buildGraph(opts: { seed?: string; limit?: number }, env: Env): Promise<GraphView> {
+export async function buildGraph(opts: { seed?: string; limit?: number; userId?: string }, env: Env): Promise<GraphView> {
   const limit = opts.limit && opts.limit > 0 ? opts.limit : Infinity;
 
   // 1. Determine the candidate node id set.
   let nodeIds: string[];
   if (opts.seed) {
-    const neighbors = await expandGraph([opts.seed], { hops: 2, maxNodes: limit, includeDeprecated: true }, env);
+    const neighbors = await expandGraph([opts.seed], { hops: 2, maxNodes: limit, includeDeprecated: true }, env, opts.userId);
     nodeIds = [opts.seed, ...neighbors.map(n => n.id)].slice(0, limit);
   } else {
     const sql = Number.isFinite(limit)
@@ -447,7 +494,7 @@ export async function buildGraph(opts: { seed?: string; limit?: number }, env: E
     const batch = nodeIds.slice(i, i + D1_MAX_BOUND_PARAMS);
     const ph = batch.map(() => "?").join(", ");
     const { results } = await env.DB.prepare(
-      `SELECT id, content, tags, importance_score, created_at FROM entries WHERE id IN (${ph})`
+      `SELECT id, content, tags, importance_score, created_at, owner_user_id FROM entries WHERE id IN (${ph})`
     ).bind(...batch).all() as { results: Record<string, any>[] };
     for (const r of results) nodeRows.set(r.id as string, r);
   }
@@ -457,6 +504,8 @@ export async function buildGraph(opts: { seed?: string; limit?: number }, env: E
     const r = nodeRows.get(id);
     if (!r) continue;
     const tags: string[] = JSON.parse(r.tags ?? "[]");
+    // Visibility filter: exclude other users' private entries
+    if (opts.userId && tags.includes("private") && (r as any).owner_user_id !== opts.userId) continue;
     nodes.push({
       id,
       label: (r.content as string).slice(0, 80),
@@ -525,8 +574,17 @@ export async function inferEdgesOnWrite(
 // Compute auto-link neighbors from a query embedding: the topK Vectorize matches
 // collapsed to parent ids (strongest score per parent). Lets the append path reuse the
 // same inference as on capture without re-deriving the dedupe logic.
-async function neighborsFromVectorQuery(values: number[], env: Env): Promise<{ id: string; score: number }[]> {
-  const { matches } = await env.VECTORIZE.query(values, { topK: 5, returnMetadata: "all" });
+async function neighborsFromVectorQuery(values: number[], env: Env, userId?: string): Promise<{ id: string; score: number }[]> {
+  const vectorizeOpts: Record<string, any> = { topK: 5, returnMetadata: "all" };
+  if (userId) {
+    vectorizeOpts.metadataFilter = {
+      OR: [
+        { owner_user_id: { $eq: userId } },
+        { is_private: { $eq: false } }
+      ]
+    };
+  }
+  const { matches } = await env.VECTORIZE.query(values, vectorizeOpts);
   const scores = new Map<string, number>();
   for (const m of matches) {
     const pid = (m.metadata as any)?.parentId ?? m.id;
@@ -538,6 +596,10 @@ async function neighborsFromVectorQuery(values: number[], env: Env): Promise<{ i
 // ─── Runtime state ────────────────────────────────────────────────────────────
 
 let dbReady = false;
+let cachedSystemUserId: string | null = null;
+
+// Test-only: reset dbReady so initializeDatabase runs on next request
+export function _resetDbReady() { dbReady = false; cachedSystemUserId = null; }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -558,6 +620,70 @@ async function readStreamText(stream: ReadableStream): Promise<string> {
   return text;
 }
 
+// Escape SQL LIKE wildcards to prevent unintended pattern matching
+function escapeLikePattern(s: string): string {
+  return s.replace(/%/g, "\\%").replace(/_/g, "\\_");
+}
+
+// ─── Multi-user auth helpers ────────────────────────────────────────────────
+
+const AUTH_PEPPER = "second-brain-v2"; // server-side pepper for HMAC
+
+export async function hmacKey(rawKey: string, pepper: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const keyData = encoder.encode(rawKey);
+  const cryptoKey = await crypto.subtle.importKey(
+    "raw", keyData, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+  );
+  const signature = await crypto.subtle.sign("HMAC", cryptoKey, encoder.encode(pepper));
+  return Array.from(new Uint8Array(signature)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+export function generateApiKey(): { publicId: string; secret: string; fullKey: string } {
+  const publicId = crypto.randomUUID().replace(/-/g, "");
+  const secret = Array.from(crypto.getRandomValues(new Uint8Array(24)))
+    .map(b => b.toString(36).padStart(2, "0")).join("").slice(0, 32);
+  return { publicId, secret, fullKey: `sbu_${publicId}.${secret}` };
+}
+
+function parseUserCredentials(request: Request): { username: string | null; key: string | null } {
+  return {
+    username: request.headers.get("X-Second-Brain-User"),
+    key: request.headers.get("X-Second-Brain-User-Key"),
+  };
+}
+
+async function resolveUser(
+  request: Request, env: Env
+): Promise<{ user_id: string; username: string } | null> {
+  const { username, key } = parseUserCredentials(request);
+  if (!username || !key) return null;
+
+  // Extract the secret part from "sbu_<publicId>.<secret>" format
+  const dotIndex = key.lastIndexOf(".");
+  const rawSecret = dotIndex > -1 ? key.slice(dotIndex + 1) : key;
+
+  const normalized = username.toLowerCase().trim();
+  const row = await (env.DB as any).prepare(
+    "SELECT id, auth_key_hash FROM users WHERE normalized_username = ? AND status = 'active'"
+  ).bind(normalized).first();
+  if (!row) return null;
+
+  const keyHash = await hmacKey(rawSecret, AUTH_PEPPER);
+
+  // Constant-time comparison to prevent timing side-channel attacks
+  const storedHash = row.auth_key_hash as string;
+  if (keyHash.length !== storedHash.length) return null;
+  const encoder = new TextEncoder();
+  const a = encoder.encode(keyHash);
+  const b = encoder.encode(storedHash);
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  if (diff !== 0) return null;
+
+  return { user_id: row.id, username };
+}
+
 function isAuthorized(request: Request, env: Env): boolean {
   if (request.headers.get("Authorization") === `Bearer ${env.AUTH_TOKEN}`) return true;
   return new URL(request.url).searchParams.get("token") === env.AUTH_TOKEN;
@@ -570,8 +696,28 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-// Returns a 401 Response if the request lacks a valid token, otherwise null —
-// lets routes early-return with `const authErr = requireAuth(...); if (authErr) return authErr;`
+// Async auth: returns `{ error, user_id, username }`. All route handlers should
+// use this. Legacy bearer-only → system user ID. Bearer + user headers → resolved user.
+export async function requireAuthAsync(
+  request: Request, env: Env
+): Promise<{ error: Response | null; user_id?: string; username?: string }> {
+  if (!isAuthorized(request, env)) {
+    return { error: json({ ok: false, error: "Unauthorized" }, 401) };
+  }
+  const { username, key } = parseUserCredentials(request);
+  if (username && key) {
+    const resolved = await resolveUser(request, env);
+    if (!resolved) {
+      return { error: json({ ok: false, error: "Unauthorized" }, 401) };
+    }
+    return { error: null, user_id: resolved.user_id, username: resolved.username };
+  }
+  // Legacy mode: bearer token only → system user
+  const systemUserId = await getSystemUserId(env);
+  return { error: null, user_id: systemUserId };
+}
+
+// Sync version for backward compat (doesn't verify user key — use requireAuthAsync in routes)
 function requireAuth(request: Request, env: Env): Response | null {
   if (isAuthorized(request, env)) return null;
   return json({ ok: false, error: "Unauthorized" }, 401);
@@ -675,11 +821,22 @@ export async function checkVectorizeHealth(env: Env): Promise<VectorizeHealth> {
 
 // ─── Database initialization ──────────────────────────────────────────────────
 
+async function getSystemUserId(env: Env): Promise<string> {
+  if (cachedSystemUserId) return cachedSystemUserId;
+  const row = await (env.DB as any).prepare(
+    "SELECT id FROM users WHERE username = '_system'"
+  ).first();
+  if (row) { cachedSystemUserId = row.id; return row.id; }
+  // Should not happen after initialization, but fallback
+  return "_system";
+}
+
 async function initializeDatabase(env: Env): Promise<void> {
   try {
     await env.DB.exec(`CREATE TABLE IF NOT EXISTS entries (id TEXT PRIMARY KEY, content TEXT NOT NULL, tags TEXT NOT NULL DEFAULT '[]', source TEXT NOT NULL DEFAULT 'api', created_at INTEGER NOT NULL, vector_ids TEXT NOT NULL DEFAULT '[]')`);
     await env.DB.exec(`CREATE INDEX IF NOT EXISTS idx_entries_created_at ON entries(created_at DESC)`);
     await env.DB.exec(`CREATE INDEX IF NOT EXISTS idx_entries_source ON entries(source)`);
+    await env.DB.exec(`CREATE INDEX IF NOT EXISTS idx_entries_owner ON entries(owner_user_id)`);
     // Relationship graph (issue #16). One additive table — never touches existing
     // rows/queries, so old code ignores it and rollback is a no-op. Designed to never
     // need an ALTER: type/provenance are free TEXT validated in code, and metadata is
@@ -687,6 +844,9 @@ async function initializeDatabase(env: Env): Promise<void> {
     await env.DB.exec(`CREATE TABLE IF NOT EXISTS edges (id TEXT PRIMARY KEY, source_id TEXT NOT NULL, target_id TEXT NOT NULL, type TEXT NOT NULL DEFAULT 'relates_to', weight REAL NOT NULL DEFAULT 0.5, provenance TEXT NOT NULL DEFAULT 'inferred', metadata TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, UNIQUE(source_id, target_id, type))`);
     await env.DB.exec(`CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(source_id)`);
     await env.DB.exec(`CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target_id)`);
+    // Users table for multi-user auth
+    await env.DB.exec(`CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, normalized_username TEXT NOT NULL UNIQUE, auth_key_hash TEXT NOT NULL, auth_key_prefix TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', created_at INTEGER NOT NULL, last_used_at INTEGER)`);
+    await env.DB.exec(`CREATE INDEX IF NOT EXISTS idx_users_normalized_username ON users(normalized_username)`);
   } catch (e) {
     console.error("Database initialization error (non-fatal):", e);
   }
@@ -695,8 +855,40 @@ async function initializeDatabase(env: Env): Promise<void> {
     `ALTER TABLE entries ADD COLUMN importance_score INTEGER DEFAULT 0`,
     `ALTER TABLE entries ADD COLUMN contradiction_wins INTEGER DEFAULT 0`,
     `ALTER TABLE entries ADD COLUMN contradiction_losses INTEGER DEFAULT 0`,
+    `ALTER TABLE entries ADD COLUMN owner_user_id TEXT NOT NULL DEFAULT ''`,
   ]) {
     try { await env.DB.exec(alter); } catch { /* column already exists — no-op */ }
+  }
+
+  // Migration: ensure _system user exists and all entries are owned
+  try {
+    let systemRow = await (env.DB as any).prepare(
+      "SELECT id FROM users WHERE username = '_system'"
+    ).first();
+
+    if (!systemRow) {
+      // Create _system user with inactive status and a random key nobody has
+      const systemId = crypto.randomUUID().replace(/-/g, "");
+      const randomKey = Array.from(crypto.getRandomValues(new Uint8Array(32)))
+        .map(b => b.toString(36).padStart(2, "0")).join("").slice(0, 32);
+      const keyHash = await hmacKey(randomKey, AUTH_PEPPER);
+      await (env.DB as any).prepare(
+        "INSERT INTO users (id, username, normalized_username, auth_key_hash, auth_key_prefix, status, created_at) VALUES (?, ?, ?, ?, ?, 'inactive', ?)"
+      ).bind(systemId, "_system", "_system", keyHash, "sb_system.", Date.now()).run();
+      systemRow = { id: systemId };
+    }
+
+    cachedSystemUserId = systemRow.id;
+
+    // Assign all unowned entries to system user
+    const { meta } = await (env.DB as any).prepare(
+      "UPDATE entries SET owner_user_id = ? WHERE owner_user_id = ''"
+    ).bind(systemRow.id).run();
+    if (meta?.changes > 0) {
+      console.log(`Migration: assigned ${meta.changes} entries to _system user`);
+    }
+  } catch (e) {
+    console.error("Migration error (non-fatal):", e);
   }
 }
 
@@ -739,15 +931,25 @@ export type MergeAction =
 // Merges duplicate detection, contradiction detection, and smart merge into a
 // single embed + Vectorize query. For flagged entries (0.85–0.95) the combined
 // prompt replaces the contradiction-only prompt — same number of LLM calls.
-export async function checkDuplicateAndContradiction(content: string, env: Env): Promise<{
+export async function checkDuplicateAndContradiction(content: string, env: Env, userId?: string): Promise<{
   duplicate: DuplicateResult;
   contradiction: ContradictionResult;
   mergeAction: MergeAction | null;
   neighbors: { id: string; score: number }[];
+  crossUserSimilar: { entryId: string; ownerUsername: string; score: number } | null;
 }> {
   const sample = getDuplicateCheckSample(content);
   const values = await embed(sample, env);
-  const { matches } = await env.VECTORIZE.query(values, { topK: 5, returnMetadata: "all" });
+  const vectorizeOpts: Record<string, any> = { topK: 5, returnMetadata: "all" };
+  if (userId) {
+    vectorizeOpts.metadataFilter = {
+      OR: [
+        { owner_user_id: { $eq: userId } },
+        { is_private: { $eq: false } }
+      ]
+    };
+  }
+  let { matches } = await env.VECTORIZE.query(values, vectorizeOpts);
 
   // Neighbors for graph auto-linking (issue #16): the topK matches collapsed to
   // parent ids (strongest score per parent). Exposed so captureEntry can create
@@ -766,6 +968,23 @@ export async function checkDuplicateAndContradiction(content: string, env: Env):
     const matchId = (top.metadata as any)?.parentId ?? top.id;
     if (top.score >= DUPLICATE_BLOCK_THRESHOLD) duplicate = { status: "blocked", matchId, score: top.score };
     else if (top.score >= DUPLICATE_FLAG_THRESHOLD) duplicate = { status: "flagged", matchId, score: top.score };
+  }
+
+  // ── Cross-user mention: informational only, never blocks or flags ────────────
+  let crossUserSimilar: { entryId: string; ownerUsername: string; score: number } | null = null;
+  if (userId && duplicate.status === "flagged" && matches.length) {
+    const top = matches[0];
+    const topMeta = top.metadata as any;
+    const topOwnerId = topMeta?.owner_user_id;
+    if (topOwnerId && topOwnerId !== userId) {
+      // Look up the username for the cross-user match
+      const ownerRow = await env.DB.prepare(
+        `SELECT username FROM users WHERE id = ?`
+      ).bind(topOwnerId).first() as { username: string } | null;
+      if (ownerRow?.username) {
+        crossUserSimilar = { entryId: (topMeta?.parentId ?? top.id) as string, ownerUsername: ownerRow.username, score: top.score };
+      }
+    }
   }
 
   // ── Skip all LLM work if blocked ─────────────────────────────────────────────
@@ -879,7 +1098,7 @@ Respond with JSON only. No text outside the JSON object.
     }
   }
 
-  return { duplicate, contradiction, mergeAction, neighbors };
+  return { duplicate, contradiction, mergeAction, neighbors, crossUserSimilar };
 }
 
 // ─── Chunking ─────────────────────────────────────────────────────────────────
@@ -1148,19 +1367,46 @@ export async function inferQueryTags(query: string, env: Env): Promise<string[]>
 // Builds the WHERE/ORDER/LIMIT clause shared by list_recent and GET /list so
 // both stay in sync on which filters (tag, after, before) are supported.
 
+// ─── Visibility enforcement ──────────────────────────────────────────────────
+// Users see their own private entries + all public entries, never others' private entries.
+
+function buildVisibilityClause(userId: string): { sql: string; bind: string[] } {
+  return {
+    sql: `(owner_user_id = ? OR tags NOT LIKE '%\"private\"%')`,
+    bind: [userId],
+  };
+}
+
 export function buildEntryFilterQuery(params: {
   n: number;
   tag?: string;
   after?: number;
   before?: number;
+  userId?: string;
+  user?: string;
+  visibility?: string;
 }): { sql: string; bindings: (string | number)[] } {
   const conds: string[] = [];
   const bindings: (string | number)[] = [];
-  if (params.tag) { conds.push(`tags LIKE ?`); bindings.push(`%"${params.tag}"%`); }
+  if (params.tag) { conds.push(`tags LIKE ?`); bindings.push(`%"${escapeLikePattern(params.tag)}"%`); }
   if (params.after !== undefined) { conds.push(`created_at >= ?`); bindings.push(params.after); }
   if (params.before !== undefined) { conds.push(`created_at <= ?`); bindings.push(params.before); }
+  if (params.user) {
+    conds.push(`owner_user_id = (SELECT id FROM users WHERE username = ?)`);
+    bindings.push(params.user);
+  }
+  if (params.visibility === 'public') {
+    conds.push(`tags NOT LIKE '%\"private\"%'`);
+  } else if (params.visibility === 'private' && params.userId) {
+    conds.push(`owner_user_id = ? AND tags LIKE '%\"private\"%'`);
+    bindings.push(params.userId);
+  } else if (params.userId) {
+    const vis = buildVisibilityClause(params.userId);
+    conds.push(vis.sql);
+    bindings.push(...vis.bind);
+  }
 
-  let sql = `SELECT id, content, tags, source, created_at, vector_ids FROM entries`;
+  let sql = `SELECT id, content, tags, source, created_at, vector_ids, owner_user_id FROM entries`;
   if (conds.length) sql += ` WHERE ` + conds.join(` AND `);
   sql += ` ORDER BY created_at DESC LIMIT ?`;
   bindings.push(params.n);
@@ -1177,7 +1423,9 @@ async function storeEntry(
   content: string,
   tags: string[],
   source: string,
-  now: number
+  now: number,
+  ownerUserId?: string,
+  isPrivate?: boolean
 ): Promise<string[]> {
   const chunks = chunkText(content);
 
@@ -1191,6 +1439,8 @@ async function storeEntry(
         tags,
         source,
         created_at: now,
+        owner_user_id: ownerUserId ?? "",
+        is_private: isPrivate ?? false,
       };
 
       tags.forEach(t => {
@@ -1226,6 +1476,44 @@ async function deleteStaleVectors(env: Env, oldIds: string[], newIds: string[]):
   if (stale.length) await env.VECTORIZE.deleteByIds(stale);
 }
 
+// Re-index all vectors with ownership metadata. Called from POST /vectorize-pending?reindex=true
+// or as a standalone migration step after adding owner_user_id/is_private to vector metadata.
+export async function reindexAllVectors(env: Env): Promise<{ processed: number; failed: number }> {
+  let processed = 0;
+  let failed = 0;
+
+  // Find all entries that have vectors
+  const { results: entries } = await env.DB.prepare(
+    `SELECT id, content, tags, source, created_at, vector_ids, owner_user_id FROM entries WHERE vector_ids != '[]'`
+  ).all() as { results: Record<string, any>[] };
+
+  for (const entry of entries) {
+    const id = entry.id as string;
+    const oldVectorIds: string[] = JSON.parse(entry.vector_ids as string ?? "[]");
+    const tags: string[] = JSON.parse(entry.tags as string ?? "[]");
+    const ownerUserId = (entry as any).owner_user_id as string ?? "";
+    const isPrivate = tags.includes("private");
+
+    try {
+      // Delete old vectors
+      if (oldVectorIds.length) {
+        await env.VECTORIZE.deleteByIds(oldVectorIds);
+      }
+      // Re-embed with ownership metadata
+      const newVectorIds = await storeEntry(
+        env, id, entry.content as string, tags, entry.source as string,
+        entry.created_at as number, ownerUserId || undefined, isPrivate
+      );
+      processed++;
+    } catch (e) {
+      console.error(`Re-index failed for entry ${id} (non-fatal):`, e);
+      failed++;
+    }
+  }
+
+  return { processed, failed };
+}
+
 // ─── Append to existing entry ─────────────────────────────────────────────────
 // For short appends (combined content ≤ CHUNK_MAX_CHARS): adds only the new
 // addition as a single new Vectorize vector pointing to the parent ID.
@@ -1239,7 +1527,8 @@ async function appendToEntry(
   existingContent: string,
   addition: string,
   tags: string[],
-  source: string
+  source: string,
+  ownerUserId?: string
 ): Promise<void> {
   // Read existing vector_ids upfront — needed by both paths
   const row = await env.DB.prepare(
@@ -1264,7 +1553,7 @@ async function appendToEntry(
     // Step 2: Re-chunk + re-embed full content (also updates vector_ids in D1)
     let newVectorIds: string[] = [];
     try {
-      newVectorIds = await storeEntry(env, id, newContent, tags, source, Date.now());
+      newVectorIds = await storeEntry(env, id, newContent, tags, source, Date.now(), ownerUserId, tags.includes("private"));
     } catch (e) {
       console.error("Vectorize re-embed failed (non-fatal):", e);
     }
@@ -1458,7 +1747,8 @@ State of "${tag}":`;
 export async function compressTag(
   tag: string,
   env: Env,
-  ctx: ExecutionContext
+  ctx: ExecutionContext,
+  userId?: string
 ): Promise<{ synthesizedId: string | null; entriesUsed: number; text: string }> {
   // Reserved/namespaced tags (kind:*, status:*) describe a memory's type/lifecycle,
   // not a topic — digesting them would blend unrelated memories (and could compress
@@ -1474,23 +1764,27 @@ export async function compressTag(
       AND tags LIKE ?
       AND created_at > ?
     LIMIT 1
-  `).bind(`%"${tag}"%`, Date.now() - 86400000).first();
+  `).bind(`%"${escapeLikePattern(tag)}"%`, Date.now() - 86400000).first();
 
   if (recentSynth) {
     return { synthesizedId: null, entriesUsed: 0, text: "" };
   }
 
   // Fetch compressible entries: tagged with this tag, not system-tagged, not high-importance
+  const eligibilitySql = compressionEligibilitySql("", userId);
+  const bindValues = userId
+    ? [`%"${escapeLikePattern(tag)}"%`, Date.now() - COMPRESSION_MIN_AGE_MS, userId]
+    : [`%"${escapeLikePattern(tag)}"%`, Date.now() - COMPRESSION_MIN_AGE_MS];
   const { results: rawEntries } = await env.DB.prepare(`
     SELECT id, content FROM entries
     WHERE tags LIKE ?
       AND tags NOT LIKE '%"synthesized"%'
       AND tags NOT LIKE '%"auto-pattern"%'
       AND tags NOT LIKE '%"rolled-up"%'
-      AND ${compressionEligibilitySql()}
+      AND ${eligibilitySql}
     ORDER BY created_at DESC
     LIMIT 50
-  `).bind(`%"${tag}"%`, Date.now() - COMPRESSION_MIN_AGE_MS).all();
+  `).bind(...bindValues).all();
 
   if (rawEntries.length < 10) {
     return { synthesizedId: null, entriesUsed: 0, text: "" };
@@ -1523,27 +1817,37 @@ export async function compressTag(
 async function runNightlyCompression(env: Env, ctx: ExecutionContext): Promise<void> {
   await initializeDatabase(env);
 
-  const { results } = await env.DB.prepare(`
-    SELECT value as tag, COUNT(*) as count
-    FROM entries, json_each(entries.tags)
-    WHERE value NOT IN ('synthesized', 'auto-pattern', 'duplicate-candidate', 'contradiction-resolved', 'rolled-up')
-      AND value NOT LIKE 'status:%'
-      AND value NOT LIKE 'kind:%'
-      AND entries.tags NOT LIKE '%"rolled-up"%'
-      AND entries.tags NOT LIKE '%"synthesized"%'
-      AND entries.tags NOT LIKE '%"auto-pattern"%'
-      AND ${compressionEligibilitySql("entries.")}
-    GROUP BY value
-    HAVING count > 10
-    ORDER BY count DESC
-  `).bind(Date.now() - COMPRESSION_MIN_AGE_MS).all();
+  // Get all active users for per-user compression
+  const { results: users } = await env.DB.prepare(
+    `SELECT id FROM users WHERE status = 'active'`
+  ).all<{ id: string }>();
 
-  for (const row of results) {
-    const tag = row.tag as string;
-    try {
-      await compressTag(tag, env, ctx);
-    } catch (e) {
-      console.error(`Compression failed for tag "${tag}" (non-fatal):`, e);
+  // If no users table or no users, fall back to system-user-only compression
+  const userIds = users.length > 0 ? users.map(u => u.id) : [""];
+
+  for (const userId of userIds) {
+    const { results } = await env.DB.prepare(`
+      SELECT value as tag, COUNT(*) as count
+      FROM entries, json_each(entries.tags)
+      WHERE value NOT IN ('synthesized', 'auto-pattern', 'duplicate-candidate', 'contradiction-resolved', 'rolled-up')
+        AND value NOT LIKE 'status:%'
+        AND value NOT LIKE 'kind:%'
+        AND entries.tags NOT LIKE '%"rolled-up"%'
+        AND entries.tags NOT LIKE '%"synthesized"%'
+        AND entries.tags NOT LIKE '%"auto-pattern"%'
+        AND ${compressionEligibilitySql("entries.", userId || undefined)}
+      GROUP BY value
+      HAVING count > 10
+      ORDER BY count DESC
+    `).bind(Date.now() - COMPRESSION_MIN_AGE_MS, ...(userId ? [userId] : [])).all();
+
+    for (const row of results) {
+      const tag = row.tag as string;
+      try {
+        await compressTag(tag, env, ctx, userId || undefined);
+      } catch (e) {
+        console.error(`Compression failed for tag "${tag}" user "${userId}" (non-fatal):`, e);
+      }
     }
   }
 }
@@ -1574,14 +1878,14 @@ export async function runGraphPass(env: Env, ctx: ExecutionContext): Promise<voi
   // (2) Backfill: find a bounded batch of entries with no edges yet and link each to
   // its nearest neighbors (same logic as on-write inference). Empty edges table →
   // every entry is unlinked → the graph fills in over successive nightly runs.
-  let unlinked: { id: string; content: string }[] = [];
+  let unlinked: { id: string; content: string; owner_user_id: string; tags: string }[] = [];
   try {
     const { results } = await env.DB.prepare(
-      `SELECT id, content FROM entries
+      `SELECT id, content, owner_user_id, tags FROM entries
        WHERE id NOT IN (SELECT source_id FROM edges) AND id NOT IN (SELECT target_id FROM edges)
          AND tags NOT LIKE '%"status:deprecated"%'
        ORDER BY created_at DESC LIMIT ${GRAPH_PASS_BACKFILL_LIMIT}`
-    ).all() as { results: { id: string; content: string }[] };
+    ).all() as { results: { id: string; content: string; owner_user_id: string; tags: string }[] };
     unlinked = results;
   } catch (e) {
     console.error("Graph backfill query failed (non-fatal):", e);
@@ -1596,7 +1900,19 @@ export async function runGraphPass(env: Env, ctx: ExecutionContext): Promise<voi
         const pid = (m.metadata as any)?.parentId ?? m.id;
         scores.set(pid, Math.max(scores.get(pid) ?? 0, m.score));
       }
-      const neighbors = [...scores.entries()].map(([id, score]) => ({ id, score }));
+      let neighbors = [...scores.entries()].map(([id, score]) => ({ id, score }));
+
+      // Visibility filter: only link to entries mutually visible with this entry's owner.
+      // Private entries link only to same-owner entries; public entries link to public only.
+      const entryTags: string[] = JSON.parse(entry.tags ?? "[]");
+      const entryOwner = entry.owner_user_id;
+      if (entryOwner || entryTags.includes("private")) {
+        const neighborIds = neighbors.map(n => n.id);
+        const visibleIds = await filterVisibleIds(neighborIds, entryOwner || "__no_owner__", env);
+        const visibleSet = new Set(visibleIds);
+        neighbors = neighbors.filter(n => visibleSet.has(n.id));
+      }
+
       await inferEdgesOnWrite(entry.id, neighbors, env);
     } catch (e) {
       console.error(`Graph backfill failed for ${entry.id} (non-fatal):`, e);
@@ -1618,6 +1934,7 @@ export interface RecallMatch {
   source: string;
   isUpdate: boolean;
   hop: number; // 0 = direct match; ≥1 = surfaced via graph expansion (issue #16)
+  crossUserMention?: { entryId: string; ownerUsername: string; similarity: number };
 }
 
 export interface RecallSearchResult {
@@ -1640,7 +1957,8 @@ export function renderRecallText(matches: RecallMatch[], insight: string): strin
     const score = (m.score * 100).toFixed(0);
     const updateLabel = m.isUpdate ? " [updated]" : "";
     const hopLabel = m.hop > 0 ? ` [related · ${m.hop} hop${m.hop > 1 ? "s" : ""}]` : "";
-    return `${i + 1}. [${date}${src}${tagList}] (${score}% match)${updateLabel}${hopLabel}\nID: ${m.id}\n${m.content}`;
+    const crossUserLabel = m.crossUserMention ? ` · also by ${m.crossUserMention.ownerUsername}` : "";
+    return `${i + 1}. [${date}${src}${tagList}] (${score}% match)${updateLabel}${hopLabel}${crossUserLabel}\nID: ${m.id}\n${m.content}`;
   }).join("\n\n");
   return insight ? `**Insight:** ${insight}\n\n---\n\n${text}` : text;
 }
@@ -1662,12 +1980,17 @@ export function tokenizeQuery(query: string): string[] {
 
 // Keyword candidates: entries whose content contains any query token, bounded by
 // KEYWORD_CANDIDATE_LIMIT. Relevance ranking happens in fuseDenseAndKeyword.
-async function keywordSearch(tokens: string[], env: Env): Promise<KeywordRow[]> {
+async function keywordSearch(tokens: string[], env: Env, userId?: string): Promise<KeywordRow[]> {
   if (!tokens.length) return [];
   const where = tokens.map(() => "content LIKE ?").join(" OR ");
+  const visClause = userId ? buildVisibilityClause(userId) : null;
+  const fullWhere = visClause ? `(${where}) AND ${visClause.sql}` : where;
+  const bindValues = visClause
+    ? [...tokens.map(t => `%${t}%`), ...visClause.bind]
+    : tokens.map(t => `%${t}%`);
   const { results } = await env.DB.prepare(
-    `SELECT id, content, tags, source, created_at FROM entries WHERE ${where} ORDER BY created_at DESC LIMIT ?`
-  ).bind(...tokens.map(t => `%${t}%`), KEYWORD_CANDIDATE_LIMIT).all();
+    `SELECT id, content, tags, source, created_at FROM entries WHERE ${fullWhere} ORDER BY created_at DESC LIMIT ?`
+  ).bind(...bindValues, KEYWORD_CANDIDATE_LIMIT).all();
   return results as unknown as KeywordRow[];
 }
 
@@ -1725,13 +2048,14 @@ function fuseDenseAndKeyword(
 }
 
 export async function recallEntries(
-  params: { query: string; topK: number; tag?: string; after?: number; before?: number; kind?: MemoryKind; hops?: number },
+  params: { query: string; topK: number; tag?: string; after?: number; before?: number; kind?: MemoryKind; hops?: number; userId?: string },
   env: Env,
   ctx: ExecutionContext
 ): Promise<RecallSearchResult> {
   const { query, topK } = params;
   let { tag, after, before, kind } = params;
   const hops = Math.max(0, Math.min(GRAPH_MAX_HOPS, params.hops ?? 0));
+  const userId = params.userId;
   const now = Date.now();
   let semanticUnavailable = false;
 
@@ -1758,12 +2082,22 @@ export async function recallEntries(
     // truth for tags and already stores each entry's vector_ids.
     const { results: tagRows } = await env.DB.prepare(
       `SELECT id, vector_ids, content, tags, source, created_at FROM entries WHERE tags LIKE ?`
-    ).bind(`%"${tag}"%`).all();
+    ).bind(`%"${escapeLikePattern(tag)}"%`).all();
     if (!tagRows.length) return { matches: [], insight: "", semanticUnavailable };
-    keywordRows = tagRows as unknown as KeywordRow[];
+
+    // Visibility filter: exclude other users' private entries
+    const visibleTagRows = userId
+      ? (tagRows as any[]).filter((r: any) => {
+          const tags: string[] = JSON.parse(r.tags ?? "[]");
+          return !(tags.includes("private") && r.owner_user_id !== userId);
+        })
+      : tagRows as any[];
+    if (!visibleTagRows.length) return { matches: [], insight: "", semanticUnavailable };
+
+    keywordRows = visibleTagRows as unknown as KeywordRow[];
 
     const vectorIds = [...new Set(
-      (tagRows as any[]).flatMap(r => JSON.parse((r.vector_ids as string) ?? "[]") as string[])
+      (visibleTagRows as any[]).flatMap(r => JSON.parse((r.vector_ids as string) ?? "[]") as string[])
     )];
     if (!vectorIds.length) return { matches: [], insight: "", semanticUnavailable };
 
@@ -1790,7 +2124,16 @@ export async function recallEntries(
     const vectorizeTopK = Math.min(topK * VECTORIZE_TOP_K_MULTIPLIER, 50);
     const denseQuery = async (): Promise<{ matches: VectorizeMatch[] }> => {
       try {
-        return await env.VECTORIZE.query(values, { topK: vectorizeTopK, returnMetadata: "all" });
+        const vectorizeOpts: Record<string, any> = { topK: vectorizeTopK, returnMetadata: "all" };
+        if (userId) {
+          vectorizeOpts.metadataFilter = {
+            OR: [
+              { owner_user_id: { $eq: userId } },
+              { is_private: { $eq: false } }
+            ]
+          };
+        }
+        return await env.VECTORIZE.query(values, vectorizeOpts);
       } catch (e) {
         // This is the authoritative signal that the Vectorize index is unreachable —
         // semanticUnavailable drives the dashboard banner (checkVectorizeHealth/GET /health
@@ -1800,13 +2143,22 @@ export async function recallEntries(
         return { matches: [] as VectorizeMatch[] };
       }
     };
-    const [denseResults, kwRows] = await Promise.all([denseQuery(), keywordSearch(tokens, env)]);
+    const [denseResults, kwRows] = await Promise.all([denseQuery(), keywordSearch(tokens, env, userId)]);
     results = denseResults;
     keywordRows = kwRows;
 
     if (!semanticUnavailable && results.matches.length && results.matches[0].score < DUPLICATE_FLAG_THRESHOLD) {
       try {
-        results = await env.VECTORIZE.query(values, { topK: 50, returnMetadata: "all" });
+        const widenOpts: Record<string, any> = { topK: 50, returnMetadata: "all" };
+        if (userId) {
+          widenOpts.metadataFilter = {
+            OR: [
+              { owner_user_id: { $eq: userId } },
+              { is_private: { $eq: false } }
+            ]
+          };
+        }
+        results = await env.VECTORIZE.query(values, widenOpts);
       } catch (e) {
         // Narrow query already succeeded with real matches, so the index works.
         // A transient widen failure must not claim semantic search is unavailable.
@@ -1821,10 +2173,28 @@ export async function recallEntries(
   const fusedMatches = fuseDenseAndKeyword(results.matches as VectorizeMatch[], keywordRows, tokens, !tag || semanticUnavailable);
   if (!fusedMatches.length) return { matches: [], insight: "", semanticUnavailable };
 
+  // Visibility filter: after RRF fusion, remove candidates that are other users' private entries.
+  let visibleFusedMatches = fusedMatches;
+  if (userId) {
+    const candidateParentIds = [...new Set(fusedMatches.map(m => (m.metadata as any)?.parentId ?? m.id))] as string[];
+    const visPlaceholders = candidateParentIds.map(() => "?").join(", ");
+    const { results: visRows } = await env.DB.prepare(
+      `SELECT id, owner_user_id, tags FROM entries WHERE id IN (${visPlaceholders})`
+    ).bind(...candidateParentIds).all() as { results: { id: string; owner_user_id: string; tags: string }[] };
+    const hiddenIds = new Set(
+      visRows.filter((r: any) => {
+        const tags: string[] = JSON.parse(r.tags ?? "[]");
+        return tags.includes("private") && r.owner_user_id !== userId;
+      }).map((r: any) => r.id)
+    );
+    visibleFusedMatches = fusedMatches.filter(m => !hiddenIds.has((m.metadata as any)?.parentId ?? m.id));
+    if (!visibleFusedMatches.length) return { matches: [], insight: "", semanticUnavailable };
+  }
+
   // Fetch recall_count and importance_score for all candidates to use in scoring.
   // The tag path can produce far more than 100 candidates, so chunk the IN query
   // to stay under D1's bound-parameter limit.
-  const candidateIds = [...new Set(fusedMatches.map(m => (m.metadata as any)?.parentId ?? m.id))] as string[];
+  const candidateIds = [...new Set(visibleFusedMatches.map(m => (m.metadata as any)?.parentId ?? m.id))] as string[];
   const rcRows: { id: string; recall_count: number; importance_score: number; contradiction_wins: number; contradiction_losses: number }[] = [];
   for (let i = 0; i < candidateIds.length; i += D1_MAX_BOUND_PARAMS) {
     const batch = candidateIds.slice(i, i + D1_MAX_BOUND_PARAMS);
@@ -1839,7 +2209,7 @@ export async function recallEntries(
   const contradictionWins = new Map(rcRows.map(r => [r.id, r.contradiction_wins ?? 0]));
   const contradictionLosses = new Map(rcRows.map(r => [r.id, r.contradiction_losses ?? 0]));
 
-  const reranked = rerankWithTimeDecay(fusedMatches, recallCounts, importanceScores, queryTags, contradictionWins, contradictionLosses);
+  const reranked = rerankWithTimeDecay(visibleFusedMatches, recallCounts, importanceScores, queryTags, contradictionWins, contradictionLosses);
 
   const seen = new Set<string>();
   const deduped = reranked.filter((m) => {
@@ -1861,7 +2231,7 @@ export async function recallEntries(
   let expandedScored: { parentId: string; score: number; hop: number }[] = [];
   if (hops > 0) {
     const minSeedScore = deduped.reduce((mn, m) => Math.min(mn, m.score), Infinity);
-    const expanded = await expandGraph(seedParentIds, { hops }, env);
+    const expanded = await expandGraph(seedParentIds, { hops }, env, userId);
     expandedScored = expanded.map(n => ({
       parentId: n.id,
       hop: n.hop,
@@ -1875,6 +2245,11 @@ export async function recallEntries(
   const placeholders = allParentIds.map(() => "?").join(", ");
   const d1Bindings: (string | number)[] = [...allParentIds];
   let d1Sql = `SELECT id, content, tags, source, created_at FROM entries WHERE id IN (${placeholders}) AND tags NOT LIKE '%"auto-pattern"%' AND tags NOT LIKE '%"status:deprecated"%'`;
+  if (userId) {
+    const vis = buildVisibilityClause(userId);
+    d1Sql += ` AND ${vis.sql}`;
+    d1Bindings.push(...vis.bind);
+  }
   if (kind && (KIND_VALUES as readonly string[]).includes(kind)) {
     // Safe to interpolate: `kind` is validated against the KIND_VALUES enum just above,
     // so only "episodic"/"semantic" can reach the string. Kept as a literal (not a bound
@@ -1944,6 +2319,40 @@ export async function recallEntries(
   const maxScore = matches.reduce((mx, m) => Math.max(mx, m.score), 0);
   if (maxScore > 0) for (const m of matches) m.score = m.score / maxScore;
 
+  // ── Cross-user mentions: flag high-similarity public entries from other users ──
+  if (userId) {
+    // Collect unique owner IDs from deduped Vectorize matches that differ from the current user
+    const crossUserOwnerIds = new Set<string>();
+    for (const m of deduped) {
+      const ownerId = (m.metadata as any)?.owner_user_id;
+      if (ownerId && ownerId !== userId) crossUserOwnerIds.add(ownerId);
+    }
+    if (crossUserOwnerIds.size) {
+      const ownerIds = [...crossUserOwnerIds];
+      const placeholders = ownerIds.map(() => "?").join(", ");
+      const { results: ownerRows } = await env.DB.prepare(
+        `SELECT id, username FROM users WHERE id IN (${placeholders})`
+      ).bind(...ownerIds).all() as { results: { id: string; username: string }[] };
+      const usernameMap = new Map(ownerRows.map(r => [r.id, r.username]));
+
+      // Attach crossUserMention to matches owned by other users with high similarity
+      const seenOwnerMatches = new Set<string>();
+      for (const m of matches) {
+        // Find the original Vectorize match to get the raw score and owner
+        const rawMatch = deduped.find(d => ((d.metadata as any)?.parentId ?? d.id) === m.id);
+        if (!rawMatch) continue;
+        const ownerId = (rawMatch.metadata as any)?.owner_user_id;
+        if (!ownerId || ownerId === userId) continue;
+        const username = usernameMap.get(ownerId);
+        if (!username) continue;
+        // Only mention once per owner
+        if (seenOwnerMatches.has(ownerId)) continue;
+        seenOwnerMatches.add(ownerId);
+        m.crossUserMention = { entryId: m.id, ownerUsername: username, similarity: m.score };
+      }
+    }
+  }
+
   // Synthesize over exactly what's shown (seeds + any surfaced neighbors) so the
   // insight stays grounded in the returned results.
   const insight = matches.length > 1
@@ -1983,8 +2392,8 @@ function scheduleClassifyAndTag(entryId: string, content: string, env: Env, ctx:
 
 export type CaptureResult =
   | { status: "blocked"; matchId: string; score: number }
-  | { status: "stored"; id: string }
-  | { status: "flagged"; id: string; matchId: string; score: number }
+  | { status: "stored"; id: string; crossUserNote?: string }
+  | { status: "flagged"; id: string; matchId: string; score: number; crossUserNote?: string }
   | { status: "contradiction"; id: string; resolvedConflict: string; reason?: string }
   | { status: "contradiction_protected"; id: string; canonicalId: string; reason?: string }
   | { status: "merged"; id: string }
@@ -1995,14 +2404,19 @@ export async function captureEntry(
   tags: string[],
   source: string,
   env: Env,
-  ctx: ExecutionContext
+  ctx: ExecutionContext,
+  userId?: string
 ): Promise<CaptureResult> {
   const raw = rawContent.trim();
   const { cleanContent, hashtags } = extractHashtags(raw);
   const c = cleanContent || raw;
   const t = [...new Set([...tags.map(tag => tag.toLowerCase()), ...hashtags])];
 
-  const { duplicate: dup, contradiction, mergeAction, neighbors } = await checkDuplicateAndContradiction(c, env);
+  const { duplicate: dup, contradiction, mergeAction, neighbors, crossUserSimilar } = await checkDuplicateAndContradiction(c, env, userId);
+
+  const crossUserNote = crossUserSimilar
+    ? `Similar content exists in ${crossUserSimilar.ownerUsername}'s public memories`
+    : undefined;
 
   if (dup.status === "blocked") {
     return { status: "blocked", matchId: dup.matchId, score: dup.score };
@@ -2014,10 +2428,15 @@ export async function captureEntry(
     const newContent = mergeAction.action === "merge" ? mergeAction.merged_content : c;
 
     const targetRow = await env.DB.prepare(
-      `SELECT tags, source, vector_ids, importance_score FROM entries WHERE id = ?`
+      `SELECT tags, source, vector_ids, importance_score, owner_user_id FROM entries WHERE id = ?`
     ).bind(targetId).first() as Record<string, any> | null;
 
     if (targetRow) {
+      // Ownership check: don't overwrite another user's entry
+      if (userId && targetRow.owner_user_id && targetRow.owner_user_id !== userId && targetRow.owner_user_id !== "") {
+        return { status: "flagged", id: crypto.randomUUID(), matchId: targetId, score: dup.score };
+      }
+
       const existingTags: string[] = JSON.parse(targetRow.tags ?? "[]");
       const existingSource = targetRow.source as string;
       const oldVectorIds: string[] = JSON.parse(targetRow.vector_ids ?? "[]");
@@ -2035,7 +2454,7 @@ export async function captureEntry(
       // Step 2: Re-embed new content — inserts new vectors, updates vector_ids in D1
       let newVectorIds: string[] = [];
       try {
-        newVectorIds = await storeEntry(env, targetId, newContent, existingTags, existingSource, Date.now());
+        newVectorIds = await storeEntry(env, targetId, newContent, existingTags, existingSource, Date.now(), userId, existingTags.includes("private"));
       } catch (e) { console.error("Vectorize re-embed failed (non-fatal):", e); }
 
       // Step 3: Delete only stale vectors — ids reused by the re-embed must survive
@@ -2059,11 +2478,11 @@ export async function captureEntry(
   const finalTags = dup.status === "flagged" ? [...baseTags, "duplicate-candidate"] : baseTags;
 
   await env.DB.prepare(
-    `INSERT INTO entries (id, content, tags, source, created_at, vector_ids) VALUES (?, ?, ?, ?, ?, ?)`
-  ).bind(id, c, JSON.stringify(finalTags), source, now, "[]").run();
+    `INSERT INTO entries (id, content, tags, source, created_at, vector_ids, owner_user_id) VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).bind(id, c, JSON.stringify(finalTags), source, now, "[]", userId ?? "").run();
 
   ctx.waitUntil(
-    storeEntry(env, id, c, finalTags, source, now)
+    storeEntry(env, id, c, finalTags, source, now, userId, finalTags.includes("private"))
       .catch(e => console.error("Vectorize insert failed (non-fatal):", e))
   );
 
@@ -2124,10 +2543,10 @@ export async function captureEntry(
   ctx.waitUntil(inferEdgesOnWrite(id, neighbors, env).catch(e => console.error("Edge inference failed (non-fatal):", e)));
 
   if (dup.status === "flagged") {
-    return { status: "flagged", id, matchId: dup.matchId, score: dup.score };
+    return { status: "flagged", id, matchId: dup.matchId, score: dup.score, crossUserNote };
   }
 
-  return { status: "stored", id };
+  return { status: "stored", id, crossUserNote };
 }
 
 // ─── Shared delete path ───────────────────────────────────────────────────────
@@ -2221,7 +2640,7 @@ function makeMirrorStore(env: Env): MirrorStore {
       // Embed failure is non-fatal — the entry keeps vector_ids=[] and the
       // vectorize-pending backstop re-embeds it later.
       try {
-        await storeEntry(env, id, content, tags, source, now);
+        await storeEntry(env, id, content, tags, source, now, undefined, tags.includes("private"));
       } catch (e) {
         console.error("Vectorize insert failed (non-fatal):", e);
       }
@@ -2240,7 +2659,7 @@ function makeMirrorStore(env: Env): MirrorStore {
       await env.DB.prepare(`UPDATE entries SET content = ? WHERE id = ?`).bind(content, id).run();
       let newVectorIds: string[] = [];
       try {
-        newVectorIds = await storeEntry(env, id, content, tags, row.source as string, Date.now());
+        newVectorIds = await storeEntry(env, id, content, tags, row.source as string, Date.now(), undefined, tags.includes("private"));
       } catch (e) {
         console.error("Vectorize re-embed failed (non-fatal):", e);
       }
@@ -2293,7 +2712,7 @@ async function runScheduledIntegrationSync(env: Env): Promise<void> {
 
 // ─── MCP Server ───────────────────────────────────────────────────────────────
 
-function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
+function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string): McpServer {
   const server = new McpServer({ name: "second-brain", version: "1.0.0" });
 
   // ── remember ────────────────────────────────────────────────────────────
@@ -2308,7 +2727,7 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
       },
     },
     async ({ content, tags, source }) => {
-      const result = await captureEntry(content, tags ?? [], source ?? "claude", env, ctx);
+      const result = await captureEntry(content, tags ?? [], source ?? "claude", env, ctx, userId);
       if (result.status === "blocked") {
         return { content: [{ type: "text", text: `Duplicate detected (${(result.score * 100).toFixed(0)}% match) — not stored. Existing entry ID: ${result.matchId}` }] };
       }
@@ -2343,13 +2762,17 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
     },
     async ({ id, addition }) => {
       const row = await env.DB.prepare(
-        `SELECT id, content, tags, source FROM entries WHERE id = ?`
+        `SELECT id, content, tags, source, owner_user_id FROM entries WHERE id = ?`
       ).bind(id).first() as Record<string, any> | null;
 
       if (!row) {
         return {
           content: [{ type: "text", text: `No entry found with ID: ${id}` }],
         };
+      }
+
+      if (userId && row.owner_user_id && row.owner_user_id !== userId && row.owner_user_id !== "") {
+        return { content: [{ type: "text", text: `No entry found with ID: ${id}` }] };
       }
 
       const existingContent = row.content as string;
@@ -2368,7 +2791,7 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
       }
 
       try {
-        await appendToEntry(env, id, existingContent, a, tags, source);
+        await appendToEntry(env, id, existingContent, a, tags, source, userId);
       } catch (e) {
         console.error("Append failed:", e);
         return {
@@ -2403,10 +2826,14 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
 
       // Read current row upfront — need tags, source, AND old vector_ids before any mutation
       const row = await env.DB.prepare(
-        `SELECT tags, source, vector_ids FROM entries WHERE id = ?`
+        `SELECT tags, source, vector_ids, owner_user_id FROM entries WHERE id = ?`
       ).bind(id).first() as Record<string, any> | null;
 
       if (!row) {
+        return { content: [{ type: "text", text: `No entry found with ID: ${id}` }] };
+      }
+
+      if (userId && row.owner_user_id && row.owner_user_id !== userId && row.owner_user_id !== "") {
         return { content: [{ type: "text", text: `No entry found with ID: ${id}` }] };
       }
 
@@ -2417,6 +2844,7 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
       const tags: string[] = JSON.parse(row.tags ?? "[]").filter((t: string) => t !== "rolled-up");
       const source = row.source as string;
       const oldVectorIds: string[] = JSON.parse(row.vector_ids ?? "[]");
+      const existingOwnerId = row.owner_user_id as string;
 
       // Step 1: Update D1 content and tags (strip rolled-up so updated entry ranks normally)
       await env.DB.prepare(`UPDATE entries SET content = ?, tags = ? WHERE id = ?`)
@@ -2425,7 +2853,7 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
       // Step 2: Re-embed new content → inserts new vectors + updates vector_ids in D1
       let newVectorIds: string[] = [];
       try {
-        newVectorIds = await storeEntry(env, id, newContent, tags, source, Date.now());
+      newVectorIds = await storeEntry(env, id, newContent, tags, source, Date.now(), existingOwnerId, tags.includes("private"));
       } catch (e) {
         console.error("Vectorize re-embed failed (non-fatal):", e);
       }
@@ -2455,6 +2883,12 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
       },
     },
     async ({ id, status }) => {
+      if (userId) {
+        const row = await env.DB.prepare(`SELECT owner_user_id FROM entries WHERE id = ?`).bind(id).first() as { owner_user_id: string } | null;
+        if (row && row.owner_user_id && row.owner_user_id !== userId && row.owner_user_id !== "") {
+          return { content: [{ type: "text", text: `No entry found with ID: ${id}` }] };
+        }
+      }
       const ok = await applyStatus(id, status as MemoryStatus, env);
       if (!ok) return { content: [{ type: "text", text: `No entry found with ID: ${id}` }] };
       return { content: [{ type: "text", text: status === "deprecated" ? `Entry ${id} deprecated — removed from recall, kept for audit.` : `Entry ${id} marked ${status}.` }] };
@@ -2477,7 +2911,7 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
       },
     },
     async ({ query, topK, tag, after, before, kind, hops }) => {
-      const { matches, insight, semanticUnavailable } = await recallEntries({ query, topK, tag, after, before, kind: kind as MemoryKind | undefined, hops }, env, ctx);
+      const { matches, insight, semanticUnavailable } = await recallEntries({ query, topK, tag, after, before, kind: kind as MemoryKind | undefined, hops, userId }, env, ctx);
 
       const notice = semanticUnavailable
         ? `Note: semantic search is unavailable because the Vectorize index is missing, so these are keyword matches only. Fix: ${VECTORIZE_FIX_HINT}.\n\n`
@@ -2504,7 +2938,7 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
       },
     },
     async ({ n, tag, after, before }) => {
-      const { sql, bindings } = buildEntryFilterQuery({ n, tag, after, before });
+      const { sql, bindings } = buildEntryFilterQuery({ n, tag, after, before, userId });
       const { results } = await env.DB.prepare(sql).bind(...bindings).all();
 
       if (!results.length) {
@@ -2532,6 +2966,12 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
       },
     },
     async ({ id }) => {
+      if (userId) {
+        const row = await env.DB.prepare(`SELECT owner_user_id FROM entries WHERE id = ?`).bind(id).first() as { owner_user_id: string } | null;
+        if (row && row.owner_user_id && row.owner_user_id !== userId && row.owner_user_id !== "") {
+          return { content: [{ type: "text", text: `No entry found with ID: ${id}` }] };
+        }
+      }
       const result = await forgetEntry(id, env);
       if (result.status === "not_found") {
         return { content: [{ type: "text", text: `No entry found with ID: ${id}` }] };
@@ -2552,6 +2992,16 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
       },
     },
     async ({ source_id, target_id, type }) => {
+      if (userId) {
+        const ids = [source_id, target_id];
+        const rows = await env.DB.prepare(`SELECT id, tags, owner_user_id FROM entries WHERE id IN (?, ?)`).bind(...ids).all() as { results: { id: string; tags: string; owner_user_id: string }[] };
+        for (const row of rows.results) {
+          const isPrivate = JSON.parse(row.tags ?? "[]").includes("private");
+          if (isPrivate && row.owner_user_id !== userId && row.owner_user_id !== "") {
+            return { content: [{ type: "text", text: "Cannot link to an entry you don't have access to." }] };
+          }
+        }
+      }
       const edge = await createEdge(source_id, target_id, type, { provenance: "explicit", weight: 1.0 }, env);
       if (!edge) return { content: [{ type: "text", text: "Cannot link an entry to itself." }] };
       return { content: [{ type: "text", text: `Linked ${edge.source_id} → ${edge.target_id} (${edgeLabel(edge.type)}).` }] };
@@ -2570,6 +3020,16 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
       },
     },
     async ({ source_id, target_id, type }) => {
+      if (userId) {
+        const ids = [source_id, target_id];
+        const rows = await env.DB.prepare(`SELECT id, tags, owner_user_id FROM entries WHERE id IN (?, ?)`).bind(...ids).all() as { results: { id: string; tags: string; owner_user_id: string }[] };
+        for (const row of rows.results) {
+          const isPrivate = JSON.parse(row.tags ?? "[]").includes("private");
+          if (isPrivate && row.owner_user_id !== userId && row.owner_user_id !== "") {
+            return { content: [{ type: "text", text: "Cannot modify links for an entry you don't own." }] };
+          }
+        }
+      }
       const deleted = await deleteEdge(source_id, target_id, type, env);
       if (!deleted) return { content: [{ type: "text", text: "No link found between those entries." }] };
       return { content: [{ type: "text", text: `Removed ${deleted} link(s) between ${source_id} and ${target_id}.` }] };
@@ -2587,7 +3047,7 @@ function buildMcpServer(env: Env, ctx: ExecutionContext): McpServer {
       },
     },
     async ({ id, type }) => {
-      const connections = await getConnections(id, type, env);
+      const connections = await getConnections(id, type, env, userId);
       if (!connections.length) {
         return { content: [{ type: "text", text: `No connections found for ${id}.` }] };
       }
@@ -2695,7 +3155,11 @@ const apiHandler = {
     if (!dbReady) {
       ctx.waitUntil(initializeDatabase(env).then(() => { dbReady = true; }));
     }
-    const server = buildMcpServer(env, ctx);
+    // Resolve user identity from MCP client headers for per-user scoping.
+    let mcpUserId: string | undefined;
+    const resolved = await resolveUser(request, env);
+    if (resolved) mcpUserId = resolved.user_id;
+    const server = buildMcpServer(env, ctx, mcpUserId);
     const isToolsList = await isMcpToolsListRequest(request);
     const response = await createMcpHandler(server)(request, env, ctx);
     return isToolsList ? sanitizeToolsListResponse(response) : response;
@@ -2749,16 +3213,134 @@ const defaultHandler = {
       return new Response(null, { headers: CORS_HEADERS });
     }
 
+    // POST /api/users — create a new user (requires deployment token)
+    if (url.pathname === "/api/users" && request.method === "POST") {
+      if (!isAuthorized(request, env)) {
+        return json({ ok: false, error: "Unauthorized" }, 401);
+      }
+
+      let body: { username?: string };
+      try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
+      if (!body.username?.trim()) return json({ ok: false, error: "username is required" }, 400);
+
+      const username = body.username.trim();
+      if (username.length > 32) return json({ ok: false, error: "username must be 32 characters or less" }, 400);
+      if (!/^[a-zA-Z0-9_]+$/.test(username)) return json({ ok: false, error: "username must be alphanumeric (underscores allowed)" }, 400);
+      const normalized = username.toLowerCase();
+      const { publicId, secret, fullKey } = generateApiKey();
+      const keyHash = await hmacKey(secret, AUTH_PEPPER);
+
+      try {
+        await (env.DB as any).prepare(
+          "INSERT INTO users (id, username, normalized_username, auth_key_hash, auth_key_prefix, status, created_at) VALUES (?, ?, ?, ?, ?, 'active', ?)"
+        ).bind(
+          publicId, username, normalized, keyHash, fullKey.slice(0, 15), Date.now()
+        ).run();
+      } catch (e: any) {
+        if (String(e?.message ?? e).includes("UNIQUE constraint")) {
+          return json({ ok: false, error: `Username '${username}' already exists` }, 409);
+        }
+        throw e;
+      }
+
+      return json({ ok: true, username, key: fullKey }, 201);
+    }
+
+    // GET /api/users — list active users (requires deployment token)
+    if (url.pathname === "/api/users" && request.method === "GET") {
+      if (!isAuthorized(request, env)) {
+        return json({ ok: false, error: "Unauthorized" }, 401);
+      }
+
+      const { results } = await (env.DB as any).prepare(
+        "SELECT id, username, status FROM users WHERE status = 'active' ORDER BY username"
+      ).all();
+      return json({ users: results ?? [] });
+    }
+
+    // POST /api/users/:id/deactivate — deactivate a user
+    {
+      const deactivateMatch = url.pathname.match(/^\/api\/users\/([^/]+)\/deactivate$/);
+      if (deactivateMatch && request.method === "POST") {
+        const { error: authErr, user_id } = await requireAuthAsync(request, env);
+        if (authErr) return authErr;
+
+        const targetId = deactivateMatch[1];
+
+        // Check if target user exists
+        const targetRow = await (env.DB as any).prepare(
+          "SELECT id, username, status FROM users WHERE id = ?"
+        ).bind(targetId).first() as { id: string; username: string; status: string } | null;
+        if (!targetRow) return json({ ok: false, error: "User not found" }, 404);
+        if (targetRow.status === "inactive") return json({ ok: false, error: "User is already inactive" }, 400);
+
+        // Authorization: self-deactivation OR first-created active user (owner)
+        if (targetId !== user_id) {
+          const { results: allUsers } = await (env.DB as any).prepare(
+            "SELECT id FROM users WHERE status = 'active' ORDER BY created_at ASC LIMIT 1"
+          ).all() as { results: { id: string }[] };
+          if (!allUsers.length || allUsers[0].id !== user_id) {
+            return json({ ok: false, error: "Only the deployment owner can deactivate other users" }, 403);
+          }
+        } else {
+          // Self-deactivation by owner: prevent if they're the only active user
+          const { results: allUsers } = await (env.DB as any).prepare(
+            "SELECT id FROM users WHERE status = 'active' ORDER BY created_at ASC"
+          ).all() as { results: { id: string }[] };
+          if (allUsers.length <= 1 && allUsers[0]?.id === user_id) {
+            return json({ ok: false, error: "Cannot deactivate — you are the only active user" }, 400);
+          }
+        }
+
+        // Set status to inactive
+        await (env.DB as any).prepare(
+          "UPDATE users SET status = 'inactive' WHERE id = ?"
+        ).bind(targetId).run();
+
+        // Delete private memories
+        const { results: privateEntries } = await (env.DB as any).prepare(
+          `SELECT id, vector_ids FROM entries WHERE owner_user_id = ? AND tags LIKE ?`
+        ).bind(targetId, '%"private"%').all() as { results: { id: string; vector_ids: string }[] };
+
+        if (privateEntries.length) {
+          const ids = privateEntries.map(e => e.id);
+          const placeholders = ids.map(() => "?").join(", ");
+
+          // Delete edges referencing these entries
+          try {
+            for (const id of ids) {
+              await (env.DB as any).prepare(
+                `DELETE FROM edges WHERE source_id = ? OR target_id = ?`
+              ).bind(id, id).run();
+            }
+          } catch (e) { console.error("Edge cascade-delete failed (non-fatal):", e); }
+
+          // Delete entries
+          await (env.DB as any).prepare(
+            `DELETE FROM entries WHERE owner_user_id = ? AND tags LIKE ?`
+          ).bind(targetId, '%"private"%').run();
+
+          // Delete vectors
+          try {
+            const allVectorIds = privateEntries.flatMap(e => JSON.parse(e.vector_ids ?? "[]") as string[]);
+            if (allVectorIds.length) await env.VECTORIZE.deleteByIds(allVectorIds);
+          } catch (e) { console.error("Vectorize delete failed (non-fatal):", e); }
+        }
+
+        return json({ ok: true, message: `User ${targetRow.username} deactivated` });
+      }
+    }
+
     // POST /capture
     if (url.pathname === "/capture" && request.method === "POST") {
-      const authErr = requireAuth(request, env);
+      const { error: authErr, user_id } = await requireAuthAsync(request, env);
       if (authErr) return authErr;
 
       let body: { content?: string; tags?: string[]; source?: string };
       try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
       if (!body.content?.trim()) return json({ ok: false, error: "content is required" }, 400);
 
-      const result = await captureEntry(body.content, body.tags ?? [], body.source ?? "api", env, ctx);
+      const result = await captureEntry(body.content, body.tags ?? [], body.source ?? "api", env, ctx, user_id);
 
       if (result.status === "blocked") {
         return json({
@@ -2789,14 +3371,15 @@ const defaultHandler = {
           matchId: result.matchId,
           score: parseFloat((result.score * 100).toFixed(1)),
           message: "Stored but similar entry exists — tagged as duplicate-candidate",
+          ...(result.crossUserNote ? { crossUserNote: result.crossUserNote } : {}),
         });
       }
-      return json({ ok: true, id: result.id });
+      return json({ ok: true, id: result.id, ...(result.crossUserNote ? { crossUserNote: result.crossUserNote } : {}) });
     }
 
     // POST /append
     if (url.pathname === "/append" && request.method === "POST") {
-      const authErr = requireAuth(request, env);
+      const { error: authErr, user_id } = await requireAuthAsync(request, env);
       if (authErr) return authErr;
 
       let body: { id?: string; addition?: string };
@@ -2808,7 +3391,7 @@ const defaultHandler = {
       const addition = body.addition.trim();
 
       const row = await env.DB.prepare(
-        `SELECT id, content, tags, source FROM entries WHERE id = ?`
+        `SELECT id, content, tags, source, owner_user_id FROM entries WHERE id = ?`
       ).bind(id).first() as Record<string, any> | null;
 
       if (!row) {
@@ -2818,13 +3401,18 @@ const defaultHandler = {
       const existingContent = row.content as string;
       const tags: string[] = JSON.parse(row.tags ?? "[]");
       const source = row.source as string;
+      const existingOwnerId = row.owner_user_id as string;
+
+      if (existingOwnerId && existingOwnerId !== user_id && existingOwnerId !== "") {
+        return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
+      }
 
       if (await isManagedMirror(source, env)) {
         return json({ ok: false, error: mirrorEditError(source) }, 409);
       }
 
       try {
-        await appendToEntry(env, id, existingContent, addition, tags, source);
+        await appendToEntry(env, id, existingContent, addition, tags, source, existingOwnerId || user_id);
       } catch (e) {
         return json({ ok: false, error: `Append failed: ${(e as Error).message}` }, 500);
       }
@@ -2838,7 +3426,7 @@ const defaultHandler = {
 
     // POST /update
     if (url.pathname === "/update" && request.method === "POST") {
-      const authErr = requireAuth(request, env);
+      const { error: authErr, user_id } = await requireAuthAsync(request, env);
       if (authErr) return authErr;
 
       let body: { id?: string; content?: string };
@@ -2850,10 +3438,14 @@ const defaultHandler = {
       const newContent = body.content.trim();
 
       const row = await env.DB.prepare(
-        `SELECT tags, source, vector_ids FROM entries WHERE id = ?`
+        `SELECT tags, source, vector_ids, owner_user_id FROM entries WHERE id = ?`
       ).bind(id).first() as Record<string, any> | null;
 
       if (!row) return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
+
+      if (row.owner_user_id && row.owner_user_id !== user_id && row.owner_user_id !== "") {
+        return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
+      }
 
       if (await isManagedMirror(row.source as string, env)) {
         return json({ ok: false, error: mirrorEditError(row.source as string) }, 409);
@@ -2864,6 +3456,7 @@ const defaultHandler = {
       const mergedTags = [...new Set([...tags, ...newHashtags])];
       const source = row.source as string;
       const oldVectorIds: string[] = JSON.parse(row.vector_ids ?? "[]");
+      const existingOwnerId = row.owner_user_id as string;
       const finalContent = cleanContent || newContent;
 
       await env.DB.prepare(`UPDATE entries SET content = ?, tags = ? WHERE id = ?`)
@@ -2871,7 +3464,7 @@ const defaultHandler = {
 
       let newVectorIds: string[] = [];
       try {
-        newVectorIds = await storeEntry(env, id, finalContent, mergedTags, source, Date.now());
+        newVectorIds = await storeEntry(env, id, finalContent, mergedTags, source, Date.now(), existingOwnerId || user_id, mergedTags.includes("private"));
       } catch (e) {
         console.error("Vectorize re-embed failed (non-fatal):", e);
       }
@@ -2888,35 +3481,40 @@ const defaultHandler = {
 
     // GET /count
     if (url.pathname === "/count" && request.method === "GET") {
-      const authErr = requireAuth(request, env);
+      const { error: authErr, user_id } = await requireAuthAsync(request, env);
       if (authErr) return authErr;
-      const row = await env.DB.prepare(`SELECT COUNT(*) as count FROM entries`).first() as Record<string, any> | null;
+      const visClause = buildVisibilityClause(user_id ?? "");
+      const row = await env.DB.prepare(
+        `SELECT COUNT(*) as count FROM entries WHERE ${visClause.sql}`
+      ).bind(...visClause.bind).first() as Record<string, any> | null;
       return json({ count: (row?.count as number) ?? 0 });
     }
 
     // GET /tags
     if (url.pathname === "/tags" && request.method === "GET") {
-      const authErr = requireAuth(request, env);
+      const { error: authErr, user_id } = await requireAuthAsync(request, env);
       if (authErr) return authErr;
+      const visClause = buildVisibilityClause(user_id ?? "");
       const { results } = await env.DB.prepare(
-        `SELECT DISTINCT value FROM entries, json_each(entries.tags) ORDER BY value`
-      ).all();
+        `SELECT DISTINCT value FROM entries, json_each(entries.tags) WHERE ${visClause.sql} ORDER BY value`
+      ).bind(...visClause.bind).all();
       return json((results as any[]).map(r => r.value as string));
     }
 
     // GET /stats
     if (url.pathname === "/stats" && request.method === "GET") {
-      const authErr = requireAuth(request, env);
+      const { error: authErr, user_id } = await requireAuthAsync(request, env);
       if (authErr) return authErr;
       const graceCutoff = Date.now() - graceMs(env);
+      const visClause = buildVisibilityClause(user_id ?? "");
       const [summary, tagRows, candidateRows] = await Promise.all([
         env.DB.prepare(
           `SELECT COUNT(*) as count, AVG(importance_score) as avg_importance,
            SUM(CASE WHEN vector_ids = '[]' AND created_at < ? THEN 1 ELSE 0 END) as unvectorized,
            SUM(CASE WHEN tags NOT LIKE '%"status:%' AND tags NOT LIKE '%"kind:%' THEN 1 ELSE 0 END) as unclassified
-           FROM entries`
-        ).bind(graceCutoff).first() as Promise<Record<string, any> | null>,
-        env.DB.prepare(`SELECT value, COUNT(*) as n FROM entries, json_each(entries.tags) GROUP BY value ORDER BY n DESC LIMIT 5`).all(),
+           FROM entries WHERE ${visClause.sql}`
+        ).bind(graceCutoff, ...visClause.bind).first() as Promise<Record<string, any> | null>,
+        env.DB.prepare(`SELECT value, COUNT(*) as n FROM entries, json_each(entries.tags) WHERE ${visClause.sql} GROUP BY value ORDER BY n DESC LIMIT 5`).bind(...visClause.bind).all(),
         env.DB.prepare(`
           SELECT value as tag, COUNT(*) as count
           FROM entries, json_each(entries.tags)
@@ -2927,11 +3525,12 @@ const defaultHandler = {
             AND entries.tags NOT LIKE '%"synthesized"%'
             AND entries.tags NOT LIKE '%"auto-pattern"%'
             AND ${compressionEligibilitySql("entries.")}
+            AND ${visClause.sql}
           GROUP BY value
           HAVING count > 10
           ORDER BY count DESC
           LIMIT 10
-        `).bind(Date.now() - COMPRESSION_MIN_AGE_MS).all(),
+        `).bind(Date.now() - COMPRESSION_MIN_AGE_MS, ...visClause.bind).all(),
       ]);
 
       const cutoff = Date.now() - 86400000;
@@ -2939,7 +3538,7 @@ const defaultHandler = {
       for (const row of candidateRows.results as any[]) {
         const existing = await env.DB.prepare(
           `SELECT id FROM entries WHERE tags LIKE '%"synthesized"%' AND tags LIKE ? AND created_at > ? LIMIT 1`
-        ).bind(`%"${row.tag}"%`, cutoff).first();
+        ).bind(`%"${escapeLikePattern(row.tag as string)}"%`, cutoff).first();
         if (!existing) digestCandidates.push({ tag: row.tag as string, count: row.count as number });
       }
 
@@ -2957,7 +3556,7 @@ const defaultHandler = {
     // GET /health — index/runtime health, used by the dashboard banner, the
     // README verify step, and external uptime checks.
     if (url.pathname === "/health" && request.method === "GET") {
-      const authErr = requireAuth(request, env);
+      const { error: authErr, user_id } = await requireAuthAsync(request, env);
       if (authErr) return authErr;
       const vectorize = await checkVectorizeHealth(env);
       return json({ ok: vectorize.ok, vectorize });
@@ -2965,16 +3564,35 @@ const defaultHandler = {
 
     // GET /list
     if (url.pathname === "/list" && request.method === "GET") {
-      const authErr = requireAuth(request, env);
+      const { error: authErr, user_id } = await requireAuthAsync(request, env);
       if (authErr) return authErr;
       const n = Math.min(parseInt(url.searchParams.get("n") ?? "20", 10), 100);
       const tag = url.searchParams.get("tag")?.trim() || undefined;
       const after = url.searchParams.has("after") ? parseInt(url.searchParams.get("after")!, 10) : undefined;
       const before = url.searchParams.has("before") ? parseInt(url.searchParams.get("before")!, 10) : undefined;
+      const user = url.searchParams.get("user")?.trim() || undefined;
+      const visibility = url.searchParams.get("visibility")?.trim() || undefined;
 
-      const { sql, bindings } = buildEntryFilterQuery({ n, tag, after, before });
+      const { sql, bindings } = buildEntryFilterQuery({ n, tag, after, before, userId: user_id, user, visibility });
       const { results } = await env.DB.prepare(sql).bind(...bindings).all();
-      return json(results);
+
+      // Hydrate owner usernames
+      const ownerIds = [...new Set((results as any[]).map(r => r.owner_user_id).filter(Boolean))];
+      let ownerMap: Record<string, string> = {};
+      if (ownerIds.length) {
+        const placeholders = ownerIds.map(() => '?').join(',');
+        const { results: owners } = await env.DB.prepare(
+          `SELECT id, username FROM users WHERE id IN (${placeholders})`
+        ).bind(...ownerIds).all() as { results: { id: string; username: string }[] };
+        ownerMap = Object.fromEntries(owners.map(o => [o.id, o.username]));
+      }
+
+      const enriched = (results as any[]).map(r => ({
+        ...r,
+        owner_username: ownerMap[r.owner_user_id] || '',
+        is_private: (JSON.parse(r.tags ?? "[]") as string[]).includes("private"),
+      }));
+      return json(enriched);
     }
 
     // GET /export — complete backup: every entry plus the edges table. Single
@@ -2982,15 +3600,50 @@ const defaultHandler = {
     // one read and this route runs on explicit user action only. If response size
     // ever becomes a problem, add ?after= cursor support then, not now.
     if (url.pathname === "/export" && request.method === "GET") {
-      const authErr = requireAuth(request, env);
+      const { error: authErr, user_id } = await requireAuthAsync(request, env);
       if (authErr) return authErr;
 
-      const { results: entryRows } = await env.DB.prepare(
-        `SELECT id, content, tags, source, created_at, recall_count, importance_score, contradiction_wins, contradiction_losses FROM entries ORDER BY created_at DESC`
-      ).all() as { results: Record<string, any>[] };
+      const VALID_MODES = ["my_public", "all_public", "my_private"] as const;
+      type ExportMode = typeof VALID_MODES[number];
+      const mode = url.searchParams.get("mode") as ExportMode | null;
+      if (mode && !VALID_MODES.includes(mode)) {
+        return json({ ok: false, error: `Invalid mode. Valid modes: ${VALID_MODES.join(", ")}` }, 400);
+      }
+
+      let entrySql = `SELECT id, content, tags, source, created_at, recall_count, importance_score, contradiction_wins, contradiction_losses FROM entries`;
+      const bindings: any[] = [];
+
+      if (mode === "my_public") {
+        entrySql += ` WHERE owner_user_id = ? AND tags NOT LIKE ?`;
+        bindings.push(user_id, '%"private"%');
+      } else if (mode === "my_private") {
+        entrySql += ` WHERE owner_user_id = ? AND tags LIKE ?`;
+        bindings.push(user_id, '%"private"%');
+      } else {
+        // Default / all_public: exclude private entries
+        entrySql += ` WHERE tags NOT LIKE ?`;
+        bindings.push('%"private"%');
+      }
+      entrySql += ` ORDER BY created_at DESC`;
+
+      const { results: entryRows } = await env.DB.prepare(entrySql).bind(...bindings).all() as { results: Record<string, any>[] };
+
+      // Filter edges to only include those where both endpoints are in the exported set
+      const entryIds = new Set(entryRows.map(r => r.id as string));
       const { results: edgeRows } = await env.DB.prepare(
         `SELECT source_id, target_id, type, weight, provenance, created_at FROM edges`
       ).all() as { results: Record<string, any>[] };
+
+      const edges = edgeRows
+        .filter(r => entryIds.has(r.source_id) && entryIds.has(r.target_id))
+        .map(r => ({
+          source_id: r.source_id,
+          target_id: r.target_id,
+          type: r.type,
+          weight: r.weight,
+          provenance: r.provenance,
+          created_at: r.created_at,
+        }));
 
       // vector_ids are deliberately excluded — they're deployment-specific and an
       // import tool re-embeds anyway. Tags are parsed so the file holds real arrays.
@@ -3005,20 +3658,12 @@ const defaultHandler = {
         contradiction_wins: r.contradiction_wins ?? 0,
         contradiction_losses: r.contradiction_losses ?? 0,
       }));
-      const edges = edgeRows.map(r => ({
-        source_id: r.source_id,
-        target_id: r.target_id,
-        type: r.type,
-        weight: r.weight,
-        provenance: r.provenance,
-        created_at: r.created_at,
-      }));
-      return json({ ok: true, exported_at: Date.now(), version: 2, entries, edges });
+      return json({ ok: true, exported_at: Date.now(), version: 2, mode: mode ?? "all_public", total_count: entries.length, entries, edges });
     }
 
     // GET /recall — semantic search, mirrors the MCP `recall` tool
     if (url.pathname === "/recall" && request.method === "GET") {
-      const authErr = requireAuth(request, env);
+      const { error: authErr, user_id } = await requireAuthAsync(request, env);
       if (authErr) return authErr;
 
       const query = url.searchParams.get("query")?.trim();
@@ -3032,7 +3677,7 @@ const defaultHandler = {
       const kind = kindParam && (KIND_VALUES as readonly string[]).includes(kindParam) ? kindParam as MemoryKind : undefined;
       const hops = Math.min(Math.max(parseInt(url.searchParams.get("hops") ?? "0", 10), 0), 3);
 
-      const { matches, insight, semanticUnavailable } = await recallEntries({ query, topK, tag, after, before, kind, hops }, env, ctx);
+      const { matches, insight, semanticUnavailable } = await recallEntries({ query, topK, tag, after, before, kind, hops, userId: user_id }, env, ctx);
 
       if (!matches.length) {
         return json({
@@ -3056,6 +3701,7 @@ const defaultHandler = {
           created_at: m.createdAt,
           updated: m.isUpdate,
           hop: m.hop,
+          ...(m.crossUserMention ? { crossUserMention: { owner_username: m.crossUserMention.ownerUsername, similarity: parseFloat((m.crossUserMention.similarity * 100).toFixed(1)) } } : {}),
         })),
         insight: insight || null,
         semantic_unavailable: semanticUnavailable,
@@ -3064,7 +3710,7 @@ const defaultHandler = {
 
     // POST /forget — delete-by-id, mirrors the MCP `forget` tool
     if (url.pathname === "/forget" && request.method === "POST") {
-      const authErr = requireAuth(request, env);
+      const { error: authErr, user_id } = await requireAuthAsync(request, env);
       if (authErr) return authErr;
 
       let body: { id?: string };
@@ -3072,6 +3718,18 @@ const defaultHandler = {
       if (!body.id?.trim()) return json({ ok: false, error: "id is required" }, 400);
 
       const id = body.id.trim();
+
+      // Ownership check: only allow forgetting entries owned by the requesting user
+      // Pre-migration entries (empty owner_user_id) are treated as system-owned
+      const entry = await env.DB.prepare(
+        `SELECT owner_user_id FROM entries WHERE id = ?`
+      ).bind(id).first() as Record<string, any> | null;
+      if (!entry) return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
+      const entryOwnerId = entry.owner_user_id as string;
+      if (entryOwnerId && entryOwnerId !== user_id) {
+        return json({ ok: false, error: "Forbidden" }, 403);
+      }
+
       const result = await forgetEntry(id, env);
 
       if (result.status === "not_found") {
@@ -3083,7 +3741,7 @@ const defaultHandler = {
 
     // POST /link — create an explicit edge between two memories, mirrors the MCP `link` tool
     if (url.pathname === "/link" && request.method === "POST") {
-      const authErr = requireAuth(request, env);
+      const { error: authErr, user_id } = await requireAuthAsync(request, env);
       if (authErr) return authErr;
 
       let body: { source_id?: string; target_id?: string; type?: string };
@@ -3096,6 +3754,20 @@ const defaultHandler = {
         return json({ ok: false, error: `type must be one of: ${Object.keys(EDGE_TYPES).join(", ")}` }, 400);
       }
 
+      // Visibility check: both endpoints must be visible to the requesting user
+      if (user_id) {
+        for (const eid of [sourceId, targetId]) {
+          const row = await env.DB.prepare(
+            `SELECT id, owner_user_id, tags FROM entries WHERE id = ?`
+          ).bind(eid).first() as Record<string, any> | null;
+          if (!row) continue; // entry doesn't exist — let createEdge handle it
+          const tags: string[] = JSON.parse(row.tags ?? "[]");
+          if (tags.includes("private") && row.owner_user_id !== user_id) {
+            return json({ ok: false, error: `Entry not found: ${eid}` }, 404);
+          }
+        }
+      }
+
       const edge = await createEdge(sourceId, targetId, type, { provenance: "explicit", weight: 1.0 }, env);
       if (!edge) return json({ ok: false, error: "Cannot link an entry to itself" }, 400);
       return json({ ok: true, source_id: edge.source_id, target_id: edge.target_id, type: edge.type });
@@ -3105,7 +3777,7 @@ const defaultHandler = {
     // POST rather than DELETE /link: CORS_HEADERS allow only GET/POST/OPTIONS and
     // every sibling mutation route is POST.
     if (url.pathname === "/unlink" && request.method === "POST") {
-      const authErr = requireAuth(request, env);
+      const { error: authErr, user_id } = await requireAuthAsync(request, env);
       if (authErr) return authErr;
 
       let body: { source_id?: string; target_id?: string; type?: string };
@@ -3118,20 +3790,34 @@ const defaultHandler = {
         return json({ ok: false, error: `type must be one of: ${Object.keys(EDGE_TYPES).join(", ")}` }, 400);
       }
 
+      // Visibility check: both endpoints must be visible to the requesting user
+      if (user_id) {
+        for (const eid of [sourceId, targetId]) {
+          const row = await env.DB.prepare(
+            `SELECT id, owner_user_id, tags FROM entries WHERE id = ?`
+          ).bind(eid).first() as Record<string, any> | null;
+          if (!row) continue; // entry doesn't exist — let deleteEdge handle it
+          const tags: string[] = JSON.parse(row.tags ?? "[]");
+          if (tags.includes("private") && row.owner_user_id !== user_id) {
+            return json({ ok: false, error: `Entry not found: ${eid}` }, 404);
+          }
+        }
+      }
+
       const deleted = await deleteEdge(sourceId, targetId, type, env);
       return json({ ok: true, deleted });
     }
 
     // GET /connections — 1-hop neighbors of an entry, mirrors the MCP `connections` tool
     if (url.pathname === "/connections" && request.method === "GET") {
-      const authErr = requireAuth(request, env);
+      const { error: authErr, user_id } = await requireAuthAsync(request, env);
       if (authErr) return authErr;
 
       const id = url.searchParams.get("id")?.trim();
       if (!id) return json({ ok: false, error: "id is required" }, 400);
       const type = url.searchParams.get("type")?.trim() || undefined;
 
-      const connections = await getConnections(id, type, env);
+      const connections = await getConnections(id, type, env, user_id);
       return json({ ok: true, id, connections });
     }
 
@@ -3139,16 +3825,29 @@ const defaultHandler = {
     // (/graph ships 80-char labels only; fattening it with full content would bloat
     // every graph load to serve a per-tap need). Dashboard-only, no MCP twin.
     if (url.pathname === "/entry" && request.method === "GET") {
-      const authErr = requireAuth(request, env);
+      const { error: authErr, user_id } = await requireAuthAsync(request, env);
       if (authErr) return authErr;
 
       const id = url.searchParams.get("id")?.trim();
       if (!id) return json({ ok: false, error: "id is required" }, 400);
 
       const row = await env.DB.prepare(
-        `SELECT id, content, tags, source, created_at FROM entries WHERE id = ?`
+        `SELECT id, content, tags, source, created_at, owner_user_id FROM entries WHERE id = ?`
       ).bind(id).first() as Record<string, any> | null;
       if (!row) return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
+
+      // Visibility check: private entries are only visible to their owner
+      const tags: string[] = JSON.parse(row.tags ?? "[]");
+      if (tags.includes("private") && row.owner_user_id !== user_id) {
+        return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
+      }
+
+      // Hydrate owner username
+      let owner_username = '';
+      if (row.owner_user_id) {
+        const owner = await env.DB.prepare(`SELECT username FROM users WHERE id = ?`).bind(row.owner_user_id).first() as { username: string } | null;
+        owner_username = owner?.username || '';
+      }
 
       return json({
         ok: true,
@@ -3158,6 +3857,8 @@ const defaultHandler = {
           tags: JSON.parse(row.tags ?? "[]"),
           source: row.source,
           created_at: row.created_at,
+          owner_username,
+          is_private: tags.includes("private"),
         },
       });
     }
@@ -3165,20 +3866,20 @@ const defaultHandler = {
     // GET /graph — node+edge subgraph for the dashboard graph view (dashboard-only;
     // no MCP twin — this is visualization data, not an agent capability)
     if (url.pathname === "/graph" && request.method === "GET") {
-      const authErr = requireAuth(request, env);
+      const { error: authErr, user_id } = await requireAuthAsync(request, env);
       if (authErr) return authErr;
 
       const seed = url.searchParams.get("seed")?.trim() || undefined;
       const limitParam = url.searchParams.get("limit");
       const limit = limitParam ? parseInt(limitParam, 10) : undefined;
 
-      const { nodes, edges } = await buildGraph({ seed, limit }, env);
+      const { nodes, edges } = await buildGraph({ seed, limit, userId: user_id }, env);
       return json({ ok: true, nodes, edges });
     }
 
     // POST /status — set lifecycle status, mirrors the MCP `set_status` tool
     if (url.pathname === "/status" && request.method === "POST") {
-      const authErr = requireAuth(request, env);
+      const { error: authErr, user_id } = await requireAuthAsync(request, env);
       if (authErr) return authErr;
 
       let body: { id?: string; status?: string };
@@ -3190,6 +3891,13 @@ const defaultHandler = {
 
       const id = body.id.trim();
       const status = body.status as MemoryStatus;
+
+      // Ownership check
+      const entryRow = await env.DB.prepare(`SELECT owner_user_id FROM entries WHERE id = ?`).bind(id).first() as { owner_user_id: string } | null;
+      if (entryRow && entryRow.owner_user_id && entryRow.owner_user_id !== user_id && entryRow.owner_user_id !== "") {
+        return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
+      }
+
       const ok = await applyStatus(id, status, env);
 
       if (!ok) {
@@ -3204,7 +3912,7 @@ const defaultHandler = {
     // agent capability. Confirm promotes the pattern into a real recallable memory;
     // dismiss deprecates it (audit row kept, vectors removed).
     if (url.pathname === "/patterns/resolve" && request.method === "POST") {
-      const authErr = requireAuth(request, env);
+      const { error: authErr, user_id } = await requireAuthAsync(request, env);
       if (authErr) return authErr;
 
       let body: { id?: string; action?: string };
@@ -3216,11 +3924,15 @@ const defaultHandler = {
         return json({ ok: false, error: `action must be "confirm" or "dismiss"` }, 400);
       }
 
-      const row = await env.DB.prepare(`SELECT id, tags FROM entries WHERE id = ?`).bind(id).first() as Record<string, any> | null;
+      const row = await env.DB.prepare(`SELECT id, tags, owner_user_id FROM entries WHERE id = ?`).bind(id).first() as Record<string, any> | null;
       if (!row) return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
       const tags: string[] = JSON.parse(row.tags ?? "[]");
       if (!tags.includes("auto-pattern")) {
         return json({ ok: false, error: "Entry is not an auto-derived pattern" }, 400);
+      }
+      // Visibility check: private entries can only be resolved by their owner
+      if (tags.includes("private") && row.owner_user_id !== user_id) {
+        return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
       }
 
       if (action === "confirm") {
@@ -3238,7 +3950,7 @@ const defaultHandler = {
 
     // POST /chat
     if (url.pathname === "/chat" && request.method === "POST") {
-      const authErr = requireAuth(request, env);
+      const { error: authErr, user_id } = await requireAuthAsync(request, env);
       if (authErr) return authErr;
 
       let body: { query?: string; memories?: string };
@@ -3265,12 +3977,12 @@ const defaultHandler = {
 
     // GET /digest
     if (url.pathname === "/digest" && request.method === "GET") {
-      const authErr = requireAuth(request, env);
+      const { error: authErr, user_id } = await requireAuthAsync(request, env);
       if (authErr) return authErr;
       const tag = url.searchParams.get("tag")?.trim();
       if (!tag) return json({ ok: false, error: "tag parameter is required" }, 400);
 
-      const result = await compressTag(tag, env, ctx);
+      const result = await compressTag(tag, env, ctx, user_id);
 
       if (!result.synthesizedId) {
         return json({ tag, error: "Could not create digest — tag may have fewer than 20 entries or was recently compressed", source_count: result.entriesUsed });
@@ -3281,8 +3993,15 @@ const defaultHandler = {
 
     // POST /vectorize-pending
     if (url.pathname === "/vectorize-pending" && request.method === "POST") {
-      const authErr = requireAuth(request, env);
+      const { error: authErr, user_id } = await requireAuthAsync(request, env);
       if (authErr) return authErr;
+
+      // Reindex mode: ?reindex=true triggers full re-index with ownership metadata
+      const reindex = url.searchParams.get("reindex") === "true";
+      if (reindex) {
+        const result = await reindexAllVectors(env);
+        return json({ ok: true, reindex: true, processed: result.processed, failed: result.failed });
+      }
 
       const graceCutoff = Date.now() - graceMs(env);
 
@@ -3303,7 +4022,9 @@ const defaultHandler = {
             row.content as string,
             JSON.parse(row.tags as string),
             row.source as string,
-            row.created_at as number
+            row.created_at as number,
+            undefined,
+            (JSON.parse(row.tags as string) as string[]).includes("private")
           );
           processed++;
         } catch (e) {
@@ -3328,7 +4049,7 @@ const defaultHandler = {
 
     // GET /integrations — provider list + connection status (never the token)
     if (url.pathname === "/integrations" && request.method === "GET") {
-      const authErr = requireAuth(request, env);
+      const { error: authErr, user_id } = await requireAuthAsync(request, env);
       if (authErr) return authErr;
       const integrations = [];
       for (const provider of Object.values(INTEGRATION_PROVIDERS)) {
@@ -3340,7 +4061,7 @@ const defaultHandler = {
     // POST /integrations/:provider/(connect|sync|disconnect)
     const integrationRoute = url.pathname.match(/^\/integrations\/([a-z0-9-]+)\/(connect|sync|disconnect)$/);
     if (integrationRoute && request.method === "POST") {
-      const authErr = requireAuth(request, env);
+      const { error: authErr, user_id } = await requireAuthAsync(request, env);
       if (authErr) return authErr;
       const provider = getProvider(integrationRoute[1]);
       if (!provider) return json({ ok: false, error: `Unknown integration: ${integrationRoute[1]}` }, 404);
@@ -3421,7 +4142,7 @@ const defaultHandler = {
     // batch per call, idempotent (skips entries that already carry either tag), and
     // resumable (safe to stop/restart). No schema migration — only writes tags.
     if (url.pathname === "/classify-pending" && request.method === "POST") {
-      const authErr = requireAuth(request, env);
+      const { error: authErr, user_id } = await requireAuthAsync(request, env);
       if (authErr) return authErr;
 
       const UNCLASSIFIED_WHERE = `tags NOT LIKE '%"status:%' AND tags NOT LIKE '%"kind:%'`;
