@@ -22,13 +22,25 @@ Deploying takes about two minutes. See the [Quick Start](#quick-start) for the r
 
 ## What's new in v2
 
+* **Multi-user.** Create separate accounts with per-user API keys. Each user has their own private workspace. Public memories are shared across your team. A **deployment token** lets you connect to the server; then select your account and enter your API key — or generate a new account right from the dashboard.
+
 * **Memory graph.** Memories now connect to each other — automatically as you save, or explicitly with the new `link` and `connections` tools. Recall can follow those connections (the `hops` option) to surface related context that a plain search would miss, and the dashboard has a new **Graph** tab to explore your memory visually.
+
+* **Per-user visibility.** Each entry is owned by a specific user. Private entries (tagged `private`) are only visible to their owner. Public entries are visible to everyone. Filters in the dashboard let you browse by user and visibility.
+
+* **User management.** The deployment owner can create and deactivate accounts. Deactivating an account removes its private memories while keeping public ones.
+
+* **Per-user compression.** Nightly memory compression runs independently for each user, ensuring digests and roll-ups never mix data across users.
+
+* **Cross-user conflict detection.** When you save something similar to another user's public memory, recall surfaces the connection so you can avoid duplicated effort.
 
 * **Notion sync.** Connect your Notion workspace from **Settings → Integrations** in the dashboard. Pages you share with the connection sync into memory, stay updated as they change in Notion, and surface in recall alongside everything else. Nightly automatic sync, or on demand with **Sync now**.
 
 * **Graceful degradation.** If the Vectorize index is missing, recall now falls back to keyword search with a clear notice instead of failing, a new `/health` endpoint reports index status, and the dashboard shows a banner with the exact fix.
 
 ## See it in action
+
+**Live deployment:** [https://second-brain.nikolay-trakiyski.workers.dev](https://second-brain.nikolay-trakiyski.workers.dev/)
 
 [![Second Brain Demo](https://img.youtube.com/vi/h0JqRM0UxHE/hqdefault.jpg)](https://youtu.be/h0JqRM0UxHE)
 
@@ -81,7 +93,7 @@ Set up your Second Brain in three steps.
 
 ### 1. Choose an authentication token
 
-Your `AUTH_TOKEN` is the password used to access your Second Brain.
+Your `AUTH_TOKEN` is the deployment token used to connect to your Second Brain. It also serves as the password for the dashboard OAuth login page.
 
 Use either:
 
@@ -114,7 +126,17 @@ When deployment finishes, copy your Worker URL. It will look similar to:
 https://your-worker-name.your-subdomain.workers.dev
 ```
 
-### 3. Connect your AI clients
+### 3. Connect and create your account
+
+Open your Worker URL in a browser. You'll see the **Sign In** page.
+
+1. Enter your Worker URL and deployment token, then click **Connect**.
+2. On the account screen, create a new account by entering a username and clicking **Generate API Key**.
+3. Copy the generated API key — it will not be shown again. Click **Continue** to enter your Second Brain.
+
+You can create multiple accounts from the same dashboard. Each account gets its own API key for programmatic access.
+
+### 4. Connect your AI clients
 
 Choose the instructions for the clients you use.
 
@@ -135,6 +157,28 @@ iex "& { $(irm https://raw.githubusercontent.com/rahilp/second-brain-cloudflare/
 ```
 
 The setup script configures the MCP connection and global instructions using OAuth. Your authentication token is not passed to the script.
+
+#### Manual MCP config (with per-user auth)
+
+To connect as a specific user, add both the deployment token and user credentials to your MCP config:
+
+```json
+{
+  "mcp": {
+    "second-brain": {
+      "type": "remote",
+      "url": "https://YOUR-WORKER-URL/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR-DEPLOYMENT-TOKEN",
+        "X-Second-Brain-User": "your-username",
+        "X-Second-Brain-User-Key": "sbu_your-api-key"
+      }
+    }
+  }
+}
+```
+
+This scopes all MCP tools (`remember`, `recall`, `list_recent`, etc.) to your user account. Your private memories stay private; public memories are shared with other users.
 
 #### ChatGPT or Claude desktop and web apps
 
