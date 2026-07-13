@@ -54,6 +54,71 @@ The critical design rule is **separate discovery from truth**. Autonomous agents
 
 P0–P3 below create the substrate. Add a **P4 Research Agent Loop** after P1 quality metrics are stable: begin with a daily read-only scout that produces proposals and an inbox/dashboard; then allow approved proposals to generate follow-up research tasks. Autonomous re-indexing and relationship extraction can be enabled earlier, but autonomous canonical publication should remain policy-gated.
 
+### Research expansion: the missing control plane
+
+The supplied research correctly identifies that a nightly pipeline alone is insufficient. The organism needs a **memory control plane**: explicit operations, a policy for selecting them, and enforced state transitions.
+
+Recent agent-memory work provides useful direction. AgeMem exposes `store`, `retrieve`, `update`, `summarize`, and `discard` as policy actions and trains their selection jointly with task behavior; its long-horizon results support treating memory management as an agent decision problem rather than a fixed CRUD controller. [Yu et al., 2026](https://consensus.app/papers/agentic-memory-learning-unified-longterm-and-shortterm-yu-yao/47f8c1b4342554858d80f22d97f5a94b/?utm_source=chatgpt) (arXiv; 28 citations). A-MEM independently supports dynamic organization and evolution of interconnected notes, though its automatic links must still be treated as hypotheses in a research corpus. [Xu et al., 2025](https://consensus.app/papers/amem-agentic-memory-for-llm-agents-xu-liang/3063d0f87e5057d596424b482a9049c8/?utm_source=chatgpt) (arXiv; 651 citations).
+
+**System consequence:** expose memory operations to the research agent, but start with a deterministic policy wrapper rather than training a reinforcement-learning memory manager. The agent may choose *what to investigate or propose*; the wrapper decides whether its proposed operation is legal, sufficiently evidenced, inside budget, and allowed to change state. Learn the policy only after enough audited decision traces exist.
+
+```text
+Research agent intent
+  → propose_capture | propose_claim | propose_relation | propose_summary |
+    propose_challenge | propose_research_task | retrieve_evidence
+  → control-plane validation
+      (permissions, source policy, dedupe, evidence, temporal checks, budget)
+  → draft/proposal state + audit record
+  → reviewer or policy gate
+  → canonical/qualified/superseded state
+```
+
+This also addresses the primary failure case of living memory: recursive self-corruption. SSGM argues for decoupling memory evolution from execution and applying consistency verification, temporal modeling, and dynamic access control before consolidation. It is a recent conceptual paper rather than deployment proof, but its risk model directly matches this architecture. [Lam et al., 2026](https://consensus.app/papers/governing-evolving-memory-in-llm-agents-risks-mechanisms-lam-li/4f6b727852025993b39f4520afa68150/?utm_source=chatgpt) (arXiv; 5 citations).
+
+### Temporal truth: add bi-temporal claims and relations
+
+For a knowledge organism, `created_at` is not enough. A claim needs two clocks:
+
+- **valid time:** when the claim is asserted to hold in the world, e.g. a model version is current from date A until date B;
+- **transaction time:** when Second Brain learned, reviewed, corrected, or retired that assertion.
+
+Bitemporal knowledge-graph work distinguishes these clocks and combines them with confidence for uncertain extracted facts. [Chekol & Stuckenschmidt, 2018](https://consensus.app/papers/towards-probabilistic-bitemporal-knowledge-graphs-chekol-stuckenschmidt/e85d46139198543bbaf51ea372c24c16/?utm_source=chatgpt) (Web Conference Companion; 7 citations). More recent temporal-RAG work likewise models identical facts from different times as distinct relations, rather than overwriting one embedding with another. [Han et al., 2025](https://consensus.app/papers/rag-meets-temporal-graphs-timesensitive-modeling-and-han-cheung/67c1fc783aac5ecab4e28aeae7da0217/?utm_source=chatgpt) (arXiv; 6 citations).
+
+**Implementation rule:** never mutate an evidence-backed claim in place. Close its valid interval or mark it qualified/superseded, then create a new claim version linked by `supersedes` or `corrects`. Queries such as “what did we believe in March?” and “what is current according to the latest evidence?” become answerable and auditable.
+
+### Two-speed knowledge metabolism
+
+| Plane | Purpose | Agent permission | Storage state |
+|---|---|---|---|
+| Fast discovery plane | High-recall exploration of feeds, releases, papers, repos, and internal artifacts | Autonomously ingest snapshots, extract candidates, schedule research, re-index | `candidate`, `draft`, `needs_review` |
+| Slow truth plane | Stable shared knowledge used to guide people and agents | Publish only through evidence and policy/reviewer gate | `reviewed`, `canonical`, `qualified`, `superseded`, `retracted` |
+
+The fast plane should be intentionally noisy; it is the organism’s sensory system. The slow plane should be conservative; it is the system of record. Retrieval must show the epistemic state and default to the slow plane for technical recommendations, while allowing an explicit “include research proposals” mode.
+
+### Standing research agenda, not a blind nightly crawl
+
+Add `research_agenda` records that make the system's curiosity explicit:
+
+```text
+id, question, scope/project, hypothesis, priority, source_policy,
+freshness_window, evidence_standard, uncertainty_score, change_risk,
+last_checked_at, next_check_at, budget, status
+```
+
+Prioritize a research task from a transparent score: **project impact × uncertainty × expected information gain × change risk**, reduced by cost and duplicate coverage. Useful triggers are: repeated unanswered queries, a high-impact canonical claim with stale evidence, a new model/repository release, a contradictory paper, and a pending architectural decision.
+
+Each run must produce a *delta* rather than another generic summary: `new evidence`, `what changed`, `what remains uncertain`, `which existing claims are affected`, `recommended action`, and `why no automatic publication occurred`.
+
+### P4 — implement the research-agent loop
+
+| Action | Implementation result | Acceptance criteria |
+|---|---|---|
+| Add control-plane operation contracts | Schema-validated proposal tools and legal state transitions | Agent cannot write canonical truth, replace evidence, or cross visibility boundaries directly |
+| Add bitemporal fields | `valid_from/to`, `recorded_at`, `superseded_at`, `reviewed_at` on claims and relations | Time-travel and current-state queries return different, explainable results on seeded changed facts |
+| Add research agenda + scheduler | Standing questions, approved source policy, budgets, and change triggers | Nightly run completes one agenda item and produces a provenance-complete proposal/delta |
+| Add proposal inbox | Reviewer sees evidence spans, source quality, confidence, duplicates, affected claims, and diff | Reviewer can approve, qualify, reject, or request more research; decision is immutable/audited |
+| Evaluate autonomy | Run a 30-day shadow period with no automatic publication | Measure proposal precision, accepted-proposal rate, stale-claim detection recall, cost/run, and harmful-update rate before enabling more autonomy |
+
 ## Assessment method and research questions
 
 1. Trace how an entry is stored, embedded, linked, retrieved, scored, compressed, and access-controlled.
@@ -144,7 +209,8 @@ evidence_passages
 
 claims
   id, normalized_claim, claim_type, subject, predicate, object, polarity,
-  confidence, scope, status, created_by, created_at
+  confidence, scope, status, valid_from, valid_to, recorded_at, reviewed_at,
+  superseded_at, created_by
 
 claim_evidence
   claim_id, evidence_passage_id, relation: supports|contradicts|qualifies,
@@ -152,7 +218,8 @@ claim_evidence
 
 relations
   source_node_id, target_node_id, predicate, provenance: explicit|extracted|similarity,
-  confidence, evidence_passage_ids_json, schema_version
+  confidence, valid_from, valid_to, recorded_at, superseded_at,
+  evidence_passage_ids_json, schema_version
 
 retrieval_runs / answer_runs
   query, corpus_version, candidate_ids, scores_per_stage, returned_ids,
@@ -235,6 +302,11 @@ Keep `entries` for conversational memory. A paper ingestion creates a document h
 7. Shitao Xiao, Zheng Liu, Peitian Zhang, Niklas Muennighoff, Defu Lian, Jian-yun Nie (2023). [C-Pack: Packed Resources for General Chinese Embeddings](https://consensus.app/papers/cpack-packed-resources-for-general-chinese-embeddings-xiao-liu/6ea9348b508c5c4a8c9f1eee9b5cb26c/?utm_source=chatgpt). *SIGIR*. 637 citations.
 8. Hao Yu, Aoran Gan, Kai Zhang, Shiwei Tong, Qi Liu, Zhaofeng Liu (2024). [Evaluation of Retrieval-Augmented Generation: A Survey](https://consensus.app/papers/evaluation-of-retrievalaugmented-generation-a-survey-yu-gan/861805cd172d534298b77a83a0d83d92/?utm_source=chatgpt). *arXiv*. 276 citations.
 9. Dvir Cohen, Lin Burg, Sviatoslav Pykhnivskyi, Hagit Gur, Stanislav Kovynov, Olga Atzmon, Gilad Barkan (2025). [WixQA: A Multi-Dataset Benchmark for Enterprise Retrieval-Augmented Generation](https://consensus.app/papers/wixqa-a-multidataset-benchmark-for-enterprise-cohen-burg/36f40fce88d45e098329986eed7d56a9/?utm_source=chatgpt). *arXiv*. 5 citations.
+10. Yi Yu, Liuyi Yao, Yuexiang Xie, Q. Tan, Jiaqi Feng, Yaliang Li, Libing Wu (2026). [Agentic Memory: Learning Unified Long-Term and Short-Term Memory Management for Large Language Model Agents](https://consensus.app/papers/agentic-memory-learning-unified-longterm-and-shortterm-yu-yao/47f8c1b4342554858d80f22d97f5a94b/?utm_source=chatgpt). *arXiv*. 28 citations.
+11. Wujiang Xu, Zujie Liang, K. Mei, Hang Gao, Juntao Tan, Yongfeng Zhang (2025). [A-MEM: Agentic Memory for LLM Agents](https://consensus.app/papers/amem-agentic-memory-for-llm-agents-xu-liang/3063d0f87e5057d596424b482a9049c8/?utm_source=chatgpt). *arXiv*. 651 citations.
+12. C. Lam, Jiaxin Li, Ling Zhang, Kuo Zhao (2026). [Governing Evolving Memory in LLM Agents: Risks, Mechanisms, and the Stability and Safety Governed Memory Framework](https://consensus.app/papers/governing-evolving-memory-in-llm-agents-risks-mechanisms-lam-li/4f6b727852025993b39f4520afa68150/?utm_source=chatgpt). *arXiv*. 5 citations.
+13. M. Chekol, H. Stuckenschmidt (2018). [Towards Probabilistic Bitemporal Knowledge Graphs](https://consensus.app/papers/towards-probabilistic-bitemporal-knowledge-graphs-chekol-stuckenschmidt/e85d46139198543bbaf51ea372c24c16/?utm_source=chatgpt). *Companion Proceedings of the Web Conference 2018*. 7 citations.
+14. Jiale Han, Austin Cheung, Yubai Wei, Zheng Yu, Xusheng Wang, Bing Zhu, Yi Yang (2025). [RAG Meets Temporal Graphs: Time-Sensitive Modeling and Retrieval for Evolving Knowledge](https://consensus.app/papers/rag-meets-temporal-graphs-timesensitive-modeling-and-han-cheung/67c1fc783aac5ecab4e28aeae7da0217/?utm_source=chatgpt). *arXiv*. 6 citations.
 
 ## Source inspected
 
