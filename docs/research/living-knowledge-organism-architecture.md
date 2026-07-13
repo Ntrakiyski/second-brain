@@ -31,6 +31,150 @@ Observe → Acquire → Parse → Extract claims → Link/contrast → Evaluate 
 
 The critical design rule is **separate discovery from truth**. Autonomous agents may search, extract, summarize, and propose. Canonical knowledge requires evidence lineage plus an explicit review policy. This preserves the speed of an overnight research agent without creating a self-reinforcing hallucination loop.
 
+## The actual living organism: a persistent knowledge agent
+
+**Cron is not the agent. Cron is its heartbeat.** The living component is a persistent executive that wakes with a durable state, observes what changed, decides the highest-value next action, delegates work, evaluates the result, and updates its own agenda for the next run.
+
+It lives *inside* Second Brain as a first-class subsystem, not as an external script that periodically dumps summaries into memory.
+
+```mermaid
+flowchart TD
+  H["Heartbeat: cron + events"] --> E["Executive agent"]
+  E --> S["Sense: sources, queries, changes"]
+  S --> D["Decide: agenda + policy"]
+  D --> W["Workers: research, extract, validate"]
+  W --> R["Reflect: score, learn, schedule"]
+  R --> E
+  W --> P["Proposal inbox"]
+  P --> K["Canonical knowledge"]
+```
+
+### Its mind: durable executive state
+
+The executive must resume from a database record on every run. It does not rely on a long chat transcript or an LLM's context window.
+
+```text
+knowledge_agent_state
+  agent_id, mode: active|paused|budget_exhausted|needs_review,
+  mission, active_priorities, current_hypotheses,
+  daily_budget, budget_spent, last_heartbeat_at, next_wake_at,
+  last_run_id, health, policy_version
+
+research_agenda
+  id, question, project_id, why_now, priority_score,
+  evidence_gap, freshness_deadline, source_policy,
+  status: queued|claimed|researching|blocked|proposed|resolved|deferred,
+  next_action, next_check_at, parent_agenda_id
+
+agent_runs
+  id, started_at, trigger, state_snapshot, selected_agenda_id,
+  plan_json, actions_json, source_ids, outcome, cost, latency,
+  reflection, next_actions, stop_reason
+
+agent_events
+  id, type, payload, priority, occurred_at, consumed_at
+  # source_changed | user_question | unanswered_query | contradiction |
+  # project_decision | review_outcome | scheduled_check | run_failed
+
+knowledge_proposals
+  id, agenda_id, claim/change, evidence_ids, affected_claim_ids,
+  confidence, novelty, risk, recommended_action,
+  status: draft|validating|awaiting_review|approved|rejected|auto_published
+```
+
+### Its reflexes: events and heartbeats
+
+The existing nightly cron becomes only one trigger. Every meaningful occurrence creates an `agent_event`; the scheduler batches events and wakes the executive within a defined budget.
+
+| Trigger | What the organism notices | Typical decision |
+|---|---|---|
+| New paper, release, repo commit, internal document | A watched source changed | Compare it to affected canonical claims; research only if material |
+| Team asks a question with weak/no evidence | Knowledge gap | Create agenda item, answer cautiously now, research later |
+| New claim conflicts with a canonical one | Possible knowledge drift | Open a contradiction investigation; preserve both until resolved |
+| Approved/rejected proposal | Feedback | Update source quality, retrieval labels, agenda, and future policy |
+| Daily heartbeat | Staleness, budget, unresolved critical questions | Pick the highest-value safe task or do nothing |
+
+### Its decision loop
+
+At each wake, the executive takes one bounded planning step—not an open-ended "research everything" instruction.
+
+```text
+1. Load state, policy, budget, unresolved agenda, new events, and last-run reflection.
+2. Generate candidate actions:
+   - inspect a source delta
+   - research a high-impact question
+   - validate a candidate claim
+   - challenge a stale/conflicting claim
+   - improve an observed retrieval failure
+   - stop / defer
+3. Deterministically score and filter candidates.
+4. Let the LLM choose and plan only among legal candidates.
+5. Delegate bounded work to specialist workers.
+6. Validate output against evidence, policy, and budget.
+7. Write an append-only run record and schedule the next action.
+```
+
+The score should be explicit, not hidden inside a prompt:
+
+```text
+priority = impact × evidence_gap × change_risk × freshness_urgency
+           × expected_information_gain
+           − estimated_cost − duplicate_coverage − safety_risk
+```
+
+The LLM supplies judgement for *how* to research; the deterministic policy decides *whether it may* and *what it may change*.
+
+### Its organs: specialist workers
+
+| Worker | Receives | Can do | Returns |
+|---|---|---|---|
+| Source sentinel | watched source + last snapshot | fetch, hash, diff, classify materiality | source-change event or no-op |
+| Researcher | one agenda item + source policy + budget | search, read, cite, find counter-evidence | evidence bundle and research notes |
+| Evidence extractor | source bundle | segment, anchor pages/sections, extract candidate claims | passages + claim candidates |
+| Contradiction analyst | candidate + existing claims | compare scope, dates, methods, and evidence | supports/qualifies/contradicts decision with reasons |
+| Knowledge editor | validated candidates only | construct proposal and affected-claim diff | reviewable `knowledge_proposal` |
+| Evaluator | runs and reviewer feedback | score citation quality, novelty, retrieval outcome, and cost | reflection + agenda updates |
+
+Workers are stateless and replaceable. The executive, agenda, evidence ledger, policy, and proposal inbox are the organism's long-lived body.
+
+### Its overnight rhythm
+
+Use the existing scheduled handler to enqueue jobs; execute each job as a bounded run so one bad paper, tool error, or LLM loop cannot consume the night.
+
+| Window | Run | Output |
+|---|---|---|
+| Every 1–2 hours | Lightweight source sentinel | Diffs/events only; no synthesis unless material |
+| 01:00 | Executive planning run | Selects 1–N agenda items within the daily budget |
+| 01:10–04:00 | Research worker runs | Evidence bundles, counter-evidence, candidate claims |
+| 04:00 | Validation + contradiction run | Safe proposals or explicit blocked/uncertain result |
+| 04:30 | Reflection + maintenance run | Updates agendas, source freshness, evaluation labels, next wake time |
+| Morning | Digest notifier | “What changed / needs your decision / what I will research next” |
+
+The hour values are policies, not product logic. For the MVP, run a single nightly executive cycle plus lightweight event capture. Move to several heartbeats only after cost, failure, and proposal quality are measured.
+
+### What the agent can decide by itself
+
+| Decision | Autonomy level |
+|---|---|
+| Watch a pre-approved source, hash it, and detect a change | Automatic |
+| Create a research agenda item from a repeated unanswered question | Automatic |
+| Search approved sources and save raw evidence/episodes | Automatic |
+| Create candidate claims, links, summaries, or contradiction investigations | Automatic, but draft-only |
+| Mark a source stale or schedule a recheck | Automatic |
+| Change a canonical technical claim | Requires reviewer/policy evidence gate |
+| Delete evidence, change permissions, spend beyond budget, or alter its own policy | Never autonomous |
+
+### Living-agent MVP: build this before Graphiti migration
+
+1. Add `agent_events`, `research_agenda`, `agent_runs`, `knowledge_proposals`, and `knowledge_agent_state` to D1.
+2. Turn the current cron handler into an **orchestrator**: enqueue/run the executive, never call one giant summarization prompt.
+3. Implement `observe → decide → research → validate → propose → reflect` as explicit modules with persistent input/output records.
+4. Ship a minimal proposal inbox in the dashboard: approve, qualify, reject, defer, and inspect evidence/diff.
+5. Add source watch lists and three initial agenda types: `stale claim`, `unanswered team question`, `new release/paper`.
+6. Run in draft-only mode for 30 days. Its first job is to learn what is valuable enough to research—not to rewrite your truth.
+
+After this MVP is functioning, Graphiti can replace or augment the fact/relationship substrate beneath it. The executive agent and control plane remain yours either way.
+
 ### Operating modes
 
 | Mode | Trigger | Allowed output | Cannot do |
