@@ -119,6 +119,44 @@ Each run must produce a *delta* rather than another generic summary: `new eviden
 | Add proposal inbox | Reviewer sees evidence spans, source quality, confidence, duplicates, affected claims, and diff | Reviewer can approve, qualify, reject, or request more research; decision is immutable/audited |
 | Evaluate autonomy | Run a 30-day shadow period with no automatic publication | Measure proposal precision, accepted-proposal rate, stale-claim detection recall, cost/run, and harmful-update rate before enabling more autonomy |
 
+### Existing open-source building blocks — exact fit assessment
+
+**Conclusion:** no single repository currently provides the full governed knowledge organism: research acquisition, evidence-level provenance, bitemporal truth, autonomous agenda selection, policy-gated publication, and evaluation. The closest practical composition is **Graphiti + a research worker + the Second Brain control plane**.
+
+| Repository | What it genuinely provides | Fit for this project | Critical gap / integration cost |
+|---|---|---|---|
+| [getzep/graphiti](https://github.com/getzep/graphiti) | Temporal context graph; source episodes; fact validity windows; incremental ingestion; prescribed/learned ontology; hybrid semantic/BM25/graph retrieval; MCP server | **Best substrate candidate.** Its `episode → entity/fact` lineage and temporal fact invalidation directly implement the provenance and time model missing from Second Brain | Python plus Neo4j/FalkorDB/Neptune/OpenSearch, not Cloudflare D1/Vectorize. Its MCP exposes destructive graph operations, so put the project control plane in front of it rather than exposing it as the canonical write interface |
+| [langchain-ai/open_deep_research](https://github.com/langchain-ai/open_deep_research) | Configurable multi-provider research workflow, search/MCP integration, source summarization/compression, report generation, Deep Research Bench evaluation | **Best research-worker candidate.** Fork/use as the nightly scout and replace its final-report sink with `knowledge_proposal` creation | Does not itself maintain a governed temporal knowledge base, research agenda, reviewer inbox, or claim-evidence model |
+| [topoteretes/cognee](https://github.com/topoteretes/cognee) | Broad AI-memory platform: ingestion, graph/vector search, ontology grounding, `remember`/`recall`/`forget`/`improve`, local/self-hosted operation, agent isolation and traceability claims | **Good all-in-one spike / alternative platform.** Most useful if you are ready to move the core away from the current Worker-centric design | It is a large Python platform and a replacement-level decision; its README does not establish Graphiti-style bitemporal claim semantics or the proposal-to-canonical governance workflow required here |
+| [langchain-ai/langmem](https://github.com/langchain-ai/langmem) | Agent tools for memory management/search plus a background memory manager that extracts, consolidates, and updates knowledge | **Useful control-plane reference or optional worker component** if the research agent runs on LangGraph | Generic agent memory; needs an external provenance, graph, temporal, and review model. It should not be the canonical knowledge store |
+| [mem0ai/mem0](https://github.com/mem0ai/mem0) | User/session/agent memory; add-only extraction; entity linking; semantic + BM25 + entity fusion; time-aware retrieval; self-hosted server | **Useful for conversational/team preference memory**, especially if existing clients need a ready SDK | Optimized around personalized assistant memory, not citable paper evidence, claim lifecycle, or review-gated research publication. Keep it separate from the research truth plane |
+| [WujiangXu/A-mem-sys](https://github.com/WujiangXu/A-mem-sys) | LLM-generated note metadata, enhanced ChromaDB embeddings, semantic links, dynamic memory evolution | **Reference implementation for candidate-plane enrichment** | Automatically evolves context/tags/connections from similarity. That is precisely too permissive for canonical research evidence; do not use it as the source-of-truth engine without the control plane |
+| [letta-ai/letta](https://github.com/letta-ai/letta) | Stateful agents with advanced/continual memory and skills/subagents | **Agent-runtime option**, not a knowledge-base solution | The repository is explicitly a legacy server and directs new work to Letta Agent/Agent SDK; it does not supply the research provenance/temporal graph model |
+| [Xiangyue-Zhang/auto-deep-researcher-24x7](https://github.com/Xiangyue-Zhang/auto-deep-researcher-24x7) | Persistent Think→Execute→Reflect experiment loop, append-only experiment ledger and journals, dead-end tracking, stagnation signal, rate limiter, literature tools | **Harvest design patterns, not the product.** Its append-only ledger, `DEAD_ENDS`, `INSIGHTS`, anti-burn limit, and truthful terminal status are excellent templates for the nightly research runner | Built to autonomously run deep-learning experiments, including GPU/Slurm execution—not general company knowledge research. Do not adopt its task loop unchanged |
+
+### Recommended implementation composition
+
+```text
+Second Brain (existing Cloudflare Worker)
+  ├─ shared identity, team visibility, MCP front door, legacy conversation memory
+  ├─ Research Control Plane (new): agenda, evidence gate, policy, reviewer inbox, audit
+  ├─ Graphiti service (pilot): temporal episodes, entities, fact edges, hybrid graph retrieval
+  └─ Open Deep Research worker (nightly): approved-source research → proposal package
+       └─ append-only run ledger + insights/dead-ends/rate-limit patterns from auto-deep-researcher-24x7
+```
+
+This preserves the current product while allowing a service boundary for the heavy temporal graph work. Start by mirroring only research-source episodes into Graphiti; do not migrate personal memories or make Graphiti authoritative on day one. The proposal object remains the only write contract between the research worker and Second Brain.
+
+### Pilot sequence: prove the composition before committing to it
+
+1. Run Graphiti locally with FalkorDB and ingest 20 papers plus their sections as episodes; compare its temporal/provenance retrieval with the current `entries` pipeline on `research-retrieval-v1`.
+2. Run Open Deep Research on three approved standing questions. Replace final report persistence with `knowledge_proposal` JSON—sources, evidence spans, affected claims, delta, confidence, and cost.
+3. Build a minimal reviewer inbox in Second Brain. No direct Graphiti or research-agent canonical writes.
+4. Shadow-run nightly for 30 days using an append-only run ledger, `INSIGHTS`, `DEAD_ENDS`, explicit budgets, and a kill switch.
+5. Choose Graphiti only if citation-anchor availability, temporal correctness, and proposal review quality improve enough to justify operating a Python graph service.
+
+**Repository inspection date:** 2026-07-13. Graphiti, Cognee, Mem0, LangMem, Open Deep Research, and the 24/7 experiment agent all had commits in June or July 2026 when inspected; inspect licenses, model-provider terms, and operational dependencies before adoption.
+
 ## Assessment method and research questions
 
 1. Trace how an entry is stored, embedded, linked, retrieved, scored, compressed, and access-controlled.
