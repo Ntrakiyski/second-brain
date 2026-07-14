@@ -25,7 +25,8 @@ import { runScheduledIntegrationSync } from "./integrations-mirror";
 // All public symbols from domain modules. Tests import from "../../src/index".
 
 export type { Env, RecallMatch, CaptureResult } from "./types";
-export { MemoryKind, MemoryStatus, KIND_VALUES, MEMORY_KIND_VALUES, STATUS_VALUES, STATUS_PREFIX, KIND_PREFIX } from "./types";
+export { MemoryKind, MemoryStatus, KIND_VALUES, MEMORY_KIND_VALUES, STATUS_VALUES, STATUS_PREFIX, KIND_PREFIX, EPISTEMIC_STATUS_VALUES, isValidTransition, VALID_EPISTEMIC_TRANSITIONS } from "./types";
+export type { Episode, EntrySnapshot, Passage, Document, DocumentSection, EpistemicStatus } from "./types";
 
 export {
   CORS_HEADERS,
@@ -58,6 +59,10 @@ export {
   COMPRESSION_IMPORTANCE_THRESHOLD,
   COMPRESSION_MIN_RECALL,
   compressionEligibilitySql,
+  RETENTION_HALF_LIFE_DAYS,
+  STALENESS_THRESHOLD_DAYS,
+  STALENESS_CONFIDENCE_THRESHOLD,
+  STALENESS_RECALL_PENALTY,
 } from "./config";
 
 export {
@@ -68,6 +73,7 @@ export {
   getHalfLifeMs,
   cosineSim,
   tokenizeQuery,
+  getRetentionScore,
 } from "./helpers";
 
 export {
@@ -133,6 +139,8 @@ export {
 export {
   reindexAllVectors,
   captureEntry,
+  createPassagesForEntry,
+  createSnapshot,
 } from "./ingest";
 
 export {
@@ -165,7 +173,7 @@ export {
 
 export { apiHandler } from "./api-handler";
 export { defaultHandler } from "./routes";
-export { runNightlyCompression, runGraphPass } from "./lifecycle";
+export { runNightlyCompression, runGraphPass, detectStaleness } from "./lifecycle";
 export { runScheduledIntegrationSync } from "./integrations-mirror";
 
 // Also export the integration framework symbols that tests may import

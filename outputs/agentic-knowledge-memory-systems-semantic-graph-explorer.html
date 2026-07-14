@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en" data-paper-rank-graph-explorer="true">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PaperRank Graph Explorer: agentic knowledge memory systems with semantic search knowledge graphs and contradiction detection</title>
+<style>
+:root { color-scheme: light; --ink: #17211b; --muted: #5f6d65; --line: #d7ded8; --paper: #ffffff; --soft: #f4f7f4; --accent: #1f7a5a; --accent-2: #2d5f89; --expanded: #7b8790; --edge: #b9c5bc; }
+* { box-sizing: border-box; }
+body { margin: 0; background: #fbfcfb; color: var(--ink); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.45; }
+header { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 560px); gap: 28px; align-items: end; padding: 30px clamp(18px, 4vw, 56px); background: var(--paper); border-bottom: 1px solid var(--line); }
+.eyebrow { margin: 0 0 8px; color: var(--accent); font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+h1 { margin: 0; font-size: clamp(28px, 4vw, 44px); line-height: 1.08; letter-spacing: 0; }
+h2, h3, p { margin: 0; }
+.muted { color: var(--muted); }
+.metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.metric { border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: var(--paper); }
+.metric strong { display: block; font-size: 24px; line-height: 1; }
+.metric span { display: block; margin-top: 6px; color: var(--muted); font-size: 12px; }
+main { padding: 24px clamp(18px, 4vw, 56px) 42px; }
+.explorer-shell { display: grid; grid-template-columns: minmax(240px, 320px) minmax(420px, 1fr) minmax(280px, 360px); gap: 18px; align-items: stretch; min-height: 620px; }
+.node-panel, .graph-stage, .detail-panel { border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
+.node-panel, .detail-panel { padding: 16px; overflow: auto; max-height: 720px; }
+.toolbar { display: grid; gap: 8px; }
+label { color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+input { width: 100%; border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; font: inherit; color: var(--ink); background: #fff; }
+.filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+button { border: 1px solid var(--line); border-radius: 6px; background: var(--soft); color: var(--ink); padding: 7px 10px; font: inherit; cursor: pointer; }
+button.active, button:hover { border-color: var(--accent); color: var(--accent); background: #eef7f1; }
+.node-list { display: grid; gap: 8px; }
+.node-button { width: 100%; text-align: left; background: #fff; }
+.node-button.active { background: #eef7f1; border-color: var(--accent); }
+.node-button strong { display: block; font-size: 13px; line-height: 1.3; }
+.node-button span { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; }
+.graph-stage { min-height: 620px; overflow: hidden; }
+#graph-svg { display: block; width: 100%; height: 100%; min-height: 620px; background: #f8faf8; }
+.edge { stroke: var(--edge); stroke-width: 1.3; }
+.node { cursor: pointer; stroke: #fff; stroke-width: 2; }
+.node.seed { fill: var(--accent); }
+.node.expanded { fill: var(--expanded); }
+.node.selected { stroke: #17211b; stroke-width: 3; }
+.label { pointer-events: none; fill: #25312a; font-size: 10px; }
+.detail-panel h2 { font-size: 18px; margin-bottom: 8px; }
+.detail-list, .edge-list, .cluster-list { display: grid; gap: 8px; margin-top: 12px; }
+.detail-row, .edge-row, .cluster-row { border-top: 1px solid var(--line); padding-top: 8px; }
+.detail-row span, .edge-row span, .cluster-row span { display: block; color: var(--muted); font-size: 12px; }
+.pill-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+.pill { border: 1px solid var(--line); border-radius: 999px; padding: 3px 8px; font-size: 12px; color: var(--muted); }
+a { color: var(--accent-2); text-decoration: none; }
+a:hover { text-decoration: underline; }
+@media (max-width: 1080px) { .explorer-shell { grid-template-columns: 1fr; } .graph-stage, #graph-svg { min-height: 520px; } header { grid-template-columns: 1fr; } }
+@media (max-width: 560px) { .metrics { grid-template-columns: 1fr 1fr; } main { padding-inline: 14px; } .node-panel, .detail-panel { max-height: none; } }
+</style>
+</head>
+<body>
+<header>
+<div>
+<p class="eyebrow">Feynman PaperRank Graph Explorer</p>
+<h1>agentic knowledge memory systems with semantic search knowledge graphs and contradiction detection</h1>
+<p class="muted">Generated 2026-07-13T18:31:22.485Z from OpenAlex Works API.</p>
+</div>
+<div class="metrics">
+<div class="metric"><strong>25</strong><span>Graph papers</span></div>
+<div class="metric"><strong>6</strong><span>Citation edges</span></div>
+<div class="metric"><strong>0</strong><span>Expanded papers</span></div>
+<div class="metric"><strong>25</strong><span>Ranked seeds</span></div>
+</div>
+</header>
+<main>
+<section class="explorer-shell">
+<aside class="node-panel">
+<div class="toolbar">
+<label for="paper-search">Search papers</label>
+<input id="paper-search" type="search" placeholder="Title, cluster, role, paper ID">
+</div>
+<div class="filters" role="group" aria-label="Graph filters">
+<button type="button" data-filter="all" class="active">All</button>
+<button type="button" data-filter="seed">Seed</button>
+<button type="button" data-filter="expanded">Expanded</button>
+<button type="button" data-filter="ranked">Ranked</button>
+</div>
+<div id="node-list" class="node-list"></div>
+</aside>
+<section class="graph-stage" aria-label="Citation graph explorer">
+<svg id="graph-svg" viewBox="0 0 900 620" role="img" aria-label="Interactive citation graph"></svg>
+</section>
+<aside id="graph-detail" class="detail-panel"></aside>
+</section>
+</main>
+<script id="graph-data" type="application/json">{"topic":"agentic knowledge memory systems with semantic search knowledge graphs and contradiction detection","slug":"agentic-knowledge-memory-systems-semantic","generatedAt":"2026-07-13T18:31:22.485Z","citationExpansion":{"requestedPerSeed":0,"seedCount":25,"outgoingCandidateCount":0,"outgoingFetchedCount":0,"incomingFetchedCount":0,"expandedPaperCount":0,"graphPaperCount":25},"nodes":[{"id":"W2300469216","title":"Knowledge graph refinement: A survey of approaches and evaluation methods","role":"seed","year":2016,"openAlexId":"https://openalex.org/W2300469216","url":"https://doi.org/10.3233/sw-160218","citationCount":1205,"rank":1,"readFirstScore":67.44,"signals":{"topic":47.78,"impact":99.98,"graph":100,"velocity":80.13,"method":21,"repro":30},"primaryCluster":"Data Quality and Management","fieldRoles":["foundation","bridge"],"pageRank":0.11,"inDegree":3,"outDegree":0},{"id":"W3125491592","title":"Detection and Resolution of Rumours in Social Media: A Survey","role":"seed","year":2017,"openAlexId":"https://openalex.org/W3125491592","url":"http://wrap.warwick.ac.uk/96775/13/WRAP-detection-resolution-rumours-social-media-Zubiaga-2018.pdf","citationCount":727,"rank":4,"readFirstScore":50.32,"signals":{"topic":39.51,"impact":88.11,"graph":45.6,"velocity":73.23,"method":14,"repro":30},"primaryCluster":"Misinformation and Its Impacts","fieldRoles":["foundation","bridge"],"pageRank":0.05,"inDegree":1,"outDegree":0},{"id":"W2610676001","title":"Detection and Resolution of Rumours in Social Media","role":"seed","year":2018,"openAlexId":"https://openalex.org/W2610676001","url":"https://doi.org/10.1145/3161603","citationCount":586,"rank":2,"readFirstScore":52.2,"signals":{"topic":38.47,"impact":99.98,"graph":45.6,"velocity":71.38,"method":14,"repro":30},"primaryCluster":"Misinformation and Its Impacts","fieldRoles":["foundation","bridge"],"pageRank":0.05,"inDegree":1,"outDegree":0},{"id":"W4401807469","title":"Construction of Knowledge Graphs: Current State and Challenges","role":"seed","year":2024,"openAlexId":"https://openalex.org/W4401807469","url":"https://doi.org/10.3390/info15080509","citationCount":70,"rank":3,"readFirstScore":52.1,"signals":{"topic":52.99,"impact":99.81,"graph":32,"velocity":54.36,"method":14,"repro":30},"primaryCluster":"Data Quality and Management","fieldRoles":["foundation","bridge"],"pageRank":0.04,"inDegree":0,"outDegree":2},{"id":"W2051547811","title":"Extracting semantically enriched events from biomedical literature","role":"seed","year":2012,"openAlexId":"https://openalex.org/W2051547811","url":"https://doi.org/10.1186/1471-2105-13-108","citationCount":69,"rank":7,"readFirstScore":47.89,"signals":{"topic":43.61,"impact":94.88,"graph":32,"velocity":29.34,"method":35,"repro":30},"primaryCluster":"Biomedical Text Mining and Ontologies","fieldRoles":["foundation","bridge"],"pageRank":0.04,"inDegree":0,"outDegree":0},{"id":"W4206484811","title":"A Metaverse: Taxonomy, Components, Applications, and Open Challenges","role":"seed","year":2022,"openAlexId":"https://openalex.org/W4206484811","url":"https://doi.org/10.1109/access.2021.3140175","citationCount":1770,"rank":5,"readFirstScore":48.64,"signals":{"topic":19.79,"impact":99.99,"graph":32,"velocity":100,"method":33,"repro":30},"primaryCluster":"Multimodal Machine Learning Applications","fieldRoles":["foundation","bridge"],"pageRank":0.04,"inDegree":0,"outDegree":0},{"id":"W3123733941","title":"Semantic Systems. In the Era of Knowledge Graphs","role":"seed","year":2020,"openAlexId":"https://openalex.org/W3123733941","url":"https://doi.org/10.1007/978-3-030-59833-4","citationCount":7,"rank":8,"readFirstScore":47.23,"signals":{"topic":59.31,"impact":83.77,"graph":32,"velocity":11.8,"method":21,"repro":30},"primaryCluster":"Semantic Web and Ontologies","fieldRoles":["foundation","bridge"],"pageRank":0.04,"inDegree":0,"outDegree":1},{"id":"W3142044733","title":"A Review of Rule Learning-Based Intrusion Detection Systems and Their Prospects in Smart Grids","role":"seed","year":2021,"openAlexId":"https://openalex.org/W3142044733","url":"https://doi.org/10.1109/access.2021.3071263","citationCount":122,"rank":9,"readFirstScore":46.68,"signals":{"topic":34.37,"impact":98.28,"graph":32,"velocity":52.12,"method":21,"repro":30},"primaryCluster":"Network Security and Intrusion Detection","fieldRoles":["foundation","bridge"],"pageRank":0.04,"inDegree":0,"outDegree":0},{"id":"W3085880068","title":"“Stopping for knowledge”: The sense of beauty in the perception-action cycle","role":"seed","year":2020,"openAlexId":"https://openalex.org/W3085880068","url":"https://doi.org/10.1016/j.neubiorev.2020.09.004","citationCount":82,"rank":13,"readFirstScore":45.04,"signals":{"topic":25,"impact":96.51,"graph":32,"velocity":43.3,"method":"n/a","repro":30},"primaryCluster":"Aesthetic Perception and Analysis","fieldRoles":["foundation","bridge"],"pageRank":0.04,"inDegree":0,"outDegree":0},{"id":"W2009434747","title":"AutoTutor and Family: A Review of 17 Years of Natural Language Tutoring","role":"seed","year":2014,"openAlexId":"https://openalex.org/W2009434747","url":"https://doi.org/10.1007/s40593-014-0029-5","citationCount":270,"rank":11,"readFirstScore":45.94,"signals":{"topic":22.85,"impact":99.21,"graph":32,"velocity":52.46,"method":"n/a","repro":30},"primaryCluster":"Intelligent Tutoring Systems and Adaptive Learning","fieldRoles":["foundation","bridge"],"pageRank":0.04,"inDegree":0,"outDegree":0},{"id":"W4206928079","title":"Unsupervised Anomaly Detection in Knowledge Graphs","role":"seed","year":2021,"openAlexId":"https://openalex.org/W4206928079","url":"https://doi.org/10.1145/3502223.3502246","citationCount":10,"rank":15,"readFirstScore":44.38,"signals":{"topic":39.58,"impact":83.07,"graph":45.6,"velocity":16.7,"method":21,"repro":30},"primaryCluster":"Data Quality and Management","fieldRoles":["foundation","bridge"],"pageRank":0.05,"inDegree":1,"outDegree":0},{"id":"W3174385379","title":"Computer Vision, IoT and Data Fusion for Crop Disease Detection Using Machine Learning: A Survey and Ongoing Research","role":"seed","year":2021,"openAlexId":"https://openalex.org/W3174385379","url":"https://doi.org/10.3390/rs13132486","citationCount":260,"rank":14,"readFirstScore":44.82,"signals":{"topic":22.99,"impact":99.85,"graph":32,"velocity":64.57,"method":21,"repro":30},"primaryCluster":"Smart Agriculture and AI","fieldRoles":["foundation","bridge"],"pageRank":0.04,"inDegree":0,"outDegree":0},{"id":"W4312257891","title":"Neural Architecture Search for Transformers: A Survey","role":"seed","year":2022,"openAlexId":"https://openalex.org/W4312257891","url":"https://doi.org/10.1109/access.2022.3212767","citationCount":100,"rank":10,"readFirstScore":46.24,"signals":{"topic":28.06,"impact":98.66,"graph":32,"velocity":51.85,"method":28,"repro":37},"primaryCluster":"Advanced Neural Network Applications","fieldRoles":["foundation","bridge"],"pageRank":0.04,"inDegree":0,"outDegree":0},{"id":"W4406840428","title":"Zep: A Temporal Knowledge Graph Architecture for Agent Memory","role":"seed","year":2025,"openAlexId":"https://openalex.org/W4406840428","url":"http://arxiv.org/abs/2501.13956","citationCount":5,"rank":25,"readFirstScore":31.73,"signals":{"topic":35.35,"impact":23.96,"graph":32,"velocity":21.33,"method":48,"repro":30},"primaryCluster":"Graph Theory and Algorithms","fieldRoles":["bridge"],"pageRank":0.04,"inDegree":0,"outDegree":0},{"id":"W4390880258","title":"Machine Learning for Refining Knowledge Graphs: A Survey","role":"seed","year":2024,"openAlexId":"https://openalex.org/W4390880258","url":"https://doi.org/10.1145/3640313","citationCount":15,"rank":18,"readFirstScore":42.36,"signals":{"topic":27.08,"impact":94.93,"graph":32,"velocity":30.51,"method":21,"repro":37},"primaryCluster":"Advanced Graph Neural Networks","fieldRoles":["foundation","bridge"],"pageRank":0.04,"inDegree":0,"outDegree":1},{"id":"W4387596421","title":"Survey on Factuality in Large Language Models: Knowledge, Retrieval and Domain-Specificity","role":"seed","year":2023,"openAlexId":"https://openalex.org/W4387596421","url":"http://arxiv.org/abs/2310.07521","citationCount":55,"rank":24,"readFirstScore":32.86,"signals":{"topic":17.71,"impact":53.82,"graph":32,"velocity":45.83,"method":28,"repro":30},"primaryCluster":"Topic Modeling","fieldRoles":["bridge"],"pageRank":0.04,"inDegree":0,"outDegree":0},{"id":"W3188576818","title":"A Review of Intrusion Detection Systems in RPL Routing Protocol Based on Machine Learning for Internet of Things Applications","role":"seed","year":2021,"openAlexId":"https://openalex.org/W3188576818","url":"https://doi.org/10.1155/2021/8414503","citationCount":47,"rank":12,"readFirstScore":45.41,"signals":{"topic":32.22,"impact":95.69,"graph":32,"velocity":37.1,"method":35,"repro":30},"primaryCluster":"Network Security and Intrusion Detection","fieldRoles":["foundation","bridge"],"pageRank":0.04,"inDegree":0,"outDegree":0},{"id":"W3113149630","title":"Neurosymbolic AI: the 3rd wave","role":"seed","year":2023,"openAlexId":"https://openalex.org/W3113149630","url":"https://doi.org/10.1007/s10462-023-10448-w","citationCount":331,"rank":6,"readFirstScore":48.27,"signals":{"topic":21.74,"impact":99.89,"graph":32,"velocity":75.4,"method":"n/a","repro":30},"primaryCluster":"Neural Networks and Applications","fieldRoles":["foundation","frontier","bridge"],"pageRank":0.04,"inDegree":0,"outDegree":0},{"id":"W4388524030","title":"A comprehensive survey on machine learning approaches for fake news detection","role":"seed","year":2023,"openAlexId":"https://openalex.org/W4388524030","url":"https://doi.org/10.1007/s11042-023-17470-8","citationCount":113,"rank":19,"readFirstScore":42.31,"signals":{"topic":14.58,"impact":99.93,"graph":32,"velocity":57.49,"method":21,"repro":37},"primaryCluster":"Misinformation and Its Impacts","fieldRoles":["foundation","frontier","bridge"],"pageRank":0.04,"inDegree":0,"outDegree":2},{"id":"W4311405210","title":"EMVLight: A multi-agent reinforcement learning framework for an emergency vehicle decentralized routing and traffic signal control system","role":"seed","year":2022,"openAlexId":"https://openalex.org/W4311405210","url":"https://doi.org/10.1016/j.trc.2022.103955","citationCount":78,"rank":21,"readFirstScore":39.45,"signals":{"topic":5.21,"impact":98.78,"graph":32,"velocity":47.84,"method":"n/a","repro":30},"primaryCluster":"Evacuation and Crowd Dynamics","fieldRoles":["foundation","bridge"],"pageRank":0.04,"inDegree":0,"outDegree":0},{"id":"W2739419429","title":"Argumentation mining: How can a machine acquire common sense and world knowledge?","role":"seed","year":2017,"openAlexId":"https://openalex.org/W2739419429","url":"https://doi.org/10.3233/aac-170025","citationCount":38,"rank":23,"readFirstScore":37.94,"signals":{"topic":19.72,"impact":89.76,"graph":32,"velocity":26.71,"method":20,"repro":30},"primaryCluster":"Topic Modeling","fieldRoles":["foundation","bridge"],"pageRank":0.04,"inDegree":0,"outDegree":0},{"id":"W4412465717","title":"Practices, opportunities and challenges in the fusion of knowledge graphs and large language models","role":"seed","year":2025,"openAlexId":"https://openalex.org/W4412465717","url":"https://doi.org/10.3389/fcomp.2025.1590632","citationCount":13,"rank":20,"readFirstScore":41.2,"signals":{"topic":19.79,"impact":99.16,"graph":32,"velocity":34.31,"method":26,"repro":30},"primaryCluster":"Topic Modeling","fieldRoles":["foundation","bridge"],"pageRank":0.04,"inDegree":0,"outDegree":0},{"id":"W4386501849","title":"Siren's Song in the AI Ocean: A Survey on Hallucination in Large Language Models","role":"seed","year":2023,"openAlexId":"https://openalex.org/W4386501849","url":"http://arxiv.org/abs/2309.01219","citationCount":242,"rank":22,"readFirstScore":38.86,"signals":{"topic":16.53,"impact":73.44,"graph":32,"velocity":70.15,"method":28,"repro":30},"primaryCluster":"Topic Modeling","fieldRoles":["frontier","bridge"],"pageRank":0.04,"inDegree":0,"outDegree":0},{"id":"W3207701354","title":"A Human-Centered Systematic Literature Review of the Computational Approaches for Online Sexual Risk Detection","role":"seed","year":2021,"openAlexId":"https://openalex.org/W3207701354","url":"https://doi.org/10.1145/3479609","citationCount":92,"rank":17,"readFirstScore":42.5,"signals":{"topic":16.6,"impact":99.32,"graph":32,"velocity":47.57,"method":28,"repro":37},"primaryCluster":"Cybercrime and Law Enforcement Studies","fieldRoles":["foundation","bridge"],"pageRank":0.04,"inDegree":0,"outDegree":0},{"id":"W2906927267","title":"Neural Networks in Big Data and Web Search","role":"seed","year":2018,"openAlexId":"https://openalex.org/W2906927267","url":"https://doi.org/10.3390/data4010007","citationCount":35,"rank":16,"readFirstScore":43.38,"signals":{"topic":30,"impact":97.36,"graph":32,"velocity":27.03,"method":28,"repro":30},"primaryCluster":"Web Data Mining and Analysis","fieldRoles":["foundation","bridge"],"pageRank":0.04,"inDegree":0,"outDegree":0}],"edges":[{"source":"W4401807469","target":"W2300469216","sourceTitle":"Construction of Knowledge Graphs: Current State and Challenges","targetTitle":"Knowledge graph refinement: A survey of approaches and evaluation methods"},{"source":"W4401807469","target":"W4206928079","sourceTitle":"Construction of Knowledge Graphs: Current State and Challenges","targetTitle":"Unsupervised Anomaly Detection in Knowledge Graphs"},{"source":"W3123733941","target":"W2300469216","sourceTitle":"Semantic Systems. In the Era of Knowledge Graphs","targetTitle":"Knowledge graph refinement: A survey of approaches and evaluation methods"},{"source":"W4390880258","target":"W2300469216","sourceTitle":"Machine Learning for Refining Knowledge Graphs: A Survey","targetTitle":"Knowledge graph refinement: A survey of approaches and evaluation methods"},{"source":"W4388524030","target":"W2610676001","sourceTitle":"A comprehensive survey on machine learning approaches for fake news detection","targetTitle":"Detection and Resolution of Rumours in Social Media"},{"source":"W4388524030","target":"W3125491592","sourceTitle":"A comprehensive survey on machine learning approaches for fake news detection","targetTitle":"Detection and Resolution of Rumours in Social Media: A Survey"}],"clusters":[{"label":"Computer science","paperCount":16,"seedPaperCount":16,"expandedPaperCount":0,"topPapers":[{"paperId":"W2300469216","title":"Knowledge graph refinement: A survey of approaches and evaluation methods","role":"seed","rank":1,"score":67.44},{"paperId":"W2610676001","title":"Detection and Resolution of Rumours in Social Media","role":"seed","rank":2,"score":52.2},{"paperId":"W3125491592","title":"Detection and Resolution of Rumours in Social Media: A Survey","role":"seed","rank":4,"score":50.32},{"paperId":"W4206484811","title":"A Metaverse: Taxonomy, Components, Applications, and Open Challenges","role":"seed","rank":5,"score":48.64},{"paperId":"W2051547811","title":"Extracting semantically enriched events from biomedical literature","role":"seed","rank":7,"score":47.89}]},{"label":"Topic Modeling","paperCount":6,"seedPaperCount":6,"expandedPaperCount":0,"topPapers":[{"paperId":"W2009434747","title":"AutoTutor and Family: A Review of 17 Years of Natural Language Tutoring","role":"seed","rank":11,"score":45.94},{"paperId":"W4206928079","title":"Unsupervised Anomaly Detection in Knowledge Graphs","role":"seed","rank":15,"score":44.38},{"paperId":"W4412465717","title":"Practices, opportunities and challenges in the fusion of knowledge graphs and large language models","role":"seed","rank":20,"score":41.2},{"paperId":"W4386501849","title":"Siren's Song in the AI Ocean: A Survey on Hallucination in Large Language Models","role":"seed","rank":22,"score":38.86},{"paperId":"W2739419429","title":"Argumentation mining: How can a machine acquire common sense and world knowledge?","role":"seed","rank":23,"score":37.94}]},{"label":"Advanced Graph Neural Networks","paperCount":5,"seedPaperCount":5,"expandedPaperCount":0,"topPapers":[{"paperId":"W2300469216","title":"Knowledge graph refinement: A survey of approaches and evaluation methods","role":"seed","rank":1,"score":67.44},{"paperId":"W4401807469","title":"Construction of Knowledge Graphs: Current State and Challenges","role":"seed","rank":3,"score":52.1},{"paperId":"W4206928079","title":"Unsupervised Anomaly Detection in Knowledge Graphs","role":"seed","rank":15,"score":44.38},{"paperId":"W4390880258","title":"Machine Learning for Refining Knowledge Graphs: A Survey","role":"seed","rank":18,"score":42.36},{"paperId":"W4412465717","title":"Practices, opportunities and challenges in the fusion of knowledge graphs and large language models","role":"seed","rank":20,"score":41.2}]},{"label":"Data Quality and Management","paperCount":4,"seedPaperCount":4,"expandedPaperCount":0,"topPapers":[{"paperId":"W2300469216","title":"Knowledge graph refinement: A survey of approaches and evaluation methods","role":"seed","rank":1,"score":67.44},{"paperId":"W4401807469","title":"Construction of Knowledge Graphs: Current State and Challenges","role":"seed","rank":3,"score":52.1},{"paperId":"W4206928079","title":"Unsupervised Anomaly Detection in Knowledge Graphs","role":"seed","rank":15,"score":44.38},{"paperId":"W4390880258","title":"Machine Learning for Refining Knowledge Graphs: A Survey","role":"seed","rank":18,"score":42.36}]},{"label":"Semantic Web and Ontologies","paperCount":4,"seedPaperCount":4,"expandedPaperCount":0,"topPapers":[{"paperId":"W2300469216","title":"Knowledge graph refinement: A survey of approaches and evaluation methods","role":"seed","rank":1,"score":67.44},{"paperId":"W4401807469","title":"Construction of Knowledge Graphs: Current State and Challenges","role":"seed","rank":3,"score":52.1},{"paperId":"W3123733941","title":"Semantic Systems. In the Era of Knowledge Graphs","role":"seed","rank":8,"score":47.23},{"paperId":"W4406840428","title":"Zep: A Temporal Knowledge Graph Architecture for Agent Memory","role":"seed","rank":25,"score":31.73}]},{"label":"Misinformation and Its Impacts","paperCount":3,"seedPaperCount":3,"expandedPaperCount":0,"topPapers":[{"paperId":"W2610676001","title":"Detection and Resolution of Rumours in Social Media","role":"seed","rank":2,"score":52.2},{"paperId":"W3125491592","title":"Detection and Resolution of Rumours in Social Media: A Survey","role":"seed","rank":4,"score":50.32},{"paperId":"W4388524030","title":"A comprehensive survey on machine learning approaches for fake news detection","role":"seed","rank":19,"score":42.31}]},{"label":"Natural Language Processing Techniques","paperCount":3,"seedPaperCount":3,"expandedPaperCount":0,"topPapers":[{"paperId":"W4412465717","title":"Practices, opportunities and challenges in the fusion of knowledge graphs and large language models","role":"seed","rank":20,"score":41.2},{"paperId":"W2739419429","title":"Argumentation mining: How can a machine acquire common sense and world knowledge?","role":"seed","rank":23,"score":37.94},{"paperId":"W4387596421","title":"Survey on Factuality in Large Language Models: Knowledge, Retrieval and Domain-Specificity","role":"seed","rank":24,"score":32.86}]},{"label":"Advanced Neural Network Applications","paperCount":2,"seedPaperCount":2,"expandedPaperCount":0,"topPapers":[{"paperId":"W4206484811","title":"A Metaverse: Taxonomy, Components, Applications, and Open Challenges","role":"seed","rank":5,"score":48.64},{"paperId":"W4312257891","title":"Neural Architecture Search for Transformers: A Survey","role":"seed","rank":10,"score":46.24}]},{"label":"Domain Adaptation and Few-Shot Learning","paperCount":2,"seedPaperCount":2,"expandedPaperCount":0,"topPapers":[{"paperId":"W4206484811","title":"A Metaverse: Taxonomy, Components, Applications, and Open Challenges","role":"seed","rank":5,"score":48.64},{"paperId":"W4312257891","title":"Neural Architecture Search for Transformers: A Survey","role":"seed","rank":10,"score":46.24}]},{"label":"Multimodal Machine Learning Applications","paperCount":2,"seedPaperCount":2,"expandedPaperCount":0,"topPapers":[{"paperId":"W4206484811","title":"A Metaverse: Taxonomy, Components, Applications, and Open Challenges","role":"seed","rank":5,"score":48.64},{"paperId":"W4312257891","title":"Neural Architecture Search for Transformers: A Survey","role":"seed","rank":10,"score":46.24}]},{"label":"Interpretability","paperCount":2,"seedPaperCount":2,"expandedPaperCount":0,"topPapers":[{"paperId":"W3113149630","title":"Neurosymbolic AI: the 3rd wave","role":"seed","rank":6,"score":48.27},{"paperId":"W3142044733","title":"A Review of Rule Learning-Based Intrusion Detection Systems and Their Prospects in Smart Grids","role":"seed","rank":9,"score":46.68}]},{"label":"Network Security and Intrusion Detection","paperCount":2,"seedPaperCount":2,"expandedPaperCount":0,"topPapers":[{"paperId":"W3142044733","title":"A Review of Rule Learning-Based Intrusion Detection Systems and Their Prospects in Smart Grids","role":"seed","rank":9,"score":46.68},{"paperId":"W3188576818","title":"A Review of Intrusion Detection Systems in RPL Routing Protocol Based on Machine Learning for Internet of Things Applications","role":"seed","rank":12,"score":45.41}]}],"limits":["This explorer uses the local fetched seed plus citation-neighborhood graph, not a global literature graph.","Edges point from a citing paper to the paper it references.","Expanded papers are graph context. They are not included in the ranked seed score rows unless also present as seed papers.","Raw full-text bodies are not embedded in this explorer."]}</script>
+<script>
+const data = JSON.parse(document.getElementById("graph-data").textContent);
+const state = { query: "", filter: "all", selectedId: data.nodes[0]?.id };
+const byId = new Map(data.nodes.map((node) => [node.id, node]));
+const outgoing = new Map();
+const incoming = new Map();
+for (const edge of data.edges) {
+  outgoing.set(edge.source, [...(outgoing.get(edge.source) || []), edge]);
+  incoming.set(edge.target, [...(incoming.get(edge.target) || []), edge]);
+}
+const svg = document.getElementById("graph-svg");
+const list = document.getElementById("node-list");
+const detail = document.getElementById("graph-detail");
+const search = document.getElementById("paper-search");
+document.querySelectorAll("[data-filter]").forEach((button) => {
+  button.addEventListener("click", () => {
+    state.filter = button.dataset.filter;
+    document.querySelectorAll("[data-filter]").forEach((candidate) => candidate.classList.toggle("active", candidate === button));
+    render();
+  });
+});
+search.addEventListener("input", () => {
+  state.query = search.value.trim().toLowerCase();
+  render();
+});
+function nodeMatches(node) {
+  if (state.filter === "seed" && node.role !== "seed") return false;
+  if (state.filter === "expanded" && node.role !== "expanded") return false;
+  if (state.filter === "ranked" && typeof node.rank !== "number") return false;
+  if (!state.query) return true;
+  return [node.id, node.title, node.primaryCluster, ...(node.fieldRoles || [])].filter(Boolean).join(" ").toLowerCase().includes(state.query);
+}
+function filteredNodes() {
+  return data.nodes.filter(nodeMatches);
+}
+function render() {
+  const nodes = filteredNodes();
+  if (!nodes.some((node) => node.id === state.selectedId)) state.selectedId = nodes[0]?.id;
+  renderList(nodes);
+  renderGraph(nodes);
+  renderDetail(byId.get(state.selectedId));
+}
+function renderList(nodes) {
+  list.innerHTML = nodes.map((node) => '<button type="button" class="node-button' + (node.id === state.selectedId ? ' active' : '') + '" data-id="' + escapeAttributeValue(node.id) + '"><strong>' + escapeHtml(node.title) + '</strong><span>' + escapeHtml(node.id + ' · ' + node.role + (node.rank ? ' · rank #' + node.rank : '')) + '</span></button>').join("");
+  list.querySelectorAll("button").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.selectedId = button.dataset.id;
+      render();
+    });
+  });
+}
+function renderGraph(nodes) {
+  const visible = new Set(nodes.map((node) => node.id));
+  const width = 900;
+  const height = 620;
+  const centerX = width / 2;
+  const centerY = height / 2;
+  const radius = Math.min(260, Math.max(150, 34 * nodes.length));
+  const positions = new Map();
+  nodes.forEach((node, index) => {
+    const angle = (2 * Math.PI * index) / Math.max(1, nodes.length) - Math.PI / 2;
+    positions.set(node.id, { x: centerX + radius * Math.cos(angle), y: centerY + radius * Math.sin(angle) });
+  });
+  const edges = data.edges.filter((edge) => visible.has(edge.source) && visible.has(edge.target));
+  const edgeMarkup = edges.map((edge) => {
+    const source = positions.get(edge.source);
+    const target = positions.get(edge.target);
+    return '<line class="edge" x1="' + source.x.toFixed(1) + '" y1="' + source.y.toFixed(1) + '" x2="' + target.x.toFixed(1) + '" y2="' + target.y.toFixed(1) + '"></line>';
+  }).join("");
+  const nodeMarkup = nodes.map((node) => {
+    const position = positions.get(node.id);
+    const size = node.role === "seed" ? 10 : 7;
+    const label = node.rank ? "#" + node.rank + " " + node.title : node.title;
+    return '<g><circle class="node ' + node.role + (node.id === state.selectedId ? ' selected' : '') + '" data-id="' + escapeAttributeValue(node.id) + '" cx="' + position.x.toFixed(1) + '" cy="' + position.y.toFixed(1) + '" r="' + size + '"></circle><text class="label" x="' + position.x.toFixed(1) + '" y="' + (position.y + 20).toFixed(1) + '" text-anchor="middle">' + escapeHtml(truncate(label, 28)) + '</text></g>';
+  }).join("");
+  svg.innerHTML = '<rect x="0" y="0" width="' + width + '" height="' + height + '" rx="8" fill="#f8faf8"></rect>' + edgeMarkup + nodeMarkup + '<text x="18" y="30" font-size="12" fill="#17211b">Click a node to inspect its score, role, and citation links.</text>';
+  svg.querySelectorAll(".node").forEach((circle) => {
+    circle.addEventListener("click", () => {
+      state.selectedId = circle.dataset.id;
+      render();
+    });
+  });
+}
+function renderDetail(node) {
+  if (!node) {
+    detail.innerHTML = '<h2>No paper selected</h2><p class="muted">Adjust the filter or search query.</p>';
+    return;
+  }
+  const incomingRows = (incoming.get(node.id) || []).map(edgeRow);
+  const outgoingRows = (outgoing.get(node.id) || []).map(edgeRow);
+  const roles = (node.fieldRoles || []).map((role) => '<span class="pill">' + escapeHtml(role) + '</span>').join("");
+  const signals = node.signals ? Object.entries(node.signals).map(([key, value]) => '<div class="detail-row"><strong>' + escapeHtml(key) + '</strong><span>' + escapeHtml(String(value)) + '</span></div>').join("") : '<div class="detail-row"><strong>Score</strong><span>Expanded graph context paper; not ranked as a seed paper.</span></div>';
+  detail.innerHTML = '<h2>' + escapeHtml(node.title) + '</h2>' +
+    '<p class="muted">' + escapeHtml(node.id + ' · ' + node.role + (node.year ? ' · ' + node.year : '')) + '</p>' +
+    '<div class="pill-row">' + roles + '</div>' +
+    '<div class="detail-list">' +
+    (node.url ? '<div class="detail-row"><strong>URL</strong><span><a href="' + escapeAttributeValue(node.url) + '">' + escapeHtml(node.url) + '</a></span></div>' : '') +
+    '<div class="detail-row"><strong>ReadFirst</strong><span>' + escapeHtml(node.rank ? '#' + node.rank + ' · ' + node.readFirstScore + '/100' : 'not ranked') + '</span></div>' +
+    '<div class="detail-row"><strong>Citation graph</strong><span>PageRank ' + escapeHtml(String(node.pageRank)) + '; in ' + escapeHtml(String(node.inDegree)) + '; out ' + escapeHtml(String(node.outDegree)) + '</span></div>' +
+    (node.primaryCluster ? '<div class="detail-row"><strong>Primary cluster</strong><span>' + escapeHtml(node.primaryCluster) + '</span></div>' : '') +
+    (node.critique ? '<div class="detail-row"><strong>Critique</strong><span>' + escapeHtml(node.critique.verdict + ' · ' + node.critique.confidence) + '</span></div>' : '') +
+    signals +
+    '</div>' +
+    '<h3>Incoming citations in local graph</h3><div class="edge-list">' + (incomingRows.join("") || '<p class="muted">None in fetched graph.</p>') + '</div>' +
+    '<h3>Outgoing references in local graph</h3><div class="edge-list">' + (outgoingRows.join("") || '<p class="muted">None in fetched graph.</p>') + '</div>';
+}
+function edgeRow(edge) {
+  return '<button type="button" class="edge-row" data-id="' + escapeAttributeValue(edge.source === state.selectedId ? edge.target : edge.source) + '"><strong>' + escapeHtml(edge.sourceTitle) + ' → ' + escapeHtml(edge.targetTitle) + '</strong><span>' + escapeHtml(edge.source + ' cites ' + edge.target) + '</span></button>';
+}
+detail.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-id]");
+  if (!button) return;
+  state.selectedId = button.dataset.id;
+  render();
+});
+function escapeHtml(value) {
+  return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
+}
+function escapeAttributeValue(value) {
+  return escapeHtml(value).replaceAll("\x60", "&#96;");
+}
+function truncate(value, max) {
+  value = String(value);
+  return value.length > max ? value.slice(0, max - 3).trim() + "..." : value;
+}
+render();
+</script>
+</body>
+</html>

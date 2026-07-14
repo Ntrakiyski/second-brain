@@ -22,12 +22,13 @@ import type { Env } from "./types";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
-import { captureEntry, appendToEntry, storeEntry, deleteStaleVectors } from "./ingest";
+import { captureEntry, appendToEntry, storeEntry, deleteStaleVectors, createSnapshot } from "./ingest";
 import { recallEntries, renderRecallText } from "./recall";
 import type { RecallMatch } from "./recall";
 import { forgetEntry, applyStatus } from "./lifecycle";
 import { buildEntryFilterQuery, getStatus, withKind, withStatus, buildVisibilityClause } from "./tags";
 import { createEdge, deleteEdge, getConnections, EDGE_TYPES, isValidEdgeType, edgeLabel } from "./graph";
+import { EPISTEMIC_STATUS_VALUES, isValidTransition, VALID_EPISTEMIC_TRANSITIONS, type EpistemicStatus } from "./types";
 import { isManagedMirror, mirrorEditError } from "./integrations-mirror";
 import { MEMORY_KIND_VALUES, KIND_VALUES, type MemoryKind, type MemoryStatus, STATUS_VALUES } from "./types";
 import { VECTORIZE_FIX_HINT } from "./config";
@@ -113,7 +114,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
       }
 
       try {
-        await appendToEntry(env, id, existingContent, a, tags, source, userId);
+        await appendToEntry(env, id, existingContent, a, tags, source, userId, ctx);
       } catch (e) {
         console.error("Append failed:", e);
         return {
@@ -168,6 +169,9 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
       const oldVectorIds: string[] = JSON.parse(row.vector_ids ?? "[]");
       const existingOwnerId = row.owner_user_id as string;
 
+      // Snapshot: backup before destructive update — fire-and-forget (non-fatal)
+      ctx.waitUntil(createSnapshot(env, id).catch(e => console.error("Snapshot creation failed (non-fatal):", e)));
+
       // Step 1: Update D1 content and tags (strip rolled-up so updated entry ranks normally)
       await env.DB.prepare(`UPDATE entries SET content = ?, tags = ? WHERE id = ?`)
         .bind(newContent, JSON.stringify(tags), id).run();
@@ -217,6 +221,35 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
     }
   );
 
+  // ── set_epistemic_status ──────────────────────────────────────────────────
+  server.registerTool(
+    "set_epistemic_status",
+    {
+      description: "Transition an entry's epistemic lifecycle state. Validates transitions — returns error with valid next states if transition is invalid. States: candidate → reviewed → canonical → qualified → superseded → retracted.",
+      inputSchema: {
+        entry_id: z.string().describe("Entry ID from recall or list_recent"),
+        new_status: z.enum([...EPISTEMIC_STATUS_VALUES] as [string, ...string[]]).describe("New epistemic status"),
+      },
+    },
+    async ({ entry_id, new_status }) => {
+      if (userId) {
+        const row = await env.DB.prepare(`SELECT owner_user_id FROM entries WHERE id = ?`).bind(entry_id).first() as { owner_user_id: string } | null;
+        if (row && row.owner_user_id && row.owner_user_id !== userId && row.owner_user_id !== "") {
+          return { content: [{ type: "text", text: `No entry found with ID: ${entry_id}` }] };
+        }
+      }
+      const entry = await env.DB.prepare(`SELECT epistemic_status FROM entries WHERE id = ?`).bind(entry_id).first() as { epistemic_status: string } | null;
+      if (!entry) return { content: [{ type: "text", text: `No entry found with ID: ${entry_id}` }] };
+      const currentStatus = (entry.epistemic_status ?? "canonical") as EpistemicStatus;
+      if (!isValidTransition(currentStatus, new_status as EpistemicStatus)) {
+        const validNext = VALID_EPISTEMIC_TRANSITIONS[currentStatus] ?? [];
+        return { content: [{ type: "text", text: `Invalid transition: ${currentStatus} → ${new_status}. Valid next states: ${validNext.length ? validNext.join(", ") : "(none — terminal state)"}` }] };
+      }
+      await env.DB.prepare(`UPDATE entries SET epistemic_status = ? WHERE id = ?`).bind(new_status, entry_id).run();
+      return { content: [{ type: "text", text: `Entry ${entry_id} transitioned: ${currentStatus} → ${new_status}.` }] };
+    }
+  );
+
   // ── recall ───────────────────────────────────────────────────────────────
   server.registerTool(
     "recall",
@@ -230,10 +263,11 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
         before: z.number().int().optional().describe("Only return entries before this Unix ms timestamp"),
         kind: z.enum([...KIND_VALUES] as [string, ...string[]]).optional().describe("Filter to episodic (events) or semantic (facts/knowledge)"),
         hops: z.number().int().min(0).max(3).default(0).describe("Graph expansion depth: 0 = direct matches only (default); 1–2 also surfaces related memories linked in the graph"),
+        as_of: z.number().int().optional().describe("Unix timestamp — return only facts valid at this time"),
       },
     },
-    async ({ query, topK, tag, after, before, kind, hops }) => {
-      const { matches, insight, semanticUnavailable } = await recallEntries({ query, topK, tag, after, before, kind: kind as MemoryKind | undefined, hops, userId }, env, ctx);
+    async ({ query, topK, tag, after, before, kind, hops, as_of }) => {
+      const { matches, insight, semanticUnavailable } = await recallEntries({ query, topK, tag, after, before, kind: kind as MemoryKind | undefined, hops, userId, asOf: as_of }, env, ctx);
 
       const notice = semanticUnavailable
         ? `Note: semantic search is unavailable because the Vectorize index is missing, so these are keyword matches only. Fix: ${VECTORIZE_FIX_HINT}.\n\n`
@@ -377,6 +411,72 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
         .map(c => `- (${c.label}) ${c.id}: ${c.content.slice(0, 120)}`)
         .join("\n");
       return { content: [{ type: "text", text }] };
+    }
+  );
+
+  // ── passages ──────────────────────────────────────────────────────────────
+  server.registerTool(
+    "passages",
+    {
+      description: "List evidence passages for an entry. Passages are source text chunks linked to entries for citation-level recall. Get the entry ID from recall or list_recent first.",
+      inputSchema: {
+        entry_id: z.string().describe("Entry ID from recall or list_recent"),
+      },
+    },
+    async ({ entry_id }) => {
+      const { results } = await env.DB.prepare(
+        `SELECT id, content, section, start_offset, end_offset, created_at FROM passages WHERE entry_id = ? ORDER BY created_at DESC LIMIT 10`
+      ).bind(entry_id).all() as { results: { id: string; content: string; section: string | null; start_offset: number | null; end_offset: number | null; created_at: number }[] };
+      if (!results.length) return { content: [{ type: "text", text: `No passages found for entry ${entry_id}.` }] };
+      const text = results.map((r, i) => {
+        const section = r.section ? ` [${r.section}]` : "";
+        const offset = r.start_offset != null ? ` @${r.start_offset}-${r.end_offset}` : "";
+        return `${i + 1}. ${section}${offset}\n${r.content.slice(0, 300)}${r.content.length > 300 ? "..." : ""}`;
+      }).join("\n\n");
+      return { content: [{ type: "text", text: `Passages for ${entry_id}:\n\n${text}` }] };
+    }
+  );
+
+  // ── restore ──────────────────────────────────────────────────────────────
+  server.registerTool(
+    "restore",
+    {
+      description: "Restore a previous version of an entry from its most recent snapshot. Creates a NEW entry with the snapshot content (never in-place rollback) to preserve full history.",
+      inputSchema: {
+        entry_id: z.string().describe("The ID of the entry to restore from"),
+        snapshot_id: z.string().optional().describe("Optional specific snapshot ID; if omitted, restores the most recent snapshot"),
+      },
+    },
+    async ({ entry_id, snapshot_id }) => {
+      let snapshot;
+      if (snapshot_id) {
+        snapshot = await env.DB.prepare(
+          `SELECT id, entry_id, content, tags, source, created_at FROM entry_snapshots WHERE id = ? AND entry_id = ?`
+        ).bind(snapshot_id, entry_id).first();
+      } else {
+        snapshot = await env.DB.prepare(
+          `SELECT id, entry_id, content, tags, source, created_at FROM entry_snapshots WHERE entry_id = ? ORDER BY created_at DESC LIMIT 1`
+        ).bind(entry_id).first();
+      }
+
+      if (!snapshot) {
+        return { content: [{ type: "text", text: `No snapshot found for entry ${entry_id}.` }] };
+      }
+
+      const snapContent = (snapshot.content as string) ?? "";
+      const snapTagsRaw = snapshot.tags as string | null;
+      let snapTags: string[] = [];
+      try { snapTags = snapTagsRaw ? JSON.parse(snapTagsRaw) : []; } catch { snapTags = []; }
+      const restoredTags = snapTags.filter((t: string) => !t.startsWith("status:"));
+      restoredTags.push("restored");
+
+      const result = await captureEntry(snapContent, restoredTags, (snapshot.source as string) ?? "restore", env, ctx, userId);
+
+      if (result.status === "blocked") {
+        return { content: [{ type: "text", text: `Restore blocked — duplicate detected (${(result.score * 100).toFixed(0)}% match). Existing entry ID: ${result.matchId}.` }] };
+      }
+
+      return { content: [{ type: "text", text: `Restored. New entry ID: ${result.id} — based on snapshot ${snapshot.id} from ${new Date(snapshot.created_at as number).toISOString()}.` }] };
     }
   );
 

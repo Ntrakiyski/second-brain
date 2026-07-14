@@ -70,7 +70,7 @@ describe("GET /recall", () => {
   it("returns ranked matches hydrated from D1", async () => {
     db.entries.push(
       { id: "entry-1", content: "First memory", tags: '["work"]', source: "api", created_at: 1000, vector_ids: "[]", recall_count: 0, importance_score: 0 },
-      { id: "entry-2", content: "Second memory", tags: '["idea"]', source: "api", created_at: 2000, vector_ids: "[]", recall_count: 0, importance_score: 0 },
+      { id: "entry-2", content: "Second memory", tags: '["idea"]', source: "api", created_at: 1000, vector_ids: "[]", recall_count: 0, importance_score: 0 },
     );
     env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({

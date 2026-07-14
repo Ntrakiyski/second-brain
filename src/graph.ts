@@ -42,6 +42,15 @@ export const EDGE_TYPES = {
   about_person:    { directed: true,  label: "About person",    allowedKinds: null },
   part_of_project: { directed: true,  label: "Part of project", allowedKinds: null },
   follows:         { directed: true,  label: "Follows",         allowedKinds: ["episodic"] },
+  corrects:        { directed: true,  label: "Corrects",        allowedKinds: null },
+  contradicts:     { directed: true,  label: "Contradicts",     allowedKinds: null },
+  clarifies:       { directed: true,  label: "Clarifies",       allowedKinds: null },
+  temporal_after:  { directed: true,  label: "After (temporal)", allowedKinds: null },
+  contextually_matches: { directed: false, label: "Contextually matches", allowedKinds: null },
+  derives_from:        { directed: true,  label: "Derives from",        allowedKinds: null },
+  supports:            { directed: true,  label: "Supports",            allowedKinds: null },
+  evaluates_on:        { directed: true,  label: "Evaluates on",        allowedKinds: null },
+  has_limitation:      { directed: true,  label: "Has limitation",      allowedKinds: null },
 } as const satisfies Record<string, { directed: boolean; label: string; allowedKinds: readonly MemoryKind[] | null }>;
 
 export type EdgeType = keyof typeof EDGE_TYPES;
@@ -76,7 +85,7 @@ export async function createEdge(
   sourceId: string,
   targetId: string,
   type: string,
-  opts: { weight?: number; provenance?: EdgeProvenance; metadata?: Record<string, unknown> },
+  opts: { weight?: number; provenance?: EdgeProvenance; metadata?: Record<string, unknown>; confidence?: number },
   env: Env,
 ): Promise<{ source_id: string; target_id: string; type: EdgeType } | null> {
   if (!isValidEdgeType(type)) return null;
@@ -99,7 +108,9 @@ export async function createEdge(
 
   const weight = Math.max(0, Math.min(1, opts.weight ?? DEFAULT_EDGE_WEIGHT));
   const provenance = opts.provenance ?? "inferred";
-  const metadata = JSON.stringify(opts.metadata ?? {});
+  const confidence = Math.max(0, Math.min(1, opts.confidence ?? DEFAULT_EDGE_WEIGHT));
+  const meta = { ...(opts.metadata ?? {}), confidence };
+  const metadata = JSON.stringify(meta);
   const now = Date.now();
 
   await env.DB.prepare(

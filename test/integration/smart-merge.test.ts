@@ -133,7 +133,7 @@ describe("POST /capture — smart merge (flagged band 0.85–0.95)", () => {
       env, ctx
     );
 
-    expect(insertMock).toHaveBeenCalledOnce();
+    expect(insertMock).toHaveBeenCalledTimes(2); // entry re-embed + passage vectorize
     // Only the stale chunk is deleted; the reused "existing-id" vector survives.
     expect(deleteByIdsMock).toHaveBeenCalledWith(["existing-id-chunk-1"]);
   });
@@ -202,8 +202,9 @@ describe("POST /capture — smart merge (flagged band 0.85–0.95)", () => {
       env, ctx
     );
 
-    const insertedVectors = insertMock.mock.calls[0][0] as any[];
-    expect(insertedVectors[0].metadata.content).toBe("THE MERGED RESULT");
+    const allInserts = insertMock.mock.calls.flatMap((c: any[]) => c[0]) as any[];
+    const entryVector = allInserts.find((v: any) => v.metadata?.source !== "passage" && !v.id?.startsWith("passage-"));
+    expect(entryVector.metadata.content).toBe("THE MERGED RESULT");
   });
 
   it("merge: deletes old vectors after re-embedding", async () => {

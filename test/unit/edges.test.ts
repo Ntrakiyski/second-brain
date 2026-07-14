@@ -75,7 +75,7 @@ describe("createEdge", () => {
   it("stores provenance and metadata", async () => {
     await createEdge("a", "b", "relates_to", { provenance: "explicit", metadata: { note: "hi" } }, env);
     expect(db.edges[0].provenance).toBe("explicit");
-    expect(JSON.parse(db.edges[0].metadata)).toEqual({ note: "hi" });
+    expect(JSON.parse(db.edges[0].metadata)).toEqual({ note: "hi", confidence: 0.5 });
   });
 });
 

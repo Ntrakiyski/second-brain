@@ -8,7 +8,7 @@
  * Logic: Stateless helpers — no DB access, no side effects.
  */
 
-import { KEYWORD_MIN_TOKEN_LEN, KEYWORD_STOPWORDS, CHUNK_MAX_CHARS, CHUNK_OVERLAP_CHARS } from "./config";
+import { KEYWORD_MIN_TOKEN_LEN, KEYWORD_STOPWORDS, CHUNK_MAX_CHARS, CHUNK_OVERLAP_CHARS, RETENTION_HALF_LIFE_DAYS } from "./config";
 
 // ─── Stream / binary utilities ─────────────────────────────────────────────────
 
@@ -110,4 +110,17 @@ export function tokenizeQuery(query: string): string[] {
       .map(t => t.replace(/^[^\w#.]+|[^\w#.]+$/g, "").replace(/[%_]/g, ""))
       .filter(t => t.length >= KEYWORD_MIN_TOKEN_LEN && !KEYWORD_STOPWORDS.has(t))
   )];
+}
+
+// ─── Spaced repetition retention score ──────────────────────────────────────
+
+// Exponential decay from time-since-last-recall. If lastRecalledAt is null,
+// falls back to createdAt (backward compatible for existing entries).
+// Returns a value in (0, 1] — 1.0 means "just recalled", approaches 0 over time.
+export function getRetentionScore(lastRecalledAt: number | null, createdAt: number, now: number): number {
+  const effectiveLastRecall = lastRecalledAt ?? createdAt;
+  const msSinceRecall = Math.max(0, now - effectiveLastRecall);
+  const daysSinceRecall = msSinceRecall / (24 * 60 * 60 * 1000);
+  const lambda = Math.log(2) / RETENTION_HALF_LIFE_DAYS;
+  return Math.exp(-lambda * daysSinceRecall);
 }

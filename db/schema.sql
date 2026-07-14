@@ -11,12 +11,17 @@ CREATE TABLE IF NOT EXISTS entries (
   importance_score     INTEGER DEFAULT 0,
   contradiction_wins   INTEGER DEFAULT 0,
   contradiction_losses INTEGER DEFAULT 0,
-  owner_user_id    TEXT NOT NULL DEFAULT ''
+  owner_user_id    TEXT NOT NULL DEFAULT '',
+  valid_from       INTEGER,
+  valid_to         INTEGER,
+  recorded_at      INTEGER,
+  epistemic_status TEXT NOT NULL DEFAULT 'canonical'
 );
 
 CREATE INDEX IF NOT EXISTS idx_entries_created_at ON entries(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_entries_source ON entries(source);
 CREATE INDEX IF NOT EXISTS idx_entries_owner ON entries(owner_user_id);
+CREATE INDEX IF NOT EXISTS idx_entries_temporal ON entries(valid_from, valid_to);
 
 -- User model for multi-user support
 CREATE TABLE IF NOT EXISTS users (
@@ -51,3 +56,67 @@ CREATE TABLE IF NOT EXISTS edges (
 
 CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(source_id);
 CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target_id);
+
+-- Episodes: immutable raw content ledger (Memory Pillar Phase 1)
+-- Every new capture creates an episode row preserving original text.
+-- Episodes are never updated or deleted.
+CREATE TABLE IF NOT EXISTS episodes (
+  id          TEXT PRIMARY KEY,
+  entry_id    TEXT NOT NULL,
+  content     TEXT NOT NULL,
+  content_type TEXT NOT NULL DEFAULT 'text',
+  source      TEXT NOT NULL DEFAULT 'api',
+  created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_episodes_entry_id ON episodes(entry_id);
+
+-- Entry snapshots: pre-mutation backups (Memory Pillar Phase 1)
+-- Created before every update, append, and compression. Append-only.
+CREATE TABLE IF NOT EXISTS entry_snapshots (
+  id          TEXT PRIMARY KEY,
+  entry_id    TEXT NOT NULL,
+  content     TEXT NOT NULL,
+  tags        TEXT NOT NULL DEFAULT '[]',
+  source      TEXT NOT NULL DEFAULT 'api',
+  created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_snapshots_entry_id ON entry_snapshots(entry_id);
+
+-- Evidence passages: sub-entry text spans for citation (Memory Pillar Phase 1)
+-- Links research claims to exact text positions in source documents.
+CREATE TABLE IF NOT EXISTS passages (
+  id            TEXT PRIMARY KEY,
+  entry_id      TEXT NOT NULL,
+  episode_id    TEXT,
+  content       TEXT NOT NULL,
+  section       TEXT,
+  page          INTEGER,
+  start_offset  INTEGER,
+  end_offset    INTEGER,
+  vector_ids    TEXT NOT NULL DEFAULT '[]',
+  created_at    INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_passages_entry_id ON passages(entry_id);
+CREATE INDEX IF NOT EXISTS idx_passages_episode_id ON passages(episode_id);
+
+-- Document hierarchy: research document structure (Memory Pillar Phase 1)
+-- document → section → passage → claim for ingested research content.
+CREATE TABLE IF NOT EXISTS documents (
+  id          TEXT PRIMARY KEY,
+  title       TEXT NOT NULL,
+  source_url  TEXT,
+  content_type TEXT NOT NULL DEFAULT 'research',
+  created_at  INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS document_sections (
+  id                TEXT PRIMARY KEY,
+  document_id       TEXT NOT NULL,
+  parent_section_id TEXT,
+  title             TEXT NOT NULL,
+  level             INTEGER NOT NULL DEFAULT 0,
+  order_index       INTEGER NOT NULL DEFAULT 0,
+  created_at        INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sections_document_id ON document_sections(document_id);
+CREATE INDEX IF NOT EXISTS idx_sections_parent ON document_sections(parent_section_id);

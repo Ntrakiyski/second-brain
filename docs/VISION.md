@@ -2,42 +2,88 @@
 
 ## The Living Memory Organism
 
-A self-evolving knowledge partner that operates your memory, catches what you miss, and proposes what you haven't thought of yet.
-
-Memory becomes a team member — not a static database, but a living system that learns, proposes, and operates.
+A self-evolving knowledge partner that operates your memory, catches what you miss, and proposes what you haven't thought of yet. Memory becomes a team member — not a static database, but a living system that learns, proposes, and operates.
 
 ---
 
-## User Stories
+## Four Pillars
 
-### 1. Any agent, any interface
-As a user, I want to connect to my memory through any chat interface (Claude, GPT, Hermes, any MCP-compatible agent) and have that agent know my context — my decisions, my history, my knowledge. The memory works regardless of which agent I'm using.
+### 1. Memory
+The foundation. A persistent, semantically-searchable knowledge layer that any agent can read and write via MCP. Every memory is citable — traceable back to its source. Every fact is time-aware — you can query what was true when. Memories naturally decay unless reinforced, keeping the knowledge base relevant.
 
-### 2. Team visibility
-As a team member, I want to see what my team is remembering, working on, and deciding. I want to know when someone captures a decision, when a contradiction arises across the team's knowledge, when a new paper changes something we believed. The shared memory is a window into the team's collective intelligence.
+**What this means:**
+- Connect through any chat interface (Claude, GPT, Hermes, any MCP-compatible agent)
+- Every recalled fact links back to its source paper, section, page
+- Temporal tracking — "what did we believe in March?" has an answer
+- Spaced repetition — old knowledge fades, useful knowledge persists
+- Snapshots before every mutation — rollback is always possible
 
-### 3. Autonomous memory operation
-As a team, we want the memory system to actively operate — not just store and retrieve, but search for new information, scrape sources, test assumptions, propose actions, and expand our knowledge base autonomously. The memory has cores (capabilities) that agents can invoke: researching gaps, monitoring contradictions, extracting claims from papers, proposing deprecations, running overnight. The system evolves itself.
+**Deliverables:**
+- Episodes table — immutable raw content preserved alongside entries
+- Evidence passages — sub-entry citation granularity (paper, section, page)
+- Bitemporal facts — `valid_from`/`valid_to` + `recorded_at` on knowledge
+- Retention decay — spaced repetition scoring with configurable half-life
+- Snapshot table — pre-change backups before every mutation
+- `restore` MCP tool — rollback to any previous snapshot
 
-### 4. Contradiction catching
-As a team, when someone captures knowledge that conflicts with what we already know, the system catches it and asks: "This contradicts [existing entry from 2 months ago, by teammate X]. Which one is current?" The memory doesn't just store — it validates. It prevents the team from unknowingly operating on outdated or conflicting information.
+### 2. Shared Knowledge Base
+The team layer. Multiple users and agents share a collective memory with visibility enforcement. You see your own private entries plus the team's public knowledge. When someone captures a decision, makes a discovery, or ingests a paper — the whole team benefits. The shared memory is a window into the team's collective intelligence.
+
+**What this means:**
+- See what your team is remembering, working on, and deciding
+- Contradictions across the team are caught and surfaced — "this conflicts with what teammate X decided 2 months ago"
+- Typed relations — not just "related to" but `contradicts`, `derives_from`, `supports`
+- Confidence scores on every relationship — know how certain the system is
+- Cross-user awareness — when your work overlaps with a teammate's, you both know
+
+**Deliverables:**
+- Typed relations — `contradicts`, `derives_from`, `supports`, `evaluates_on`, `has_limitation`
+- Confidence scores on all edges — 0.0–1.0 per relationship
+- Cross-user contradiction detection — "this conflicts with teammate X's entry from March"
+- Team activity visibility — see what the team is capturing and deciding
+- Visibility enforcement — private entries stay private, public entries shared
+
+### 3. Operator
+The agent that operates the memory. Hermes connects to Second Brain via MCP and acts as the memory's brain — reading, writing, linking, retrieving, classifying, compressing. The operator is the bridge between raw storage and intelligent knowledge management. It follows rules, respects governance, and never acts without bounds.
+
+**What this means:**
+- Any MCP-compatible agent can operate the memory — not just one vendor
+- Operator follows autonomy levels: automatic (search, draft, link), gated (canonical, merge), never (delete)
+- All mutations go through MCP tools — no direct database access
+- Every action is auditable — logged to agent_runs and agent_events
+- Governance: Hermes proposes, humans approve
+
+**Deliverables:**
+- Hermes charter — defined agent ↔ memory boundary via MCP
+- Autonomy levels — automatic / gated / never, enforced per action
+- MCP tool interface — 10+ tools for agents to operate memory
+- Audit logging — every agent action tracked to `agent_runs` and `agent_events`
+- Proposal inbox — gated actions surface to humans before execution
+
+### 4. Autonomous Operations
+The operator as a team partner — not just memory, but a colleague. The system actively searches for new information, scrapes sources, tests assumptions, proposes actions, and expands the knowledge base overnight. It monitors for contradictions, extracts claims from papers, identifies gaps, and surfaces what you haven't asked for. The memory evolves itself while you sleep.
+
+**What this means:**
+- Nightly scouting — watches your arXiv feeds, GitHub repos, RSS sources
+- Research execution — spawns subagents to fill knowledge gaps
+- Contradiction monitoring — continuous scanning for conflicts across the corpus
+- Evidence extraction — pulls claims from papers and links them to existing knowledge
+- Stale detection — proposes deprecation for entries with no recalls in 90+ days
+- Morning digest — surfaces proposals to human reviewers before acting
+- Background processing queue — async extraction with retry, not fire-and-forget
+
+**Deliverables:**
+- Extraction queue table — D1-backed async processing with retry + dead-letter
+- Nightly cron orchestration — sentinel, planning, research, validation, digest
+- Source monitoring — RSS/arXiv/GitHub polling with deduplication
+- Research agenda — prioritized open questions with scoring formula
+- Stale detection — Hermes proposes deprecation for unreinforced entries
+- Morning digest — daily summary of proposals, contradictions, new discoveries
+- Knowledge proposals — structured inbox for human review of agent actions
 
 ---
 
-## Why
-
-The current memory system works well for personal/team note-taking but lacks the guarantees needed for a knowledge system teams trust for technical decisions:
-
-- No way to trace a recalled fact back to its source paper/section
-- No temporal tracking — can't answer "what was true in March?"
-- Memories never fade — old entries sit forever or get aggressively compressed
-- Relations are generic — "related to" tells you nothing about *how*
-- No rollback — updates and compression overwrite originals permanently
-- Agents connect but don't share context — each conversation starts from zero
-
----
-
-## The Shift
+## Why Now
 
 | Today | What We're Building |
 |-------|-------------------|

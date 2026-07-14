@@ -1,0 +1,258 @@
+{
+  "topic": "agentic knowledge memory systems with semantic search knowledge graphs and contradiction detection",
+  "generatedAt": "2026-07-13T18:31:22.485Z",
+  "citationExpansion": {
+    "requestedPerSeed": 0,
+    "seedCount": 25,
+    "outgoingCandidateCount": 0,
+    "outgoingFetchedCount": 0,
+    "incomingFetchedCount": 0,
+    "expandedPaperCount": 0,
+    "graphPaperCount": 25
+  },
+  "nodes": [
+    {
+      "id": "W2300469216",
+      "openAlexId": "https://openalex.org/W2300469216",
+      "title": "Knowledge graph refinement: A survey of approaches and evaluation methods",
+      "role": "seed",
+      "year": 2016
+    },
+    {
+      "id": "W3125491592",
+      "openAlexId": "https://openalex.org/W3125491592",
+      "title": "Detection and Resolution of Rumours in Social Media: A Survey",
+      "role": "seed",
+      "year": 2017
+    },
+    {
+      "id": "W2610676001",
+      "openAlexId": "https://openalex.org/W2610676001",
+      "title": "Detection and Resolution of Rumours in Social Media",
+      "role": "seed",
+      "year": 2018
+    },
+    {
+      "id": "W4401807469",
+      "openAlexId": "https://openalex.org/W4401807469",
+      "title": "Construction of Knowledge Graphs: Current State and Challenges",
+      "role": "seed",
+      "year": 2024
+    },
+    {
+      "id": "W2051547811",
+      "openAlexId": "https://openalex.org/W2051547811",
+      "title": "Extracting semantically enriched events from biomedical literature",
+      "role": "seed",
+      "year": 2012
+    },
+    {
+      "id": "W4206484811",
+      "openAlexId": "https://openalex.org/W4206484811",
+      "title": "A Metaverse: Taxonomy, Components, Applications, and Open Challenges",
+      "role": "seed",
+      "year": 2022
+    },
+    {
+      "id": "W3123733941",
+      "openAlexId": "https://openalex.org/W3123733941",
+      "title": "Semantic Systems. In the Era of Knowledge Graphs",
+      "role": "seed",
+      "year": 2020
+    },
+    {
+      "id": "W3142044733",
+      "openAlexId": "https://openalex.org/W3142044733",
+      "title": "A Review of Rule Learning-Based Intrusion Detection Systems and Their Prospects in Smart Grids",
+      "role": "seed",
+      "year": 2021
+    },
+    {
+      "id": "W3085880068",
+      "openAlexId": "https://openalex.org/W3085880068",
+      "title": "“Stopping for knowledge”: The sense of beauty in the perception-action cycle",
+      "role": "seed",
+      "year": 2020
+    },
+    {
+      "id": "W2009434747",
+      "openAlexId": "https://openalex.org/W2009434747",
+      "title": "AutoTutor and Family: A Review of 17 Years of Natural Language Tutoring",
+      "role": "seed",
+      "year": 2014
+    },
+    {
+      "id": "W4206928079",
+      "openAlexId": "https://openalex.org/W4206928079",
+      "title": "Unsupervised Anomaly Detection in Knowledge Graphs",
+      "role": "seed",
+      "year": 2021
+    },
+    {
+      "id": "W3174385379",
+      "openAlexId": "https://openalex.org/W3174385379",
+      "title": "Computer Vision, IoT and Data Fusion for Crop Disease Detection Using Machine Learning: A Survey and Ongoing Research",
+      "role": "seed",
+      "year": 2021
+    },
+    {
+      "id": "W4312257891",
+      "openAlexId": "https://openalex.org/W4312257891",
+      "title": "Neural Architecture Search for Transformers: A Survey",
+      "role": "seed",
+      "year": 2022
+    },
+    {
+      "id": "W4406840428",
+      "openAlexId": "https://openalex.org/W4406840428",
+      "title": "Zep: A Temporal Knowledge Graph Architecture for Agent Memory",
+      "role": "seed",
+      "year": 2025
+    },
+    {
+      "id": "W4390880258",
+      "openAlexId": "https://openalex.org/W4390880258",
+      "title": "Machine Learning for Refining Knowledge Graphs: A Survey",
+      "role": "seed",
+      "year": 2024
+    },
+    {
+      "id": "W4387596421",
+      "openAlexId": "https://openalex.org/W4387596421",
+      "title": "Survey on Factuality in Large Language Models: Knowledge, Retrieval and Domain-Specificity",
+      "role": "seed",
+      "year": 2023
+    },
+    {
+      "id": "W3188576818",
+      "openAlexId": "https://openalex.org/W3188576818",
+      "title": "A Review of Intrusion Detection Systems in RPL Routing Protocol Based on Machine Learning for Internet of Things Applications",
+      "role": "seed",
+      "year": 2021
+    },
+    {
+      "id": "W3113149630",
+      "openAlexId": "https://openalex.org/W3113149630",
+      "title": "Neurosymbolic AI: the 3rd wave",
+      "role": "seed",
+      "year": 2023
+    },
+    {
+      "id": "W4388524030",
+      "openAlexId": "https://openalex.org/W4388524030",
+      "title": "A comprehensive survey on machine learning approaches for fake news detection",
+      "role": "seed",
+      "year": 2023
+    },
+    {
+      "id": "W4311405210",
+      "openAlexId": "https://openalex.org/W4311405210",
+      "title": "EMVLight: A multi-agent reinforcement learning framework for an emergency vehicle decentralized routing and traffic signal control system",
+      "role": "seed",
+      "year": 2022
+    },
+    {
+      "id": "W2739419429",
+      "openAlexId": "https://openalex.org/W2739419429",
+      "title": "Argumentation mining: How can a machine acquire common sense and world knowledge?",
+      "role": "seed",
+      "year": 2017
+    },
+    {
+      "id": "W4412465717",
+      "openAlexId": "https://openalex.org/W4412465717",
+      "title": "Practices, opportunities and challenges in the fusion of knowledge graphs and large language models",
+      "role": "seed",
+      "year": 2025
+    },
+    {
+      "id": "W4386501849",
+      "openAlexId": "https://openalex.org/W4386501849",
+      "title": "Siren's Song in the AI Ocean: A Survey on Hallucination in Large Language Models",
+      "role": "seed",
+      "year": 2023
+    },
+    {
+      "id": "W3207701354",
+      "openAlexId": "https://openalex.org/W3207701354",
+      "title": "A Human-Centered Systematic Literature Review of the Computational Approaches for Online Sexual Risk Detection",
+      "role": "seed",
+      "year": 2021
+    },
+    {
+      "id": "W2906927267",
+      "openAlexId": "https://openalex.org/W2906927267",
+      "title": "Neural Networks in Big Data and Web Search",
+      "role": "seed",
+      "year": 2018
+    }
+  ],
+  "edges": [
+    {
+      "source": "W4401807469",
+      "target": "W2300469216",
+      "sourceOpenAlexId": "https://openalex.org/W4401807469",
+      "targetOpenAlexId": "https://openalex.org/W2300469216"
+    },
+    {
+      "source": "W4401807469",
+      "target": "W4206928079",
+      "sourceOpenAlexId": "https://openalex.org/W4401807469",
+      "targetOpenAlexId": "https://openalex.org/W4206928079"
+    },
+    {
+      "source": "W3123733941",
+      "target": "W2300469216",
+      "sourceOpenAlexId": "https://openalex.org/W3123733941",
+      "targetOpenAlexId": "https://openalex.org/W2300469216"
+    },
+    {
+      "source": "W4390880258",
+      "target": "W2300469216",
+      "sourceOpenAlexId": "https://openalex.org/W4390880258",
+      "targetOpenAlexId": "https://openalex.org/W2300469216"
+    },
+    {
+      "source": "W4388524030",
+      "target": "W2610676001",
+      "sourceOpenAlexId": "https://openalex.org/W4388524030",
+      "targetOpenAlexId": "https://openalex.org/W2610676001"
+    },
+    {
+      "source": "W4388524030",
+      "target": "W3125491592",
+      "sourceOpenAlexId": "https://openalex.org/W4388524030",
+      "targetOpenAlexId": "https://openalex.org/W3125491592"
+    }
+  ],
+  "pageRank": {
+    "W2300469216": 0.11003521126760551,
+    "W3125491592": 0.050176056338028165,
+    "W2610676001": 0.050176056338028165,
+    "W4401807469": 0.035211267605633804,
+    "W2051547811": 0.035211267605633804,
+    "W4206484811": 0.035211267605633804,
+    "W3123733941": 0.035211267605633804,
+    "W3142044733": 0.035211267605633804,
+    "W3085880068": 0.035211267605633804,
+    "W2009434747": 0.035211267605633804,
+    "W4206928079": 0.050176056338028165,
+    "W3174385379": 0.035211267605633804,
+    "W4312257891": 0.035211267605633804,
+    "W4406840428": 0.035211267605633804,
+    "W4390880258": 0.035211267605633804,
+    "W4387596421": 0.035211267605633804,
+    "W3188576818": 0.035211267605633804,
+    "W3113149630": 0.035211267605633804,
+    "W4388524030": 0.035211267605633804,
+    "W4311405210": 0.035211267605633804,
+    "W2739419429": 0.035211267605633804,
+    "W4412465717": 0.035211267605633804,
+    "W4386501849": 0.035211267605633804,
+    "W3207701354": 0.035211267605633804,
+    "W2906927267": 0.035211267605633804
+  },
+  "hasUsableEdges": true,
+  "seedNodeCount": 25,
+  "expandedNodeCount": 0
+}

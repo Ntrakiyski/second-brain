@@ -122,6 +122,21 @@ export async function reindexAllVectors(env: Env): Promise<{ processed: number; 
   return { processed, failed };
 }
 
+// ─── Snapshot helper ─────────────────────────────────────────────────────────
+// Creates an entry_snapshots row (backup before destructive mutation).
+// Reads content/tags/source from the entry, inserts snapshot, returns the ID.
+// Fire-and-forget: caller should .catch() the returned promise.
+
+export async function createSnapshot(env: Env, entryId: string): Promise<string | null> {
+  const row = await env.DB.prepare(`SELECT content, tags, source FROM entries WHERE id = ?`).bind(entryId).first() as Record<string, any> | null;
+  if (!row) return null;
+  const snapshotId = crypto.randomUUID();
+  await env.DB.prepare(
+    `INSERT INTO entry_snapshots (id, entry_id, content, tags, source, created_at) VALUES (?, ?, ?, ?, ?, ?)`
+  ).bind(snapshotId, entryId, row.content, row.tags ?? "[]", row.source ?? "api", Date.now()).run();
+  return snapshotId;
+}
+
 // ─── Append to existing entry ─────────────────────────────────────────────────
 // For short appends (combined content ≤ CHUNK_MAX_CHARS): adds only the new
 // addition as a single new Vectorize vector pointing to the parent ID.
@@ -136,8 +151,14 @@ export async function appendToEntry(
   addition: string,
   tags: string[],
   source: string,
-  ownerUserId?: string
+  ownerUserId?: string,
+  ctx?: ExecutionContext
 ): Promise<void> {
+  // Snapshot: backup before destructive append — fire-and-forget (non-fatal)
+  if (ctx) {
+    ctx.waitUntil(createSnapshot(env, id).catch(e => console.error("Snapshot creation failed (non-fatal):", e)));
+  }
+
   // Read existing vector_ids upfront — needed by both paths
   const row = await env.DB.prepare(
     `SELECT vector_ids FROM entries WHERE id = ?`
@@ -300,6 +321,31 @@ export async function captureEntry(
         return { status: "flagged", id: crypto.randomUUID(), matchId: targetId, score: dup.score };
       }
 
+      // Read old content once for episode + passages (before destructive merge)
+      const oldContentRow = await env.DB.prepare(`SELECT content, tags, source FROM entries WHERE id = ?`).bind(targetId).first() as Record<string, any> | null;
+      const oldContent = oldContentRow?.content as string ?? "";
+
+      // Snapshot: backup before destructive merge — fire-and-forget (non-fatal)
+      ctx.waitUntil(createSnapshot(env, targetId).catch(e => console.error("Snapshot creation failed (non-fatal):", e)));
+
+      // Episode: preserve old content before merge overwrite — fire-and-forget (non-fatal)
+      const mergeEpisodeId = crypto.randomUUID();
+      if (oldContent) {
+        ctx.waitUntil(
+          env.DB.prepare(
+            `INSERT INTO episodes (id, entry_id, content, content_type, source, created_at) VALUES (?, ?, ?, ?, ?, ?)`
+          ).bind(mergeEpisodeId, targetId, oldContent, "text", existingSource, Date.now()).run()
+            .catch(e => console.error("Episode creation failed (non-fatal):", e))
+        );
+      }
+
+      // Passages for old content — fire-and-forget (non-fatal)
+      if (oldContent) {
+        ctx.waitUntil(
+          createPassagesForEntry(targetId, mergeEpisodeId, oldContent, env, ctx, userId, existingTags.includes("private")).catch(e => console.error("Passage creation failed (non-fatal):", e))
+        );
+      }
+
       // Step 1: Update D1 content
       await env.DB.prepare(`UPDATE entries SET content = ? WHERE id = ?`).bind(newContent, targetId).run();
 
@@ -330,8 +376,27 @@ export async function captureEntry(
   const finalTags = dup.status === "flagged" ? [...baseTags, "duplicate-candidate"] : baseTags;
 
   await env.DB.prepare(
-    `INSERT INTO entries (id, content, tags, source, created_at, vector_ids, owner_user_id) VALUES (?, ?, ?, ?, ?, ?, ?)`
-  ).bind(id, c, JSON.stringify(finalTags), source, now, "[]", userId ?? "").run();
+    `INSERT INTO entries (id, content, tags, source, created_at, vector_ids, owner_user_id, valid_from, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(id, c, JSON.stringify(finalTags), source, now, "[]", userId ?? "", now, now).run();
+
+  // Episode: immutable raw content ledger — fire-and-forget (non-fatal)
+  const newEpisodeId = crypto.randomUUID();
+  ctx.waitUntil(
+    (async () => {
+      try {
+        await env.DB.prepare(
+          `INSERT INTO episodes (id, entry_id, content, content_type, source, created_at) VALUES (?, ?, ?, ?, ?, ?)`
+        ).bind(newEpisodeId, id, c, "text", source, now).run();
+      } catch (e) {
+        console.error("Episode creation failed (non-fatal):", e);
+      }
+    })()
+  );
+
+  // Passages: chunk content for citation-level recall — fire-and-forget (non-fatal)
+  ctx.waitUntil(
+    createPassagesForEntry(id, newEpisodeId, c, env, ctx, userId, finalTags.includes("private")).catch(e => console.error("Passage creation failed (non-fatal):", e))
+  );
 
   ctx.waitUntil(
     storeEntry(env, id, c, finalTags, source, now, userId, finalTags.includes("private"))
@@ -373,6 +438,12 @@ export async function captureEntry(
     } catch (e) {
       console.error("Contradiction count update failed (non-fatal):", e);
     }
+    // Bitemporal: close the old entry's validity window (Ticket 05)
+    try {
+      await env.DB.prepare(`UPDATE entries SET valid_to = ? WHERE id = ?`).bind(Date.now(), conflictId).run();
+    } catch (e) {
+      console.error("Bitemporal valid_to update failed (non-fatal):", e);
+    }
     try {
       await deprecateEntry(conflictId, env);
     } catch (e) {
@@ -399,4 +470,128 @@ export async function captureEntry(
   }
 
   return { status: "stored", id, crossUserNote };
+}
+
+// ─── Passage creation (Ticket 07) ───────────────────────────────────────────
+// Chunk content into passages for citation-level recall.
+
+const PASSAGE_CHUNK_CHARS = 1500;  // ~512 tokens
+const PASSAGE_OVERLAP_CHARS = 400; // ~128 tokens
+
+function findParentSection(headers: { level: number; title: string; offset: number }[], currentIndex: number): string | null {
+  const currentLevel = headers[currentIndex].level;
+  for (let i = currentIndex - 1; i >= 0; i--) {
+    if (headers[i].level < currentLevel) return headers[i].title;
+  }
+  return null;
+}
+
+function chunkIntoPassages(content: string): { chunks: { text: string; section: string | null; startOffset: number; endOffset: number }[]; headers: { level: number; title: string; offset: number }[] } {
+  const sections: { text: string; section: string | null; startOffset: number; endOffset: number }[] = [];
+  // Split on markdown headers to detect sections
+  const headerRegex = /^(#{1,4})\s+(.+)$/gm;
+  const headers: { level: number; title: string; offset: number }[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = headerRegex.exec(content)) !== null) {
+    headers.push({ level: m[1].length, title: m[2].trim(), offset: m.index });
+  }
+
+  // If no headers, treat entire content as one section
+  if (headers.length === 0) {
+    for (let i = 0; i < content.length; i += PASSAGE_CHUNK_CHARS - PASSAGE_OVERLAP_CHARS) {
+      const end = Math.min(i + PASSAGE_CHUNK_CHARS, content.length);
+      sections.push({ text: content.slice(i, end), section: null, startOffset: i, endOffset: end });
+      if (end >= content.length) break;
+    }
+    return { chunks: sections, headers: [] };
+  }
+
+  // Chunk within each section
+  for (let h = 0; h < headers.length; h++) {
+    const start = headers[h].offset;
+    const end = h + 1 < headers.length ? headers[h + 1].offset : content.length;
+    const sectionText = content.slice(start, end);
+    const sectionName = headers[h].title;
+
+    for (let i = 0; i < sectionText.length; i += PASSAGE_CHUNK_CHARS - PASSAGE_OVERLAP_CHARS) {
+      const chunkEnd = Math.min(i + PASSAGE_CHUNK_CHARS, sectionText.length);
+      sections.push({
+        text: sectionText.slice(i, chunkEnd),
+        section: sectionName,
+        startOffset: start + i,
+        endOffset: start + chunkEnd,
+      });
+      if (chunkEnd >= sectionText.length) break;
+    }
+  }
+
+  return { chunks: sections, headers };
+}
+
+export async function createPassagesForEntry(
+  entryId: string,
+  episodeId: string,
+  content: string,
+  env: Env,
+  ctx: ExecutionContext,
+  ownerUserId?: string,
+  isPrivate?: boolean
+): Promise<void> {
+  const { chunks, headers } = chunkIntoPassages(content);
+  const now = Date.now();
+
+  // Create document hierarchy if content has headers (research content)
+  let sectionMap = new Map<string, string>(); // section title -> section id
+  if (headers.length > 0) {
+    const docId = crypto.randomUUID();
+    const title = headers[0]?.title ?? "Untitled Document";
+    try {
+      await env.DB.prepare(
+        `INSERT INTO documents (id, title, source_url, content_type, created_at) VALUES (?, ?, ?, ?, ?)`
+      ).bind(docId, title, null, "research", now).run();
+
+      // Create sections from headers
+      for (let i = 0; i < headers.length; i++) {
+        const sectionId = crypto.randomUUID();
+        const parentTitle = findParentSection(headers, i);
+        const parentSectionId = parentTitle ? sectionMap.get(parentTitle) ?? null : null;
+        try {
+          await env.DB.prepare(
+            `INSERT INTO document_sections (id, document_id, parent_section_id, title, level, order_index, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+          ).bind(sectionId, docId, parentSectionId, headers[i].title, headers[i].level, i, now).run();
+          sectionMap.set(headers[i].title, sectionId);
+        } catch (e) {
+          console.error("Document section insert failed (non-fatal):", e);
+        }
+      }
+    } catch (e) {
+      console.error("Document insert failed (non-fatal):", e);
+    }
+  }
+
+  for (const chunk of chunks) {
+    const passageId = crypto.randomUUID();
+    try {
+      await env.DB.prepare(
+        `INSERT INTO passages (id, entry_id, episode_id, content, section, start_offset, end_offset, vector_ids, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(passageId, entryId, episodeId, chunk.text, chunk.section, chunk.startOffset, chunk.endOffset, "[]", now).run();
+    } catch (e) {
+      console.error("Passage insert failed (non-fatal):", e);
+      continue;
+    }
+
+    // Vectorize passage — fire-and-forget
+    ctx.waitUntil(
+      (async () => {
+        try {
+          const values = await embed(chunk.text, env);
+          const vectorId = `passage-${passageId}`;
+          await env.VECTORIZE.insert([{ id: vectorId, values, metadata: { content: chunk.text, passageId, entryId, parentId: entryId, section: chunk.section ?? "", source: "passage", owner_user_id: ownerUserId ?? "", is_private: isPrivate ?? false } }]);
+          await env.DB.prepare(`UPDATE passages SET vector_ids = ? WHERE id = ?`).bind(JSON.stringify([vectorId]), passageId).run();
+        } catch (e) {
+          console.error("Passage vectorize failed (non-fatal):", e);
+        }
+      })()
+    );
+  }
 }

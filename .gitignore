@@ -1,3 +1,4 @@
+.pi-subagents/
 .DS_Store
 assets/*.gif
 node_modules/

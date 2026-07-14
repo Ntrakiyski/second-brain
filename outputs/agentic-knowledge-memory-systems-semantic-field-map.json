@@ -1,0 +1,1152 @@
+{
+  "topic": "agentic knowledge memory systems with semantic search knowledge graphs and contradiction detection",
+  "generatedAt": "2026-07-13T18:31:22.485Z",
+  "clusters": [
+    {
+      "label": "Computer science",
+      "paperCount": 16,
+      "seedPaperCount": 16,
+      "expandedPaperCount": 0,
+      "averageReadFirstScore": 46.34,
+      "totalCitations": 5232,
+      "yearRange": {
+        "earliest": 2012,
+        "latest": 2025
+      },
+      "topPapers": [
+        {
+          "paperId": "W2300469216",
+          "title": "Knowledge graph refinement: A survey of approaches and evaluation methods",
+          "role": "seed",
+          "rank": 1,
+          "score": 67.44
+        },
+        {
+          "paperId": "W2610676001",
+          "title": "Detection and Resolution of Rumours in Social Media",
+          "role": "seed",
+          "rank": 2,
+          "score": 52.2
+        },
+        {
+          "paperId": "W3125491592",
+          "title": "Detection and Resolution of Rumours in Social Media: A Survey",
+          "role": "seed",
+          "rank": 4,
+          "score": 50.32
+        },
+        {
+          "paperId": "W4206484811",
+          "title": "A Metaverse: Taxonomy, Components, Applications, and Open Challenges",
+          "role": "seed",
+          "rank": 5,
+          "score": 48.64
+        },
+        {
+          "paperId": "W2051547811",
+          "title": "Extracting semantically enriched events from biomedical literature",
+          "role": "seed",
+          "rank": 7,
+          "score": 47.89
+        }
+      ]
+    },
+    {
+      "label": "Topic Modeling",
+      "paperCount": 6,
+      "seedPaperCount": 6,
+      "expandedPaperCount": 0,
+      "averageReadFirstScore": 40.2,
+      "totalCitations": 628,
+      "yearRange": {
+        "earliest": 2014,
+        "latest": 2025
+      },
+      "topPapers": [
+        {
+          "paperId": "W2009434747",
+          "title": "AutoTutor and Family: A Review of 17 Years of Natural Language Tutoring",
+          "role": "seed",
+          "rank": 11,
+          "score": 45.94
+        },
+        {
+          "paperId": "W4206928079",
+          "title": "Unsupervised Anomaly Detection in Knowledge Graphs",
+          "role": "seed",
+          "rank": 15,
+          "score": 44.38
+        },
+        {
+          "paperId": "W4412465717",
+          "title": "Practices, opportunities and challenges in the fusion of knowledge graphs and large language models",
+          "role": "seed",
+          "rank": 20,
+          "score": 41.2
+        },
+        {
+          "paperId": "W4386501849",
+          "title": "Siren's Song in the AI Ocean: A Survey on Hallucination in Large Language Models",
+          "role": "seed",
+          "rank": 22,
+          "score": 38.86
+        },
+        {
+          "paperId": "W2739419429",
+          "title": "Argumentation mining: How can a machine acquire common sense and world knowledge?",
+          "role": "seed",
+          "rank": 23,
+          "score": 37.94
+        }
+      ]
+    },
+    {
+      "label": "Advanced Graph Neural Networks",
+      "paperCount": 5,
+      "seedPaperCount": 5,
+      "expandedPaperCount": 0,
+      "averageReadFirstScore": 49.5,
+      "totalCitations": 1313,
+      "yearRange": {
+        "earliest": 2016,
+        "latest": 2025
+      },
+      "topPapers": [
+        {
+          "paperId": "W2300469216",
+          "title": "Knowledge graph refinement: A survey of approaches and evaluation methods",
+          "role": "seed",
+          "rank": 1,
+          "score": 67.44
+        },
+        {
+          "paperId": "W4401807469",
+          "title": "Construction of Knowledge Graphs: Current State and Challenges",
+          "role": "seed",
+          "rank": 3,
+          "score": 52.1
+        },
+        {
+          "paperId": "W4206928079",
+          "title": "Unsupervised Anomaly Detection in Knowledge Graphs",
+          "role": "seed",
+          "rank": 15,
+          "score": 44.38
+        },
+        {
+          "paperId": "W4390880258",
+          "title": "Machine Learning for Refining Knowledge Graphs: A Survey",
+          "role": "seed",
+          "rank": 18,
+          "score": 42.36
+        },
+        {
+          "paperId": "W4412465717",
+          "title": "Practices, opportunities and challenges in the fusion of knowledge graphs and large language models",
+          "role": "seed",
+          "rank": 20,
+          "score": 41.2
+        }
+      ]
+    },
+    {
+      "label": "Data Quality and Management",
+      "paperCount": 4,
+      "seedPaperCount": 4,
+      "expandedPaperCount": 0,
+      "averageReadFirstScore": 51.57,
+      "totalCitations": 1300,
+      "yearRange": {
+        "earliest": 2016,
+        "latest": 2024
+      },
+      "topPapers": [
+        {
+          "paperId": "W2300469216",
+          "title": "Knowledge graph refinement: A survey of approaches and evaluation methods",
+          "role": "seed",
+          "rank": 1,
+          "score": 67.44
+        },
+        {
+          "paperId": "W4401807469",
+          "title": "Construction of Knowledge Graphs: Current State and Challenges",
+          "role": "seed",
+          "rank": 3,
+          "score": 52.1
+        },
+        {
+          "paperId": "W4206928079",
+          "title": "Unsupervised Anomaly Detection in Knowledge Graphs",
+          "role": "seed",
+          "rank": 15,
+          "score": 44.38
+        },
+        {
+          "paperId": "W4390880258",
+          "title": "Machine Learning for Refining Knowledge Graphs: A Survey",
+          "role": "seed",
+          "rank": 18,
+          "score": 42.36
+        }
+      ]
+    },
+    {
+      "label": "Semantic Web and Ontologies",
+      "paperCount": 4,
+      "seedPaperCount": 4,
+      "expandedPaperCount": 0,
+      "averageReadFirstScore": 49.62,
+      "totalCitations": 1287,
+      "yearRange": {
+        "earliest": 2016,
+        "latest": 2025
+      },
+      "topPapers": [
+        {
+          "paperId": "W2300469216",
+          "title": "Knowledge graph refinement: A survey of approaches and evaluation methods",
+          "role": "seed",
+          "rank": 1,
+          "score": 67.44
+        },
+        {
+          "paperId": "W4401807469",
+          "title": "Construction of Knowledge Graphs: Current State and Challenges",
+          "role": "seed",
+          "rank": 3,
+          "score": 52.1
+        },
+        {
+          "paperId": "W3123733941",
+          "title": "Semantic Systems. In the Era of Knowledge Graphs",
+          "role": "seed",
+          "rank": 8,
+          "score": 47.23
+        },
+        {
+          "paperId": "W4406840428",
+          "title": "Zep: A Temporal Knowledge Graph Architecture for Agent Memory",
+          "role": "seed",
+          "rank": 25,
+          "score": 31.73
+        }
+      ]
+    },
+    {
+      "label": "Misinformation and Its Impacts",
+      "paperCount": 3,
+      "seedPaperCount": 3,
+      "expandedPaperCount": 0,
+      "averageReadFirstScore": 48.28,
+      "totalCitations": 1426,
+      "yearRange": {
+        "earliest": 2017,
+        "latest": 2023
+      },
+      "topPapers": [
+        {
+          "paperId": "W2610676001",
+          "title": "Detection and Resolution of Rumours in Social Media",
+          "role": "seed",
+          "rank": 2,
+          "score": 52.2
+        },
+        {
+          "paperId": "W3125491592",
+          "title": "Detection and Resolution of Rumours in Social Media: A Survey",
+          "role": "seed",
+          "rank": 4,
+          "score": 50.32
+        },
+        {
+          "paperId": "W4388524030",
+          "title": "A comprehensive survey on machine learning approaches for fake news detection",
+          "role": "seed",
+          "rank": 19,
+          "score": 42.31
+        }
+      ]
+    },
+    {
+      "label": "Natural Language Processing Techniques",
+      "paperCount": 3,
+      "seedPaperCount": 3,
+      "expandedPaperCount": 0,
+      "averageReadFirstScore": 37.33,
+      "totalCitations": 106,
+      "yearRange": {
+        "earliest": 2017,
+        "latest": 2025
+      },
+      "topPapers": [
+        {
+          "paperId": "W4412465717",
+          "title": "Practices, opportunities and challenges in the fusion of knowledge graphs and large language models",
+          "role": "seed",
+          "rank": 20,
+          "score": 41.2
+        },
+        {
+          "paperId": "W2739419429",
+          "title": "Argumentation mining: How can a machine acquire common sense and world knowledge?",
+          "role": "seed",
+          "rank": 23,
+          "score": 37.94
+        },
+        {
+          "paperId": "W4387596421",
+          "title": "Survey on Factuality in Large Language Models: Knowledge, Retrieval and Domain-Specificity",
+          "role": "seed",
+          "rank": 24,
+          "score": 32.86
+        }
+      ]
+    },
+    {
+      "label": "Advanced Neural Network Applications",
+      "paperCount": 2,
+      "seedPaperCount": 2,
+      "expandedPaperCount": 0,
+      "averageReadFirstScore": 47.44,
+      "totalCitations": 1870,
+      "yearRange": {
+        "earliest": 2022,
+        "latest": 2022
+      },
+      "topPapers": [
+        {
+          "paperId": "W4206484811",
+          "title": "A Metaverse: Taxonomy, Components, Applications, and Open Challenges",
+          "role": "seed",
+          "rank": 5,
+          "score": 48.64
+        },
+        {
+          "paperId": "W4312257891",
+          "title": "Neural Architecture Search for Transformers: A Survey",
+          "role": "seed",
+          "rank": 10,
+          "score": 46.24
+        }
+      ]
+    },
+    {
+      "label": "Domain Adaptation and Few-Shot Learning",
+      "paperCount": 2,
+      "seedPaperCount": 2,
+      "expandedPaperCount": 0,
+      "averageReadFirstScore": 47.44,
+      "totalCitations": 1870,
+      "yearRange": {
+        "earliest": 2022,
+        "latest": 2022
+      },
+      "topPapers": [
+        {
+          "paperId": "W4206484811",
+          "title": "A Metaverse: Taxonomy, Components, Applications, and Open Challenges",
+          "role": "seed",
+          "rank": 5,
+          "score": 48.64
+        },
+        {
+          "paperId": "W4312257891",
+          "title": "Neural Architecture Search for Transformers: A Survey",
+          "role": "seed",
+          "rank": 10,
+          "score": 46.24
+        }
+      ]
+    },
+    {
+      "label": "Multimodal Machine Learning Applications",
+      "paperCount": 2,
+      "seedPaperCount": 2,
+      "expandedPaperCount": 0,
+      "averageReadFirstScore": 47.44,
+      "totalCitations": 1870,
+      "yearRange": {
+        "earliest": 2022,
+        "latest": 2022
+      },
+      "topPapers": [
+        {
+          "paperId": "W4206484811",
+          "title": "A Metaverse: Taxonomy, Components, Applications, and Open Challenges",
+          "role": "seed",
+          "rank": 5,
+          "score": 48.64
+        },
+        {
+          "paperId": "W4312257891",
+          "title": "Neural Architecture Search for Transformers: A Survey",
+          "role": "seed",
+          "rank": 10,
+          "score": 46.24
+        }
+      ]
+    },
+    {
+      "label": "Interpretability",
+      "paperCount": 2,
+      "seedPaperCount": 2,
+      "expandedPaperCount": 0,
+      "averageReadFirstScore": 47.48,
+      "totalCitations": 453,
+      "yearRange": {
+        "earliest": 2021,
+        "latest": 2023
+      },
+      "topPapers": [
+        {
+          "paperId": "W3113149630",
+          "title": "Neurosymbolic AI: the 3rd wave",
+          "role": "seed",
+          "rank": 6,
+          "score": 48.27
+        },
+        {
+          "paperId": "W3142044733",
+          "title": "A Review of Rule Learning-Based Intrusion Detection Systems and Their Prospects in Smart Grids",
+          "role": "seed",
+          "rank": 9,
+          "score": 46.68
+        }
+      ]
+    },
+    {
+      "label": "Network Security and Intrusion Detection",
+      "paperCount": 2,
+      "seedPaperCount": 2,
+      "expandedPaperCount": 0,
+      "averageReadFirstScore": 46.05,
+      "totalCitations": 169,
+      "yearRange": {
+        "earliest": 2021,
+        "latest": 2021
+      },
+      "topPapers": [
+        {
+          "paperId": "W3142044733",
+          "title": "A Review of Rule Learning-Based Intrusion Detection Systems and Their Prospects in Smart Grids",
+          "role": "seed",
+          "rank": 9,
+          "score": 46.68
+        },
+        {
+          "paperId": "W3188576818",
+          "title": "A Review of Intrusion Detection Systems in RPL Routing Protocol Based on Machine Learning for Internet of Things Applications",
+          "role": "seed",
+          "rank": 12,
+          "score": 45.41
+        }
+      ]
+    }
+  ],
+  "paperRoles": [
+    {
+      "paperId": "W2300469216",
+      "title": "Knowledge graph refinement: A survey of approaches and evaluation methods",
+      "rank": 1,
+      "primaryCluster": "Data Quality and Management",
+      "clusterLabels": [
+        "Data Quality and Management",
+        "Advanced Graph Neural Networks",
+        "Semantic Web and Ontologies",
+        "Computer science"
+      ],
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "rationale": "ReadFirst 67.4/100; foundation signal from impact 100.0, graph 100.0, local in-degree 3; bridge signal from 3 local citation edges or multiple field labels.",
+      "metrics": {
+        "readFirstScore": 67.44,
+        "citationImpact": 99.98,
+        "graphPrestige": 100,
+        "citationVelocity": 80.13,
+        "methodologyQuality": 21,
+        "reproducibility": 30,
+        "citationInDegree": 3,
+        "citationOutDegree": 0
+      }
+    },
+    {
+      "paperId": "W2610676001",
+      "title": "Detection and Resolution of Rumours in Social Media",
+      "rank": 2,
+      "primaryCluster": "Misinformation and Its Impacts",
+      "clusterLabels": [
+        "Misinformation and Its Impacts",
+        "Social media",
+        "Computer science",
+        "Openness to experience"
+      ],
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "rationale": "ReadFirst 52.2/100; foundation signal from impact 100.0, graph 45.6, local in-degree 1; bridge signal from 1 local citation edges or multiple field labels.",
+      "metrics": {
+        "readFirstScore": 52.2,
+        "citationImpact": 99.98,
+        "graphPrestige": 45.6,
+        "citationVelocity": 71.38,
+        "methodologyQuality": 14,
+        "reproducibility": 30,
+        "citationInDegree": 1,
+        "citationOutDegree": 0
+      }
+    },
+    {
+      "paperId": "W4401807469",
+      "title": "Construction of Knowledge Graphs: Current State and Challenges",
+      "rank": 3,
+      "primaryCluster": "Data Quality and Management",
+      "clusterLabels": [
+        "Data Quality and Management",
+        "Advanced Graph Neural Networks",
+        "Semantic Web and Ontologies",
+        "Current (fluid)"
+      ],
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "rationale": "ReadFirst 52.1/100; foundation signal from impact 99.8, graph 32.0, local in-degree 0; bridge signal from 2 local citation edges or multiple field labels.",
+      "metrics": {
+        "readFirstScore": 52.1,
+        "citationImpact": 99.81,
+        "graphPrestige": 32,
+        "citationVelocity": 54.36,
+        "methodologyQuality": 14,
+        "reproducibility": 30,
+        "citationInDegree": 0,
+        "citationOutDegree": 2
+      }
+    },
+    {
+      "paperId": "W3125491592",
+      "title": "Detection and Resolution of Rumours in Social Media: A Survey",
+      "rank": 4,
+      "primaryCluster": "Misinformation and Its Impacts",
+      "clusterLabels": [
+        "Misinformation and Its Impacts",
+        "Complex Network Analysis Techniques",
+        "Opinion Dynamics and Social Influence",
+        "Computer science"
+      ],
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "rationale": "ReadFirst 50.3/100; foundation signal from impact 88.1, graph 45.6, local in-degree 1; bridge signal from 1 local citation edges or multiple field labels.",
+      "metrics": {
+        "readFirstScore": 50.32,
+        "citationImpact": 88.11,
+        "graphPrestige": 45.6,
+        "citationVelocity": 73.23,
+        "methodologyQuality": 14,
+        "reproducibility": 30,
+        "citationInDegree": 1,
+        "citationOutDegree": 0
+      }
+    },
+    {
+      "paperId": "W4206484811",
+      "title": "A Metaverse: Taxonomy, Components, Applications, and Open Challenges",
+      "rank": 5,
+      "primaryCluster": "Multimodal Machine Learning Applications",
+      "clusterLabels": [
+        "Multimodal Machine Learning Applications",
+        "Advanced Neural Network Applications",
+        "Domain Adaptation and Few-Shot Learning",
+        "Computer science"
+      ],
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "rationale": "ReadFirst 48.6/100; foundation signal from impact 100.0, graph 32.0, local in-degree 0; bridge signal from 0 local citation edges or multiple field labels.",
+      "metrics": {
+        "readFirstScore": 48.64,
+        "citationImpact": 99.99,
+        "graphPrestige": 32,
+        "citationVelocity": 100,
+        "methodologyQuality": 33,
+        "reproducibility": 30,
+        "citationInDegree": 0,
+        "citationOutDegree": 0
+      }
+    },
+    {
+      "paperId": "W3113149630",
+      "title": "Neurosymbolic AI: the 3rd wave",
+      "rank": 6,
+      "primaryCluster": "Neural Networks and Applications",
+      "clusterLabels": [
+        "Neural Networks and Applications",
+        "Advanced Memory and Neural Computing",
+        "Ferroelectric and Negative Capacitance Devices",
+        "Interpretability"
+      ],
+      "roles": [
+        "foundation",
+        "frontier",
+        "bridge"
+      ],
+      "rationale": "ReadFirst 48.3/100; foundation signal from impact 99.9, graph 32.0, local in-degree 0; frontier signal from year 2023 and velocity 75.4; bridge signal from 0 local citation edges or multiple field labels.",
+      "metrics": {
+        "readFirstScore": 48.27,
+        "citationImpact": 99.89,
+        "graphPrestige": 32,
+        "citationVelocity": 75.4,
+        "reproducibility": 30,
+        "citationInDegree": 0,
+        "citationOutDegree": 0
+      }
+    },
+    {
+      "paperId": "W2051547811",
+      "title": "Extracting semantically enriched events from biomedical literature",
+      "rank": 7,
+      "primaryCluster": "Biomedical Text Mining and Ontologies",
+      "clusterLabels": [
+        "Biomedical Text Mining and Ontologies",
+        "Computer science",
+        "Biomedical text mining",
+        "Information retrieval"
+      ],
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "rationale": "ReadFirst 47.9/100; foundation signal from impact 94.9, graph 32.0, local in-degree 0; bridge signal from 0 local citation edges or multiple field labels.",
+      "metrics": {
+        "readFirstScore": 47.89,
+        "citationImpact": 94.88,
+        "graphPrestige": 32,
+        "citationVelocity": 29.34,
+        "methodologyQuality": 35,
+        "reproducibility": 30,
+        "citationInDegree": 0,
+        "citationOutDegree": 0
+      }
+    },
+    {
+      "paperId": "W3123733941",
+      "title": "Semantic Systems. In the Era of Knowledge Graphs",
+      "rank": 8,
+      "primaryCluster": "Semantic Web and Ontologies",
+      "clusterLabels": [
+        "Semantic Web and Ontologies",
+        "Computer science",
+        "Knowledge graph",
+        "Artificial intelligence"
+      ],
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "rationale": "ReadFirst 47.2/100; foundation signal from impact 83.8, graph 32.0, local in-degree 0; bridge signal from 1 local citation edges or multiple field labels.",
+      "metrics": {
+        "readFirstScore": 47.23,
+        "citationImpact": 83.77,
+        "graphPrestige": 32,
+        "citationVelocity": 11.8,
+        "methodologyQuality": 21,
+        "reproducibility": 30,
+        "citationInDegree": 0,
+        "citationOutDegree": 1
+      }
+    },
+    {
+      "paperId": "W3142044733",
+      "title": "A Review of Rule Learning-Based Intrusion Detection Systems and Their Prospects in Smart Grids",
+      "rank": 9,
+      "primaryCluster": "Network Security and Intrusion Detection",
+      "clusterLabels": [
+        "Network Security and Intrusion Detection",
+        "Smart Grid Security and Resilience",
+        "Anomaly Detection Techniques and Applications",
+        "Interpretability"
+      ],
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "rationale": "ReadFirst 46.7/100; foundation signal from impact 98.3, graph 32.0, local in-degree 0; bridge signal from 0 local citation edges or multiple field labels.",
+      "metrics": {
+        "readFirstScore": 46.68,
+        "citationImpact": 98.28,
+        "graphPrestige": 32,
+        "citationVelocity": 52.12,
+        "methodologyQuality": 21,
+        "reproducibility": 30,
+        "citationInDegree": 0,
+        "citationOutDegree": 0
+      }
+    },
+    {
+      "paperId": "W4312257891",
+      "title": "Neural Architecture Search for Transformers: A Survey",
+      "rank": 10,
+      "primaryCluster": "Advanced Neural Network Applications",
+      "clusterLabels": [
+        "Advanced Neural Network Applications",
+        "Multimodal Machine Learning Applications",
+        "Domain Adaptation and Few-Shot Learning",
+        "Computer science"
+      ],
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "rationale": "ReadFirst 46.2/100; foundation signal from impact 98.7, graph 32.0, local in-degree 0; bridge signal from 0 local citation edges or multiple field labels.",
+      "metrics": {
+        "readFirstScore": 46.24,
+        "citationImpact": 98.66,
+        "graphPrestige": 32,
+        "citationVelocity": 51.85,
+        "methodologyQuality": 28,
+        "reproducibility": 37,
+        "citationInDegree": 0,
+        "citationOutDegree": 0
+      }
+    },
+    {
+      "paperId": "W2009434747",
+      "title": "AutoTutor and Family: A Review of 17 Years of Natural Language Tutoring",
+      "rank": 11,
+      "primaryCluster": "Intelligent Tutoring Systems and Adaptive Learning",
+      "clusterLabels": [
+        "Intelligent Tutoring Systems and Adaptive Learning",
+        "Topic Modeling",
+        "Speech and dialogue systems",
+        "Computer science"
+      ],
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "rationale": "ReadFirst 45.9/100; foundation signal from impact 99.2, graph 32.0, local in-degree 0; bridge signal from 0 local citation edges or multiple field labels.",
+      "metrics": {
+        "readFirstScore": 45.94,
+        "citationImpact": 99.21,
+        "graphPrestige": 32,
+        "citationVelocity": 52.46,
+        "reproducibility": 30,
+        "citationInDegree": 0,
+        "citationOutDegree": 0
+      }
+    },
+    {
+      "paperId": "W3188576818",
+      "title": "A Review of Intrusion Detection Systems in RPL Routing Protocol Based on Machine Learning for Internet of Things Applications",
+      "rank": 12,
+      "primaryCluster": "Network Security and Intrusion Detection",
+      "clusterLabels": [
+        "Network Security and Intrusion Detection",
+        "Software-Defined Networks and 5G",
+        "Security in Wireless Sensor Networks",
+        "Computer science"
+      ],
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "rationale": "ReadFirst 45.4/100; foundation signal from impact 95.7, graph 32.0, local in-degree 0; bridge signal from 0 local citation edges or multiple field labels.",
+      "metrics": {
+        "readFirstScore": 45.41,
+        "citationImpact": 95.69,
+        "graphPrestige": 32,
+        "citationVelocity": 37.1,
+        "methodologyQuality": 35,
+        "reproducibility": 30,
+        "citationInDegree": 0,
+        "citationOutDegree": 0
+      }
+    },
+    {
+      "paperId": "W3085880068",
+      "title": "“Stopping for knowledge”: The sense of beauty in the perception-action cycle",
+      "rank": 13,
+      "primaryCluster": "Aesthetic Perception and Analysis",
+      "clusterLabels": [
+        "Aesthetic Perception and Analysis",
+        "Creativity in Education and Neuroscience",
+        "Neuroscience and Music Perception",
+        "Psychology"
+      ],
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "rationale": "ReadFirst 45.0/100; foundation signal from impact 96.5, graph 32.0, local in-degree 0; bridge signal from 0 local citation edges or multiple field labels.",
+      "metrics": {
+        "readFirstScore": 45.04,
+        "citationImpact": 96.51,
+        "graphPrestige": 32,
+        "citationVelocity": 43.3,
+        "reproducibility": 30,
+        "citationInDegree": 0,
+        "citationOutDegree": 0
+      }
+    },
+    {
+      "paperId": "W3174385379",
+      "title": "Computer Vision, IoT and Data Fusion for Crop Disease Detection Using Machine Learning: A Survey and Ongoing Research",
+      "rank": 14,
+      "primaryCluster": "Smart Agriculture and AI",
+      "clusterLabels": [
+        "Smart Agriculture and AI",
+        "Remote Sensing in Agriculture",
+        "Spectroscopy and Chemometric Analyses",
+        "Computer science"
+      ],
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "rationale": "ReadFirst 44.8/100; foundation signal from impact 99.8, graph 32.0, local in-degree 0; bridge signal from 0 local citation edges or multiple field labels.",
+      "metrics": {
+        "readFirstScore": 44.82,
+        "citationImpact": 99.85,
+        "graphPrestige": 32,
+        "citationVelocity": 64.57,
+        "methodologyQuality": 21,
+        "reproducibility": 30,
+        "citationInDegree": 0,
+        "citationOutDegree": 0
+      }
+    },
+    {
+      "paperId": "W4206928079",
+      "title": "Unsupervised Anomaly Detection in Knowledge Graphs",
+      "rank": 15,
+      "primaryCluster": "Data Quality and Management",
+      "clusterLabels": [
+        "Data Quality and Management",
+        "Advanced Graph Neural Networks",
+        "Topic Modeling",
+        "Computer science"
+      ],
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "rationale": "ReadFirst 44.4/100; foundation signal from impact 83.1, graph 45.6, local in-degree 1; bridge signal from 1 local citation edges or multiple field labels.",
+      "metrics": {
+        "readFirstScore": 44.38,
+        "citationImpact": 83.07,
+        "graphPrestige": 45.6,
+        "citationVelocity": 16.7,
+        "methodologyQuality": 21,
+        "reproducibility": 30,
+        "citationInDegree": 1,
+        "citationOutDegree": 0
+      }
+    },
+    {
+      "paperId": "W2906927267",
+      "title": "Neural Networks in Big Data and Web Search",
+      "rank": 16,
+      "primaryCluster": "Web Data Mining and Analysis",
+      "clusterLabels": [
+        "Web Data Mining and Analysis",
+        "Image Retrieval and Classification Techniques",
+        "Recommender Systems and Techniques",
+        "Computer science"
+      ],
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "rationale": "ReadFirst 43.4/100; foundation signal from impact 97.4, graph 32.0, local in-degree 0; bridge signal from 0 local citation edges or multiple field labels.",
+      "metrics": {
+        "readFirstScore": 43.38,
+        "citationImpact": 97.36,
+        "graphPrestige": 32,
+        "citationVelocity": 27.03,
+        "methodologyQuality": 28,
+        "reproducibility": 30,
+        "citationInDegree": 0,
+        "citationOutDegree": 0
+      }
+    },
+    {
+      "paperId": "W3207701354",
+      "title": "A Human-Centered Systematic Literature Review of the Computational Approaches for Online Sexual Risk Detection",
+      "rank": 17,
+      "primaryCluster": "Cybercrime and Law Enforcement Studies",
+      "clusterLabels": [
+        "Cybercrime and Law Enforcement Studies",
+        "Hate Speech and Cyberbullying Detection",
+        "Ethics and Social Impacts of AI",
+        "Harassment"
+      ],
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "rationale": "ReadFirst 42.5/100; foundation signal from impact 99.3, graph 32.0, local in-degree 0; bridge signal from 0 local citation edges or multiple field labels.",
+      "metrics": {
+        "readFirstScore": 42.5,
+        "citationImpact": 99.32,
+        "graphPrestige": 32,
+        "citationVelocity": 47.57,
+        "methodologyQuality": 28,
+        "reproducibility": 37,
+        "citationInDegree": 0,
+        "citationOutDegree": 0
+      }
+    },
+    {
+      "paperId": "W4390880258",
+      "title": "Machine Learning for Refining Knowledge Graphs: A Survey",
+      "rank": 18,
+      "primaryCluster": "Advanced Graph Neural Networks",
+      "clusterLabels": [
+        "Advanced Graph Neural Networks",
+        "Data Quality and Management",
+        "Graph Theory and Algorithms",
+        "Computer science"
+      ],
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "rationale": "ReadFirst 42.4/100; foundation signal from impact 94.9, graph 32.0, local in-degree 0; bridge signal from 1 local citation edges or multiple field labels.",
+      "metrics": {
+        "readFirstScore": 42.36,
+        "citationImpact": 94.93,
+        "graphPrestige": 32,
+        "citationVelocity": 30.51,
+        "methodologyQuality": 21,
+        "reproducibility": 37,
+        "citationInDegree": 0,
+        "citationOutDegree": 1
+      }
+    },
+    {
+      "paperId": "W4388524030",
+      "title": "A comprehensive survey on machine learning approaches for fake news detection",
+      "rank": 19,
+      "primaryCluster": "Misinformation and Its Impacts",
+      "clusterLabels": [
+        "Misinformation and Its Impacts",
+        "Spam and Phishing Detection",
+        "Advanced Malware Detection Techniques",
+        "Computer science"
+      ],
+      "roles": [
+        "foundation",
+        "frontier",
+        "bridge"
+      ],
+      "rationale": "ReadFirst 42.3/100; foundation signal from impact 99.9, graph 32.0, local in-degree 0; frontier signal from year 2023 and velocity 57.5; bridge signal from 2 local citation edges or multiple field labels.",
+      "metrics": {
+        "readFirstScore": 42.31,
+        "citationImpact": 99.93,
+        "graphPrestige": 32,
+        "citationVelocity": 57.49,
+        "methodologyQuality": 21,
+        "reproducibility": 37,
+        "citationInDegree": 0,
+        "citationOutDegree": 2
+      }
+    },
+    {
+      "paperId": "W4412465717",
+      "title": "Practices, opportunities and challenges in the fusion of knowledge graphs and large language models",
+      "rank": 20,
+      "primaryCluster": "Topic Modeling",
+      "clusterLabels": [
+        "Topic Modeling",
+        "Advanced Graph Neural Networks",
+        "Natural Language Processing Techniques",
+        "Computer science"
+      ],
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "rationale": "ReadFirst 41.2/100; foundation signal from impact 99.2, graph 32.0, local in-degree 0; bridge signal from 0 local citation edges or multiple field labels.",
+      "metrics": {
+        "readFirstScore": 41.2,
+        "citationImpact": 99.16,
+        "graphPrestige": 32,
+        "citationVelocity": 34.31,
+        "methodologyQuality": 26,
+        "reproducibility": 30,
+        "citationInDegree": 0,
+        "citationOutDegree": 0
+      }
+    },
+    {
+      "paperId": "W4311405210",
+      "title": "EMVLight: A multi-agent reinforcement learning framework for an emergency vehicle decentralized routing and traffic signal control system",
+      "rank": 21,
+      "primaryCluster": "Evacuation and Crowd Dynamics",
+      "clusterLabels": [
+        "Evacuation and Crowd Dynamics",
+        "Traffic control and management",
+        "Traffic and Road Safety",
+        "Reinforcement learning"
+      ],
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "rationale": "ReadFirst 39.5/100; foundation signal from impact 98.8, graph 32.0, local in-degree 0; bridge signal from 0 local citation edges or multiple field labels.",
+      "metrics": {
+        "readFirstScore": 39.45,
+        "citationImpact": 98.78,
+        "graphPrestige": 32,
+        "citationVelocity": 47.84,
+        "reproducibility": 30,
+        "citationInDegree": 0,
+        "citationOutDegree": 0
+      }
+    },
+    {
+      "paperId": "W4386501849",
+      "title": "Siren's Song in the AI Ocean: A Survey on Hallucination in Large Language Models",
+      "rank": 22,
+      "primaryCluster": "Topic Modeling",
+      "clusterLabels": [
+        "Topic Modeling",
+        "Machine Learning in Healthcare",
+        "COVID-19 diagnosis using AI",
+        "Context (archaeology)"
+      ],
+      "roles": [
+        "frontier",
+        "bridge"
+      ],
+      "rationale": "ReadFirst 38.9/100; frontier signal from year 2023 and velocity 70.2; bridge signal from 0 local citation edges or multiple field labels.",
+      "metrics": {
+        "readFirstScore": 38.86,
+        "citationImpact": 73.44,
+        "graphPrestige": 32,
+        "citationVelocity": 70.15,
+        "methodologyQuality": 28,
+        "reproducibility": 30,
+        "citationInDegree": 0,
+        "citationOutDegree": 0
+      }
+    },
+    {
+      "paperId": "W2739419429",
+      "title": "Argumentation mining: How can a machine acquire common sense and world knowledge?",
+      "rank": 23,
+      "primaryCluster": "Topic Modeling",
+      "clusterLabels": [
+        "Topic Modeling",
+        "Software Engineering Research",
+        "Natural Language Processing Techniques",
+        "Argumentation theory"
+      ],
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "rationale": "ReadFirst 37.9/100; foundation signal from impact 89.8, graph 32.0, local in-degree 0; bridge signal from 0 local citation edges or multiple field labels.",
+      "metrics": {
+        "readFirstScore": 37.94,
+        "citationImpact": 89.76,
+        "graphPrestige": 32,
+        "citationVelocity": 26.71,
+        "methodologyQuality": 20,
+        "reproducibility": 30,
+        "citationInDegree": 0,
+        "citationOutDegree": 0
+      }
+    },
+    {
+      "paperId": "W4387596421",
+      "title": "Survey on Factuality in Large Language Models: Knowledge, Retrieval and Domain-Specificity",
+      "rank": 24,
+      "primaryCluster": "Topic Modeling",
+      "clusterLabels": [
+        "Topic Modeling",
+        "Natural Language Processing Techniques",
+        "Computational and Text Analysis Methods",
+        "Reliability (semiconductor)"
+      ],
+      "roles": [
+        "bridge"
+      ],
+      "rationale": "ReadFirst 32.9/100; bridge signal from 0 local citation edges or multiple field labels.",
+      "metrics": {
+        "readFirstScore": 32.86,
+        "citationImpact": 53.82,
+        "graphPrestige": 32,
+        "citationVelocity": 45.83,
+        "methodologyQuality": 28,
+        "reproducibility": 30,
+        "citationInDegree": 0,
+        "citationOutDegree": 0
+      }
+    },
+    {
+      "paperId": "W4406840428",
+      "title": "Zep: A Temporal Knowledge Graph Architecture for Agent Memory",
+      "rank": 25,
+      "primaryCluster": "Graph Theory and Algorithms",
+      "clusterLabels": [
+        "Graph Theory and Algorithms",
+        "Semantic Web and Ontologies",
+        "Cognitive Computing and Networks",
+        "Computer science"
+      ],
+      "roles": [
+        "bridge"
+      ],
+      "rationale": "ReadFirst 31.7/100; bridge signal from 0 local citation edges or multiple field labels.",
+      "metrics": {
+        "readFirstScore": 31.73,
+        "citationImpact": 23.96,
+        "graphPrestige": 32,
+        "citationVelocity": 21.33,
+        "methodologyQuality": 48,
+        "reproducibility": 30,
+        "citationInDegree": 0,
+        "citationOutDegree": 0
+      }
+    }
+  ],
+  "graphInsights": {
+    "foundationPapers": [
+      "#1 Knowledge graph refinement: A survey of approaches and evaluation methods",
+      "#2 Detection and Resolution of Rumours in Social Media",
+      "#3 Construction of Knowledge Graphs: Current State and Challenges",
+      "#4 Detection and Resolution of Rumours in Social Media: A Survey",
+      "#5 A Metaverse: Taxonomy, Components, Applications, and Open Challenges",
+      "#6 Neurosymbolic AI: the 3rd wave"
+    ],
+    "frontierPapers": [
+      "#6 Neurosymbolic AI: the 3rd wave",
+      "#19 A comprehensive survey on machine learning approaches for fake news detection",
+      "#22 Siren's Song in the AI Ocean: A Survey on Hallucination in Large Language Models"
+    ],
+    "bridgePapers": [
+      "#1 Knowledge graph refinement: A survey of approaches and evaluation methods",
+      "#2 Detection and Resolution of Rumours in Social Media",
+      "#3 Construction of Knowledge Graphs: Current State and Challenges",
+      "#4 Detection and Resolution of Rumours in Social Media: A Survey",
+      "#5 A Metaverse: Taxonomy, Components, Applications, and Open Challenges",
+      "#6 Neurosymbolic AI: the 3rd wave"
+    ],
+    "methodologyAnchors": [],
+    "reproducibilityAnchors": []
+  },
+  "basis": [
+    "Clusters use OpenAlex topics and concepts from the fetched seed plus citation-neighborhood papers.",
+    "Foundation roles combine high citation impact, high local PageRank-style graph prestige, or incoming citation degree in the fetched graph.",
+    "Frontier roles combine recency with citation velocity, methodology, or reproducibility signals.",
+    "Bridge roles mark papers that connect multiple topic/concept labels or sit on several local citation edges.",
+    "Methodology and reproducibility anchors stay separate from citation popularity."
+  ]
+}
