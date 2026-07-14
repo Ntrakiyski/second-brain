@@ -20,7 +20,7 @@ import { CORS_HEADERS, graceMs, LLM_MODEL, COMPRESSION_MIN_AGE_MS, compressionEl
 import { initializeDatabase, checkVectorizeHealth, getDbReady, setDbReady } from "./db";
 import { buildVisibilityClause, buildEntryFilterQuery, getStatus, withStatus, withKind } from "./tags";
 import { EDGE_TYPES, isValidEdgeType, createEdge, deleteEdge, getConnections, buildGraph } from "./graph";
-import { captureEntry, storeEntry, appendToEntry, deleteStaleVectors, reindexAllVectors } from "./ingest";
+import { captureEntry, storeEntry, appendToEntry, deleteStaleVectors, reindexAllVectors, createSnapshot } from "./ingest";
 import { recallEntries } from "./recall";
 import { forgetEntry, deprecateEntry, applyStatus, compressTag } from "./lifecycle";
 import { classifyEntry, extractHashtags } from "./classification";
@@ -28,7 +28,7 @@ import { escapeLikePattern } from "./helpers";
 import { INTEGRATION_PROVIDERS, getProvider, loadIntegration, saveIntegration, deleteIntegration, integrationStatus } from "./integrations";
 import type { IntegrationRecord } from "./integrations";
 import { makeMirrorStore, isManagedMirror, mirrorEditError } from "./integrations-mirror";
-import { KIND_VALUES, STATUS_VALUES, type MemoryKind, type MemoryStatus } from "./types";
+import { KIND_VALUES, STATUS_VALUES, EPISTEMIC_STATUS_VALUES, type MemoryKind, type MemoryStatus, type EpistemicStatus, isValidTransition, VALID_EPISTEMIC_TRANSITIONS } from "./types";
 
 // ─── Default handler — all non-MCP routes ────────────────────────────────────
 
@@ -276,7 +276,7 @@ export const defaultHandler = {
       }
 
       try {
-        await appendToEntry(env, id, existingContent, addition, tags, source, existingOwnerId || user_id);
+        await appendToEntry(env, id, existingContent, addition, tags, source, existingOwnerId || user_id, ctx);
       } catch (e) {
         return json({ ok: false, error: `Append failed: ${(e as Error).message}` }, 500);
       }
@@ -322,6 +322,9 @@ export const defaultHandler = {
       const oldVectorIds: string[] = JSON.parse(row.vector_ids ?? "[]");
       const existingOwnerId = row.owner_user_id as string;
       const finalContent = cleanContent || newContent;
+
+      // Snapshot: backup before destructive update — fire-and-forget (non-fatal)
+      ctx.waitUntil(createSnapshot(env, id).catch(e => console.error("Snapshot creation failed (non-fatal):", e)));
 
       await env.DB.prepare(`UPDATE entries SET content = ?, tags = ? WHERE id = ?`)
         .bind(finalContent, JSON.stringify(mergedTags), id).run();
@@ -540,8 +543,9 @@ export const defaultHandler = {
       const kindParam = url.searchParams.get("kind")?.trim();
       const kind = kindParam && (KIND_VALUES as readonly string[]).includes(kindParam) ? kindParam as MemoryKind : undefined;
       const hops = Math.min(Math.max(parseInt(url.searchParams.get("hops") ?? "0", 10), 0), 3);
+      const asOf = url.searchParams.has("as_of") ? parseInt(url.searchParams.get("as_of")!, 10) : undefined;
 
-      const { matches, insight, semanticUnavailable } = await recallEntries({ query, topK, tag, after, before, kind, hops, userId: user_id }, env, ctx);
+      const { matches, insight, semanticUnavailable } = await recallEntries({ query, topK, tag, after, before, kind, hops, userId: user_id, asOf }, env, ctx);
 
       if (!matches.length) {
         return json({
@@ -565,11 +569,49 @@ export const defaultHandler = {
           created_at: m.createdAt,
           updated: m.isUpdate,
           hop: m.hop,
+          epistemic_status: m.epistemicStatus,
+          ...(m.passages?.length ? { passages: m.passages } : {}),
+          ...(m.relations?.length ? { relations: m.relations } : {}),
           ...(m.crossUserMention ? { crossUserMention: { owner_username: m.crossUserMention.ownerUsername, similarity: parseFloat((m.crossUserMention.similarity * 100).toFixed(1)) } } : {}),
         })),
         insight: insight || null,
         semantic_unavailable: semanticUnavailable,
       });
+    }
+
+    // GET /entries/:id/hierarchy — document hierarchy for an entry (Ticket 08)
+    if (url.pathname.startsWith("/entries/") && url.pathname.endsWith("/hierarchy") && request.method === "GET") {
+      const { error: authErr, user_id } = await requireAuthAsync(request, env);
+      if (authErr) return authErr;
+      const entryId = url.pathname.split("/")[2];
+
+      const entry = await env.DB.prepare(`SELECT id FROM entries WHERE id = ?`).bind(entryId).first() as { id: string } | null;
+      if (!entry) return json({ ok: false, error: "Entry not found" }, 404);
+
+      // Find the episode linked to this entry
+      const episode = await env.DB.prepare(`SELECT id FROM episodes WHERE entry_id = ? LIMIT 1`).bind(entryId).first() as { id: string } | null;
+      if (!episode) return json({ ok: true, hierarchy: null });
+
+      // Find passages linked to this entry
+      const { results: passages } = await env.DB.prepare(
+        `SELECT id, section, start_offset, end_offset FROM passages WHERE entry_id = ? ORDER BY start_offset`
+      ).bind(entryId).all() as { results: { id: string; section: string | null; start_offset: number | null; end_offset: number | null }[] };
+
+      // Find document sections if any — link via passage section names matching document section titles
+      const sectionNames = [...new Set(passages.map((p: any) => p.section).filter(Boolean))];
+      let sections: { id: string; title: string; level: number; order_index: number; parent_section_id: string | null }[] = [];
+      if (sectionNames.length) {
+        const namePlaceholders = sectionNames.map(() => "?").join(", ");
+        const { results: secRows } = await env.DB.prepare(
+          `SELECT ds.id, ds.title, ds.level, ds.order_index, ds.parent_section_id
+           FROM document_sections ds
+           WHERE ds.title IN (${namePlaceholders})
+           ORDER BY ds.order_index`
+        ).bind(...sectionNames).all().catch(() => ({ results: [] as any[] }));
+        sections = secRows as any[];
+      }
+
+      return json({ ok: true, entry_id: entryId, episode_id: episode.id, passages, sections });
     }
 
     // POST /forget — delete-by-id, mirrors the MCP `forget` tool
@@ -601,6 +643,48 @@ export const defaultHandler = {
       }
 
       return json({ ok: true, id, deletedVectors: result.vectorCount });
+    }
+
+    // POST /restore — restore an entry from a snapshot, creates a NEW entry
+    if (url.pathname === "/restore" && request.method === "POST") {
+      const { error: authErr, user_id } = await requireAuthAsync(request, env);
+      if (authErr) return authErr;
+
+      let body: { entry_id?: string; snapshot_id?: string };
+      try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
+      if (!body.entry_id?.trim()) return json({ ok: false, error: "entry_id is required" }, 400);
+
+      const entryId = body.entry_id.trim();
+      const snapshotId = body.snapshot_id?.trim();
+
+      // Fetch snapshot
+      let snapshot;
+      if (snapshotId) {
+        snapshot = await env.DB.prepare(
+          `SELECT id, entry_id, content, tags, source, created_at FROM entry_snapshots WHERE id = ? AND entry_id = ?`
+        ).bind(snapshotId, entryId).first();
+      } else {
+        snapshot = await env.DB.prepare(
+          `SELECT id, entry_id, content, tags, source, created_at FROM entry_snapshots WHERE entry_id = ? ORDER BY created_at DESC LIMIT 1`
+        ).bind(entryId).first();
+      }
+
+      if (!snapshot) return json({ ok: false, error: `No snapshot found for entry ${entryId}` }, 404);
+
+      const snapContent = (snapshot.content as string) ?? "";
+      const snapTagsRaw = snapshot.tags as string | null;
+      let snapTags: string[] = [];
+      try { snapTags = snapTagsRaw ? JSON.parse(snapTagsRaw) : []; } catch { snapTags = []; }
+      const restoredTags = snapTags.filter((t: string) => !t.startsWith("status:"));
+      restoredTags.push("restored");
+
+      const result = await captureEntry(snapContent, restoredTags, (snapshot.source as string) ?? "restore", env, ctx, user_id);
+
+      if (result.status === "blocked") {
+        return json({ ok: false, error: `Duplicate detected (${(result.score * 100).toFixed(0)}% match). Existing entry ID: ${result.matchId}.` }, 409);
+      }
+
+      return json({ ok: true, id: result.id, snapshotId: snapshot.id, snapshotCreatedAt: snapshot.created_at });
     }
 
     // POST /link — create an explicit edge between two memories, mirrors the MCP `link` tool
@@ -769,6 +853,37 @@ export const defaultHandler = {
       }
 
       return json({ ok: true, id, status });
+    }
+
+    // POST /epistemic-status — transition epistemic lifecycle (Ticket 10)
+    if (url.pathname === "/epistemic-status" && request.method === "POST") {
+      const { error: authErr, user_id } = await requireAuthAsync(request, env);
+      if (authErr) return authErr;
+
+      let body: { id?: string; status?: string };
+      try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
+      if (!body.id?.trim()) return json({ ok: false, error: "id is required" }, 400);
+      if (!(EPISTEMIC_STATUS_VALUES as readonly string[]).includes(body.status ?? "")) {
+        return json({ ok: false, error: `status must be one of: ${EPISTEMIC_STATUS_VALUES.join(", ")}` }, 400);
+      }
+
+      const id = body.id.trim();
+      const newStatus = body.status as EpistemicStatus;
+
+      const entryRow = await env.DB.prepare(`SELECT owner_user_id, epistemic_status FROM entries WHERE id = ?`).bind(id).first() as { owner_user_id: string; epistemic_status: string } | null;
+      if (!entryRow) return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
+      if (entryRow.owner_user_id && entryRow.owner_user_id !== user_id && entryRow.owner_user_id !== "") {
+        return json({ ok: false, error: `No entry found with ID: ${id}` }, 404);
+      }
+
+      const currentStatus = (entryRow.epistemic_status ?? "canonical") as EpistemicStatus;
+      if (!isValidTransition(currentStatus, newStatus)) {
+        const validNext = VALID_EPISTEMIC_TRANSITIONS[currentStatus] ?? [];
+        return json({ ok: false, error: `Invalid transition: ${currentStatus} → ${newStatus}`, valid_next_states: validNext }, 400);
+      }
+
+      await env.DB.prepare(`UPDATE entries SET epistemic_status = ? WHERE id = ?`).bind(newStatus, id).run();
+      return json({ ok: true, id, from: currentStatus, to: newStatus });
     }
 
     // POST /patterns/resolve — confirm or dismiss an auto-derived pattern.

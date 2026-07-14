@@ -118,3 +118,11 @@ export const EDGE_PRUNE_MIN_AGE_MS = 7 * 24 * 60 * 60 * 1000; // …once they're
 
 // ─── Nightly integration sync ─────────────────────────────────────────────────
 export const CRON_SYNC_MAX_BATCHES = 5;
+
+// ─── Spaced repetition decay (Memory Pillar Phase 1) ────────────────────────
+export const RETENTION_HALF_LIFE_DAYS = 30;
+
+// ─── Staleness detection (Ticket 06) ────────────────────────────────────────
+export const STALENESS_THRESHOLD_DAYS = 180;
+export const STALENESS_CONFIDENCE_THRESHOLD = 0.5;
+export const STALENESS_RECALL_PENALTY = 0.5;

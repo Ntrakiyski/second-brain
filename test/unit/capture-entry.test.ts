@@ -378,8 +378,10 @@ describe("captureEntry()", () => {
     const { ctx } = makeCtx();
     await captureEntry("I like dark mode at night", [], "api", env, ctx);
     // The inserted vector metadata should contain the merged content
-    const insertedVectors = insertMock.mock.calls[0][0] as any[];
-    expect(insertedVectors[0].metadata.content).toBe("Combined merged memory");
+    // (passage vectors come first, entry vector comes after)
+    const allInserts = insertMock.mock.calls.flatMap((c: any[]) => c[0]) as any[];
+    const entryVector = allInserts.find((v: any) => v.metadata?.source !== "passage" && !v.id?.startsWith("passage-"));
+    expect(entryVector.metadata.content).toBe("Combined merged memory");
   });
 
   it("merge: deletes old vectors after re-embedding", async () => {

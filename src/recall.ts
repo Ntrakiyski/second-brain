@@ -29,6 +29,7 @@ import {
   escapeLikePattern,
   tokenizeQuery,
   readStreamText,
+  getRetentionScore,
 } from "./helpers";
 import {
   GRAPH_MAX_HOPS,
@@ -46,6 +47,7 @@ import {
   LLM_MODEL,
   INSIGHT_MAX_TOKENS,
   CHUNK_OVERLAP_CHARS,
+  STALENESS_RECALL_PENALTY,
 } from "./config";
 import { getStatus, withKind, withStatus, buildVisibilityClause } from "./tags";
 import { expandGraph } from "./graph";
@@ -66,7 +68,8 @@ export function rerankWithTimeDecay(
   importanceScores: Map<string, number> = new Map(),
   queryTags: string[] = [],
   contradictionWins: Map<string, number> = new Map(),
-  contradictionLosses: Map<string, number> = new Map()
+  contradictionLosses: Map<string, number> = new Map(),
+  retentionScores: Map<string, number> = new Map()
 ): VectorizeMatch[] {
   const now = Date.now();
 
@@ -90,19 +93,19 @@ export function rerankWithTimeDecay(
       const appendPenalty = isShortAppend ? 0.2 : 1.0;
       const rolledUpPenalty = tags.includes("rolled-up") ? 0.4 : 1.0;
 
+      // Retention score: spaced repetition decay from last recall time
+      const retentionScore = retentionScores.get(parentId) ?? 1.0;
+
       // Effective importance = classifier score adjusted by net contradiction history.
-      // Survivors (net wins) rise toward 5; repeatedly-contradicted memories (net losses)
-      // fall toward 1. log1p gives diminishing returns; clamp keeps the effect inside the
-      // existing 0.88–1.20 importance band. The stored importance_score is never mutated.
       const imp = importanceScores.get(parentId) ?? 0;
       const wins = contradictionWins.get(parentId) ?? 0;
       const losses = contradictionLosses.get(parentId) ?? 0;
       const net = wins - losses;
       let importanceMultiplier: number;
       if (imp === 0 && net === 0) {
-        importanceMultiplier = 1.0; // unscored and never contested — unchanged baseline
+        importanceMultiplier = 1.0;
       } else {
-        const base = imp === 0 ? 3 : imp; // unscored-but-contested → neutral midpoint
+        const base = imp === 0 ? 3 : imp;
         const adj = Math.sign(net) * Math.log1p(Math.abs(net)) * CONTRADICTION_IMPORTANCE_STEP;
         const effectiveImp = Math.max(1, Math.min(5, base + adj));
         importanceMultiplier = 0.8 + (effectiveImp / 5) * 0.4;
@@ -113,7 +116,7 @@ export function rerankWithTimeDecay(
       const overlap = queryTags.length ? tags.filter(t => queryTags.includes(t)).length : 0;
       const tagBoost = overlap ? Math.min(TAG_BOOST_MAX, 1 + overlap * TAG_BOOST_STEP) : 1.0;
 
-      return { ...match, score: match.score * combinedMultiplier * appendPenalty * rolledUpPenalty * importanceMultiplier * tagBoost };
+      return { ...match, score: match.score * combinedMultiplier * appendPenalty * rolledUpPenalty * importanceMultiplier * tagBoost * retentionScore };
     })
     .sort((a, b) => b.score - a.score);
 }
@@ -181,6 +184,9 @@ export interface RecallMatch {
   isUpdate: boolean;
   hop: number; // 0 = direct match; ≥1 = surfaced via graph expansion (issue #16)
   crossUserMention?: { entryId: string; ownerUsername: string; similarity: number };
+  passages?: { id: string; content: string; section: string | null; startOffset: number | null; endOffset: number | null }[];
+  relations?: { type: string; confidence: number; targetId: string; targetContent?: string }[];
+  epistemicStatus?: string;
 }
 
 export interface RecallSearchResult {
@@ -204,7 +210,10 @@ export function renderRecallText(matches: RecallMatch[], insight: string): strin
     const updateLabel = m.isUpdate ? " [updated]" : "";
     const hopLabel = m.hop > 0 ? ` [related · ${m.hop} hop${m.hop > 1 ? "s" : ""}]` : "";
     const crossUserLabel = m.crossUserMention ? ` · also by ${m.crossUserMention.ownerUsername}` : "";
-    return `${i + 1}. [${date}${src}${tagList}] (${score}% match)${updateLabel}${hopLabel}${crossUserLabel}\nID: ${m.id}\n${m.content}`;
+    const epistemicLabel = m.epistemicStatus && m.epistemicStatus !== "canonical" ? ` [${m.epistemicStatus}]` : "";
+    const passageLabel = m.passages?.length ? `\nEVIDENCE: ${m.passages.map(p => p.section ? `"${p.section}"` : `"${p.content.slice(0, 80)}..."`).join("; ")}` : "";
+    const relationLabel = m.relations?.length ? `\nLINKS: ${m.relations.slice(0, 3).map(r => `${r.type}(${(r.confidence * 100).toFixed(0)}%)→${r.targetId.slice(0, 8)}`).join(", ")}` : "";
+    return `${i + 1}. [${date}${src}${tagList}] (${score}% match)${updateLabel}${hopLabel}${crossUserLabel}${epistemicLabel}\nID: ${m.id}\n${m.content}${passageLabel}${relationLabel}`;
   }).join("\n\n");
   return insight ? `**Insight:** ${insight}\n\n---\n\n${text}` : text;
 }
@@ -283,12 +292,13 @@ function fuseDenseAndKeyword(
 }
 
 export async function recallEntries(
-  params: { query: string; topK: number; tag?: string; after?: number; before?: number; kind?: MemoryKind; hops?: number; userId?: string },
+  params: { query: string; topK: number; tag?: string; after?: number; before?: number; kind?: MemoryKind; hops?: number; userId?: string; asOf?: number },
   env: Env,
   ctx: ExecutionContext
 ): Promise<RecallSearchResult> {
   const { query, topK } = params;
   let { tag, after, before, kind } = params;
+  const asOf = params.asOf;
   const hops = Math.max(0, Math.min(GRAPH_MAX_HOPS, params.hops ?? 0));
   const userId = params.userId;
   const now = Date.now();
@@ -426,25 +436,27 @@ export async function recallEntries(
     if (!visibleFusedMatches.length) return { matches: [], insight: "", semanticUnavailable };
   }
 
-  // Fetch recall_count and importance_score for all candidates to use in scoring.
+  // Fetch recall_count, importance_score, and last_recalled_at for all candidates.
   // The tag path can produce far more than 100 candidates, so chunk the IN query
   // to stay under D1's bound-parameter limit.
   const candidateIds = [...new Set(visibleFusedMatches.map(m => (m.metadata as any)?.parentId ?? m.id))] as string[];
-  const rcRows: { id: string; recall_count: number; importance_score: number; contradiction_wins: number; contradiction_losses: number }[] = [];
+  const rcRows: { id: string; recall_count: number; importance_score: number; contradiction_wins: number; contradiction_losses: number; last_recalled_at: number | null; created_at: number; epistemic_status: string }[] = [];
   for (let i = 0; i < candidateIds.length; i += D1_MAX_BOUND_PARAMS) {
     const batch = candidateIds.slice(i, i + D1_MAX_BOUND_PARAMS);
     const rcPlaceholders = batch.map(() => "?").join(", ");
     const { results: rows } = await env.DB.prepare(
-      `SELECT id, recall_count, importance_score, contradiction_wins, contradiction_losses FROM entries WHERE id IN (${rcPlaceholders})`
-    ).bind(...batch).all() as { results: { id: string; recall_count: number; importance_score: number; contradiction_wins: number; contradiction_losses: number }[] };
+      `SELECT id, recall_count, importance_score, contradiction_wins, contradiction_losses, last_recalled_at, created_at, epistemic_status FROM entries WHERE id IN (${rcPlaceholders})`
+    ).bind(...batch).all() as { results: { id: string; recall_count: number; importance_score: number; contradiction_wins: number; contradiction_losses: number; last_recalled_at: number | null; created_at: number; epistemic_status: string }[] };
     rcRows.push(...rows);
   }
   const recallCounts = new Map(rcRows.map(r => [r.id, r.recall_count ?? 0]));
   const importanceScores = new Map(rcRows.map(r => [r.id, r.importance_score ?? 0]));
   const contradictionWins = new Map(rcRows.map(r => [r.id, r.contradiction_wins ?? 0]));
   const contradictionLosses = new Map(rcRows.map(r => [r.id, r.contradiction_losses ?? 0]));
+  const retentionScores = new Map(rcRows.map(r => [r.id, getRetentionScore(r.last_recalled_at ?? null, r.created_at, now)]));
+  const epistemicStatuses = new Map(rcRows.map(r => [r.id, r.epistemic_status ?? "canonical"]));
 
-  const reranked = rerankWithTimeDecay(visibleFusedMatches, recallCounts, importanceScores, queryTags, contradictionWins, contradictionLosses);
+  const reranked = rerankWithTimeDecay(visibleFusedMatches, recallCounts, importanceScores, queryTags, contradictionWins, contradictionLosses, retentionScores);
 
   const seen = new Set<string>();
   const deduped = reranked.filter((m) => {
@@ -493,17 +505,19 @@ export async function recallEntries(
   }
   if (after !== undefined) { d1Sql += ` AND created_at >= ?`; d1Bindings.push(after); }
   if (before !== undefined) { d1Sql += ` AND created_at <= ?`; d1Bindings.push(before); }
+  if (asOf !== undefined) { d1Sql += ` AND (valid_from IS NULL OR valid_from <= ?) AND (valid_to IS NULL OR valid_to > ?)`; d1Bindings.push(asOf, asOf); }
   const { results: d1Rows } = await env.DB.prepare(d1Sql).bind(...d1Bindings).all() as { results: Record<string, any>[] };
 
   const d1Map = new Map(d1Rows.map((r) => [r.id as string, r]));
 
-  // Increment recall_count for the DIRECT seeds shown — never for graph-expanded
-  // neighbors, or well-connected nodes would inflate their own ranking (feedback loop).
+  // Increment recall_count and update last_recalled_at for the DIRECT seeds shown —
+  // never for graph-expanded neighbors, or well-connected nodes would inflate their
+  // own ranking (feedback loop). last_recalled_at drives retention score decay.
   const seedIdSet = new Set(seedParentIds);
   ctx.waitUntil(
     Promise.all(
       [...d1Map.keys()].filter(id => seedIdSet.has(id)).map(id =>
-        env.DB.prepare(`UPDATE entries SET recall_count = recall_count + 1 WHERE id = ?`).bind(id).run()
+        env.DB.prepare(`UPDATE entries SET recall_count = recall_count + 1, last_recalled_at = ? WHERE id = ?`).bind(now, id).run()
       )
     ).catch(e => console.error("recall_count update failed (non-fatal):", e))
   );
@@ -516,15 +530,17 @@ export async function recallEntries(
       // D1 row not found — either filtered out (e.g. status:deprecated) or genuinely missing
       return [];
     }
+    const stalePenalty = (epistemicStatuses.get(parentId) ?? "canonical") === "stale" ? STALENESS_RECALL_PENALTY : 1.0;
     return [{
       id: parentId,
       content: row.content as string,
-      score: m.score,
+      score: m.score * stalePenalty,
       createdAt: row.created_at as number,
       tags: JSON.parse(row.tags ?? "[]"),
       source: row.source as string,
       isUpdate: !!meta?.isUpdate,
       hop: 0,
+      epistemicStatus: epistemicStatuses.get(parentId) ?? "canonical",
     }];
   });
 
@@ -553,6 +569,49 @@ export async function recallEntries(
   // monotonically-decreasing scale rather than raw RRF values.
   const maxScore = matches.reduce((mx, m) => Math.max(mx, m.score), 0);
   if (maxScore > 0) for (const m of matches) m.score = m.score / maxScore;
+
+  // ── Relations (Ticket 09): fetch linked edges for top results ─────────────
+  const matchIdSet = new Set(matches.map(m => m.id));
+  if (matchIdSet.size) {
+    const ids = [...matchIdSet];
+    const placeholders = ids.map(() => "?").join(", ");
+    const { results: edgeRows } = await env.DB.prepare(
+      `SELECT source_id, target_id, type, confidence FROM edges WHERE source_id IN (${placeholders}) OR target_id IN (${placeholders}) LIMIT 50`
+    ).bind(...ids, ...ids).all() as { results: { source_id: string; target_id: string; type: string; confidence: number }[] };
+    const edgesByEntry = new Map<string, { type: string; confidence: number; targetId: string }[]>();
+    for (const e of edgeRows) {
+      const entryId = matchIdSet.has(e.source_id) ? e.source_id : matchIdSet.has(e.target_id) ? e.target_id : null;
+      if (!entryId) continue;
+      const targetId = entryId === e.source_id ? e.target_id : e.source_id;
+      if (!edgesByEntry.has(entryId)) edgesByEntry.set(entryId, []);
+      edgesByEntry.get(entryId)!.push({ type: e.type, confidence: e.confidence ?? 1.0, targetId });
+    }
+    for (const m of matches) {
+      const edges = edgesByEntry.get(m.id);
+      if (edges?.length) m.relations = edges;
+    }
+  }
+
+  // ── Passage retrieval (Ticket 07): fetch top passages for each result ──────
+  const matchIds = matches.map(m => m.id);
+  if (matchIds.length) {
+    const placeholders = matchIds.map(() => "?").join(", ");
+    const { results: passageRows } = await env.DB.prepare(
+      `SELECT id, entry_id, content, section, start_offset, end_offset FROM passages WHERE entry_id IN (${placeholders}) ORDER BY created_at DESC LIMIT 100`
+    ).bind(...matchIds).all() as { results: { id: string; entry_id: string; content: string; section: string | null; start_offset: number | null; end_offset: number | null }[] };
+    const passageMap = new Map<string, typeof passageRows>();
+    for (const p of passageRows) {
+      if (!passageMap.has(p.entry_id)) passageMap.set(p.entry_id, []);
+      const list = passageMap.get(p.entry_id)!;
+      if (list.length < 5) list.push(p);
+    }
+    for (const m of matches) {
+      const psgs = passageMap.get(m.id);
+      if (psgs?.length) {
+        m.passages = psgs.map(p => ({ id: p.id, content: p.content, section: p.section, startOffset: p.start_offset, endOffset: p.end_offset }));
+      }
+    }
+  }
 
   // ── Cross-user mentions: flag high-similarity public entries from other users ──
   if (userId) {

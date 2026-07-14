@@ -26,7 +26,7 @@ import {
 import { STATUS_PREFIX, KIND_PREFIX, type MemoryStatus } from "./types";
 import { withStatus } from "./tags";
 import { initializeDatabase } from "./db";
-import { captureEntry } from "./ingest";
+import { captureEntry, createSnapshot } from "./ingest";
 import { filterVisibleIds, inferEdgesOnWrite } from "./graph";
 
 // ─── Synthesize insight from retrieved memories ───────────────────────────────
@@ -218,6 +218,8 @@ export async function compressTag(
   }
 
   for (const id of rows.map((r: any) => r.id)) {
+    // Snapshot: backup before compression — fire-and-forget (non-fatal)
+    createSnapshot(env, id).catch(e => console.error(`Snapshot creation failed for ${id} (non-fatal):`, e));
     try {
       await env.DB.prepare(
         `UPDATE entries SET tags = json_insert(tags, '$[#]', 'rolled-up'), content = content || ? WHERE id = ?`
@@ -266,6 +268,48 @@ export async function runNightlyCompression(env: Env, ctx: ExecutionContext): Pr
       }
     }
   }
+
+  // Staleness detection pass (Ticket 06)
+  try {
+    await detectStaleness(env);
+  } catch (e) {
+    console.error("Staleness detection failed (non-fatal):", e);
+  }
+}
+
+// ─── Staleness detection (Ticket 06) ────────────────────────────────────────
+// Marks entries as stale when: valid_to is set, incoming edge confidence < 0.5,
+// or age > STALENESS_THRESHOLD_DAYS with no recalls. Runs nightly.
+export async function detectStaleness(env: Env): Promise<void> {
+  const now = Date.now();
+  const { STALENESS_THRESHOLD_DAYS, STALENESS_CONFIDENCE_THRESHOLD } = await import("./config");
+
+  // 1. Entries with valid_to set (superseded by contradicting evidence)
+  try {
+    const { meta } = await env.DB.prepare(
+      `UPDATE entries SET epistemic_status = 'stale' WHERE valid_to IS NOT NULL AND epistemic_status != 'stale'`
+    ).run();
+    if (meta?.changes) console.log(`Staleness: ${meta.changes} entries marked stale (valid_to set)`);
+  } catch (e) { console.error("Staleness check (valid_to) failed (non-fatal):", e); }
+
+  // 2. Entries with low-confidence incoming edges
+  try {
+    const { meta } = await env.DB.prepare(
+      `UPDATE entries SET epistemic_status = 'stale' WHERE id IN (
+        SELECT DISTINCT target_id FROM edges WHERE confidence < ? AND confidence > 0
+      ) AND epistemic_status != 'stale'`
+    ).bind(STALENESS_CONFIDENCE_THRESHOLD).run();
+    if (meta?.changes) console.log(`Staleness: ${meta.changes} entries marked stale (low confidence)`);
+  } catch (e) { console.error("Staleness check (confidence) failed (non-fatal):", e); }
+
+  // 3. Old entries with no recalls
+  try {
+    const cutoff = now - STALENESS_THRESHOLD_DAYS * 86400000;
+    const { meta } = await env.DB.prepare(
+      `UPDATE entries SET epistemic_status = 'stale' WHERE created_at < ? AND recall_count = 0 AND epistemic_status != 'stale'`
+    ).bind(cutoff).run();
+    if (meta?.changes) console.log(`Staleness: ${meta.changes} entries marked stale (age > ${STALENESS_THRESHOLD_DAYS}d, no recall)`);
+  } catch (e) { console.error("Staleness check (age) failed (non-fatal):", e); }
 }
 
 // ─── Nightly graph maintenance (issue #16) ──────────────────────────────────────

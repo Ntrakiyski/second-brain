@@ -86,6 +86,21 @@ export async function initializeDatabase(env: Env): Promise<void> {
     // Users table for multi-user auth
     await env.DB.exec(`CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, normalized_username TEXT NOT NULL UNIQUE, auth_key_hash TEXT NOT NULL, auth_key_prefix TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', created_at INTEGER NOT NULL, last_used_at INTEGER)`);
     await env.DB.exec(`CREATE INDEX IF NOT EXISTS idx_users_normalized_username ON users(normalized_username)`);
+    // Episodes: immutable raw content ledger
+    await env.DB.exec(`CREATE TABLE IF NOT EXISTS episodes (id TEXT PRIMARY KEY, entry_id TEXT NOT NULL, content TEXT NOT NULL, content_type TEXT NOT NULL DEFAULT 'text', source TEXT NOT NULL DEFAULT 'api', created_at INTEGER NOT NULL)`);
+    await env.DB.exec(`CREATE INDEX IF NOT EXISTS idx_episodes_entry_id ON episodes(entry_id)`);
+    // Entry snapshots: pre-mutation backups
+    await env.DB.exec(`CREATE TABLE IF NOT EXISTS entry_snapshots (id TEXT PRIMARY KEY, entry_id TEXT NOT NULL, content TEXT NOT NULL, tags TEXT NOT NULL DEFAULT '[]', source TEXT NOT NULL DEFAULT 'api', created_at INTEGER NOT NULL)`);
+    await env.DB.exec(`CREATE INDEX IF NOT EXISTS idx_snapshots_entry_id ON entry_snapshots(entry_id)`);
+    // Passages: evidence text spans for citation
+    await env.DB.exec(`CREATE TABLE IF NOT EXISTS passages (id TEXT PRIMARY KEY, entry_id TEXT NOT NULL, episode_id TEXT, content TEXT NOT NULL, section TEXT, page INTEGER, start_offset INTEGER, end_offset INTEGER, vector_ids TEXT NOT NULL DEFAULT '[]', created_at INTEGER NOT NULL)`);
+    await env.DB.exec(`CREATE INDEX IF NOT EXISTS idx_passages_entry_id ON passages(entry_id)`);
+    await env.DB.exec(`CREATE INDEX IF NOT EXISTS idx_passages_episode_id ON passages(episode_id)`);
+    // Document hierarchy
+    await env.DB.exec(`CREATE TABLE IF NOT EXISTS documents (id TEXT PRIMARY KEY, title TEXT NOT NULL, source_url TEXT, content_type TEXT NOT NULL DEFAULT 'research', created_at INTEGER NOT NULL)`);
+    await env.DB.exec(`CREATE TABLE IF NOT EXISTS document_sections (id TEXT PRIMARY KEY, document_id TEXT NOT NULL, parent_section_id TEXT, title TEXT NOT NULL, level INTEGER NOT NULL DEFAULT 0, order_index INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL)`);
+    await env.DB.exec(`CREATE INDEX IF NOT EXISTS idx_sections_document_id ON document_sections(document_id)`);
+    await env.DB.exec(`CREATE INDEX IF NOT EXISTS idx_sections_parent ON document_sections(parent_section_id)`);
   } catch (e) {
     console.error("Database initialization error (non-fatal):", e);
   }
@@ -95,9 +110,22 @@ export async function initializeDatabase(env: Env): Promise<void> {
     `ALTER TABLE entries ADD COLUMN contradiction_wins INTEGER DEFAULT 0`,
     `ALTER TABLE entries ADD COLUMN contradiction_losses INTEGER DEFAULT 0`,
     `ALTER TABLE entries ADD COLUMN owner_user_id TEXT NOT NULL DEFAULT ''`,
+    // Ticket 03: confidence on edges
+    `ALTER TABLE edges ADD COLUMN confidence REAL NOT NULL DEFAULT 1.0`,
+    // Ticket 04: spaced repetition decay
+    `ALTER TABLE entries ADD COLUMN retention_score REAL NOT NULL DEFAULT 1.0`,
+    `ALTER TABLE entries ADD COLUMN last_recalled_at INTEGER`,
+    // Ticket 05: bitemporal facts
+    `ALTER TABLE entries ADD COLUMN valid_from INTEGER`,
+    `ALTER TABLE entries ADD COLUMN valid_to INTEGER`,
+    `ALTER TABLE entries ADD COLUMN recorded_at INTEGER`,
+    // Ticket 06: staleness detection
+    `ALTER TABLE entries ADD COLUMN epistemic_status TEXT NOT NULL DEFAULT 'canonical'`,
   ]) {
     try { await env.DB.exec(alter); } catch { /* column already exists — no-op */ }
   }
+  // Ticket 05: temporal index for as_of queries
+  try { await env.DB.exec(`CREATE INDEX IF NOT EXISTS idx_entries_temporal ON entries(valid_from, valid_to)`); } catch { /* no-op */ }
 
   // Migration: ensure _system user exists and all entries are owned
   try {

@@ -1,0 +1,672 @@
+{
+  "schemaVersion": "feynman.researchRun.v1",
+  "runId": "paper_rank:agentic-knowledge-memory-systems-semantic:b73f4f458a38f8f6",
+  "workflow": "paper_rank",
+  "slug": "agentic-knowledge-memory-systems-semantic",
+  "topic": "agentic knowledge memory systems with semantic search knowledge graphs and contradiction detection",
+  "generatedAt": "2026-07-13T18:31:22.485Z",
+  "status": "completed",
+  "researchJobs": [
+    "discovering_prior_art",
+    "reading_paper_content",
+    "ranking_evidence",
+    "verifying_claims",
+    "planning_reproduction",
+    "synthesizing_artifacts",
+    "visualizing_research_structure",
+    "improving_research_loop"
+  ],
+  "sources": [
+    {
+      "id": "openalex",
+      "kind": "paper_index",
+      "url": "https://api.openalex.org/works?search=agentic+knowledge+memory+systems+with+semantic+search+knowledge+graphs+and+contradiction+detection&per-page=25&select=id%2Cdoi%2Ctitle%2Cdisplay_name%2Cpublication_year%2Cpublication_date%2Ctype%2Ccited_by_count%2Ccitation_normalized_percentile%2Creferenced_works%2Crelated_works%2Cauthorships%2Cprimary_location%2Clocations%2Cbest_oa_location%2Copen_access%2Cconcepts%2Ctopics%2Cabstract_inverted_index%2Cids%2Cis_retracted",
+      "fields": [
+        "works",
+        "metadata",
+        "citations",
+        "open_access",
+        "abstracts"
+      ]
+    }
+  ],
+  "papers": [
+    {
+      "id": "W2300469216",
+      "title": "Knowledge graph refinement: A survey of approaches and evaluation methods",
+      "rank": 1,
+      "score": 67.44,
+      "year": 2016,
+      "doi": "https://doi.org/10.3233/sw-160218",
+      "openAlexId": "https://openalex.org/W2300469216",
+      "url": "https://doi.org/10.3233/sw-160218",
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "verification": {
+        "state": "not_checked",
+        "summary": "No completed reproduction note supplied for this run."
+      }
+    },
+    {
+      "id": "W2610676001",
+      "title": "Detection and Resolution of Rumours in Social Media",
+      "rank": 2,
+      "score": 52.2,
+      "year": 2018,
+      "doi": "https://doi.org/10.1145/3161603",
+      "arxivId": "1704.00656",
+      "openAlexId": "https://openalex.org/W2610676001",
+      "url": "https://doi.org/10.1145/3161603",
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "verification": {
+        "state": "not_checked",
+        "summary": "No completed reproduction note supplied for this run."
+      }
+    },
+    {
+      "id": "W4401807469",
+      "title": "Construction of Knowledge Graphs: Current State and Challenges",
+      "rank": 3,
+      "score": 52.1,
+      "year": 2024,
+      "doi": "https://doi.org/10.3390/info15080509",
+      "openAlexId": "https://openalex.org/W4401807469",
+      "url": "https://doi.org/10.3390/info15080509",
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "verification": {
+        "state": "not_checked",
+        "summary": "No completed reproduction note supplied for this run."
+      }
+    },
+    {
+      "id": "W3125491592",
+      "title": "Detection and Resolution of Rumours in Social Media: A Survey",
+      "rank": 4,
+      "score": 50.32,
+      "year": 2017,
+      "doi": "https://doi.org/10.48550/arxiv.1704.00656",
+      "openAlexId": "https://openalex.org/W3125491592",
+      "url": "http://wrap.warwick.ac.uk/96775/13/WRAP-detection-resolution-rumours-social-media-Zubiaga-2018.pdf",
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "verification": {
+        "state": "not_checked",
+        "summary": "No completed reproduction note supplied for this run."
+      }
+    },
+    {
+      "id": "W4206484811",
+      "title": "A Metaverse: Taxonomy, Components, Applications, and Open Challenges",
+      "rank": 5,
+      "score": 48.64,
+      "year": 2022,
+      "doi": "https://doi.org/10.1109/access.2021.3140175",
+      "openAlexId": "https://openalex.org/W4206484811",
+      "url": "https://doi.org/10.1109/access.2021.3140175",
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "verification": {
+        "state": "not_checked",
+        "summary": "No completed reproduction note supplied for this run."
+      }
+    },
+    {
+      "id": "W3113149630",
+      "title": "Neurosymbolic AI: the 3rd wave",
+      "rank": 6,
+      "score": 48.27,
+      "year": 2023,
+      "doi": "https://doi.org/10.1007/s10462-023-10448-w",
+      "openAlexId": "https://openalex.org/W3113149630",
+      "url": "https://doi.org/10.1007/s10462-023-10448-w",
+      "roles": [
+        "foundation",
+        "frontier",
+        "bridge"
+      ],
+      "verification": {
+        "state": "not_checked",
+        "summary": "No completed reproduction note supplied for this run."
+      }
+    },
+    {
+      "id": "W2051547811",
+      "title": "Extracting semantically enriched events from biomedical literature",
+      "rank": 7,
+      "score": 47.89,
+      "year": 2012,
+      "doi": "https://doi.org/10.1186/1471-2105-13-108",
+      "pmid": "22621266",
+      "openAlexId": "https://openalex.org/W2051547811",
+      "url": "https://doi.org/10.1186/1471-2105-13-108",
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "verification": {
+        "state": "not_checked",
+        "summary": "No completed reproduction note supplied for this run."
+      }
+    },
+    {
+      "id": "W3123733941",
+      "title": "Semantic Systems. In the Era of Knowledge Graphs",
+      "rank": 8,
+      "score": 47.23,
+      "year": 2020,
+      "doi": "https://doi.org/10.1007/978-3-030-59833-4",
+      "openAlexId": "https://openalex.org/W3123733941",
+      "url": "https://doi.org/10.1007/978-3-030-59833-4",
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "verification": {
+        "state": "not_checked",
+        "summary": "No completed reproduction note supplied for this run."
+      }
+    },
+    {
+      "id": "W3142044733",
+      "title": "A Review of Rule Learning-Based Intrusion Detection Systems and Their Prospects in Smart Grids",
+      "rank": 9,
+      "score": 46.68,
+      "year": 2021,
+      "doi": "https://doi.org/10.1109/access.2021.3071263",
+      "openAlexId": "https://openalex.org/W3142044733",
+      "url": "https://doi.org/10.1109/access.2021.3071263",
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "verification": {
+        "state": "not_checked",
+        "summary": "No completed reproduction note supplied for this run."
+      }
+    },
+    {
+      "id": "W4312257891",
+      "title": "Neural Architecture Search for Transformers: A Survey",
+      "rank": 10,
+      "score": 46.24,
+      "year": 2022,
+      "doi": "https://doi.org/10.1109/access.2022.3212767",
+      "openAlexId": "https://openalex.org/W4312257891",
+      "url": "https://doi.org/10.1109/access.2022.3212767",
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "verification": {
+        "state": "not_checked",
+        "summary": "No completed reproduction note supplied for this run."
+      }
+    },
+    {
+      "id": "W2009434747",
+      "title": "AutoTutor and Family: A Review of 17 Years of Natural Language Tutoring",
+      "rank": 11,
+      "score": 45.94,
+      "year": 2014,
+      "doi": "https://doi.org/10.1007/s40593-014-0029-5",
+      "openAlexId": "https://openalex.org/W2009434747",
+      "url": "https://doi.org/10.1007/s40593-014-0029-5",
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "verification": {
+        "state": "not_checked",
+        "summary": "No completed reproduction note supplied for this run."
+      }
+    },
+    {
+      "id": "W3188576818",
+      "title": "A Review of Intrusion Detection Systems in RPL Routing Protocol Based on Machine Learning for Internet of Things Applications",
+      "rank": 12,
+      "score": 45.41,
+      "year": 2021,
+      "doi": "https://doi.org/10.1155/2021/8414503",
+      "openAlexId": "https://openalex.org/W3188576818",
+      "url": "https://doi.org/10.1155/2021/8414503",
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "verification": {
+        "state": "not_checked",
+        "summary": "No completed reproduction note supplied for this run."
+      }
+    },
+    {
+      "id": "W3085880068",
+      "title": "“Stopping for knowledge”: The sense of beauty in the perception-action cycle",
+      "rank": 13,
+      "score": 45.04,
+      "year": 2020,
+      "doi": "https://doi.org/10.1016/j.neubiorev.2020.09.004",
+      "pmid": "32926914",
+      "openAlexId": "https://openalex.org/W3085880068",
+      "url": "https://doi.org/10.1016/j.neubiorev.2020.09.004",
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "verification": {
+        "state": "not_checked",
+        "summary": "No completed reproduction note supplied for this run."
+      }
+    },
+    {
+      "id": "W3174385379",
+      "title": "Computer Vision, IoT and Data Fusion for Crop Disease Detection Using Machine Learning: A Survey and Ongoing Research",
+      "rank": 14,
+      "score": 44.82,
+      "year": 2021,
+      "doi": "https://doi.org/10.3390/rs13132486",
+      "openAlexId": "https://openalex.org/W3174385379",
+      "url": "https://doi.org/10.3390/rs13132486",
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "verification": {
+        "state": "not_checked",
+        "summary": "No completed reproduction note supplied for this run."
+      }
+    },
+    {
+      "id": "W4206928079",
+      "title": "Unsupervised Anomaly Detection in Knowledge Graphs",
+      "rank": 15,
+      "score": 44.38,
+      "year": 2021,
+      "doi": "https://doi.org/10.1145/3502223.3502246",
+      "openAlexId": "https://openalex.org/W4206928079",
+      "url": "https://doi.org/10.1145/3502223.3502246",
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "verification": {
+        "state": "not_checked",
+        "summary": "No completed reproduction note supplied for this run."
+      }
+    },
+    {
+      "id": "W2906927267",
+      "title": "Neural Networks in Big Data and Web Search",
+      "rank": 16,
+      "score": 43.38,
+      "year": 2018,
+      "doi": "https://doi.org/10.3390/data4010007",
+      "openAlexId": "https://openalex.org/W2906927267",
+      "url": "https://doi.org/10.3390/data4010007",
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "verification": {
+        "state": "not_checked",
+        "summary": "No completed reproduction note supplied for this run."
+      }
+    },
+    {
+      "id": "W3207701354",
+      "title": "A Human-Centered Systematic Literature Review of the Computational Approaches for Online Sexual Risk Detection",
+      "rank": 17,
+      "score": 42.5,
+      "year": 2021,
+      "doi": "https://doi.org/10.1145/3479609",
+      "openAlexId": "https://openalex.org/W3207701354",
+      "url": "https://doi.org/10.1145/3479609",
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "verification": {
+        "state": "not_checked",
+        "summary": "No completed reproduction note supplied for this run."
+      }
+    },
+    {
+      "id": "W4390880258",
+      "title": "Machine Learning for Refining Knowledge Graphs: A Survey",
+      "rank": 18,
+      "score": 42.36,
+      "year": 2024,
+      "doi": "https://doi.org/10.1145/3640313",
+      "openAlexId": "https://openalex.org/W4390880258",
+      "url": "https://doi.org/10.1145/3640313",
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "verification": {
+        "state": "not_checked",
+        "summary": "No completed reproduction note supplied for this run."
+      }
+    },
+    {
+      "id": "W4388524030",
+      "title": "A comprehensive survey on machine learning approaches for fake news detection",
+      "rank": 19,
+      "score": 42.31,
+      "year": 2023,
+      "doi": "https://doi.org/10.1007/s11042-023-17470-8",
+      "openAlexId": "https://openalex.org/W4388524030",
+      "url": "https://doi.org/10.1007/s11042-023-17470-8",
+      "roles": [
+        "foundation",
+        "frontier",
+        "bridge"
+      ],
+      "verification": {
+        "state": "not_checked",
+        "summary": "No completed reproduction note supplied for this run."
+      }
+    },
+    {
+      "id": "W4412465717",
+      "title": "Practices, opportunities and challenges in the fusion of knowledge graphs and large language models",
+      "rank": 20,
+      "score": 41.2,
+      "year": 2025,
+      "doi": "https://doi.org/10.3389/fcomp.2025.1590632",
+      "openAlexId": "https://openalex.org/W4412465717",
+      "url": "https://doi.org/10.3389/fcomp.2025.1590632",
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "verification": {
+        "state": "not_checked",
+        "summary": "No completed reproduction note supplied for this run."
+      }
+    },
+    {
+      "id": "W4311405210",
+      "title": "EMVLight: A multi-agent reinforcement learning framework for an emergency vehicle decentralized routing and traffic signal control system",
+      "rank": 21,
+      "score": 39.45,
+      "year": 2022,
+      "doi": "https://doi.org/10.1016/j.trc.2022.103955",
+      "arxivId": "2206.13441",
+      "openAlexId": "https://openalex.org/W4311405210",
+      "url": "https://doi.org/10.1016/j.trc.2022.103955",
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "verification": {
+        "state": "not_checked",
+        "summary": "No completed reproduction note supplied for this run."
+      }
+    },
+    {
+      "id": "W4386501849",
+      "title": "Siren's Song in the AI Ocean: A Survey on Hallucination in Large Language Models",
+      "rank": 22,
+      "score": 38.86,
+      "year": 2023,
+      "doi": "https://doi.org/10.48550/arxiv.2309.01219",
+      "arxivId": "2309.01219",
+      "openAlexId": "https://openalex.org/W4386501849",
+      "url": "http://arxiv.org/abs/2309.01219",
+      "roles": [
+        "frontier",
+        "bridge"
+      ],
+      "verification": {
+        "state": "not_checked",
+        "summary": "No completed reproduction note supplied for this run."
+      }
+    },
+    {
+      "id": "W2739419429",
+      "title": "Argumentation mining: How can a machine acquire common sense and world knowledge?",
+      "rank": 23,
+      "score": 37.94,
+      "year": 2017,
+      "doi": "https://doi.org/10.3233/aac-170025",
+      "openAlexId": "https://openalex.org/W2739419429",
+      "url": "https://doi.org/10.3233/aac-170025",
+      "roles": [
+        "foundation",
+        "bridge"
+      ],
+      "verification": {
+        "state": "not_checked",
+        "summary": "No completed reproduction note supplied for this run."
+      }
+    },
+    {
+      "id": "W4387596421",
+      "title": "Survey on Factuality in Large Language Models: Knowledge, Retrieval and Domain-Specificity",
+      "rank": 24,
+      "score": 32.86,
+      "year": 2023,
+      "doi": "https://doi.org/10.48550/arxiv.2310.07521",
+      "arxivId": "2310.07521",
+      "openAlexId": "https://openalex.org/W4387596421",
+      "url": "http://arxiv.org/abs/2310.07521",
+      "roles": [
+        "bridge"
+      ],
+      "verification": {
+        "state": "not_checked",
+        "summary": "No completed reproduction note supplied for this run."
+      }
+    },
+    {
+      "id": "W4406840428",
+      "title": "Zep: A Temporal Knowledge Graph Architecture for Agent Memory",
+      "rank": 25,
+      "score": 31.73,
+      "year": 2025,
+      "doi": "https://doi.org/10.48550/arxiv.2501.13956",
+      "arxivId": "2501.13956",
+      "openAlexId": "https://openalex.org/W4406840428",
+      "url": "http://arxiv.org/abs/2501.13956",
+      "roles": [
+        "bridge"
+      ],
+      "verification": {
+        "state": "not_checked",
+        "summary": "No completed reproduction note supplied for this run."
+      }
+    }
+  ],
+  "entities": [],
+  "tools": [
+    {
+      "id": "openalex.works",
+      "kind": "source_adapter",
+      "label": "OpenAlex works search",
+      "status": "completed",
+      "outputArtifacts": [
+        "/Users/nikolaytrakiyski/Desktop/clients/second-brain/second-brain/outputs/agentic-knowledge-memory-systems-semantic-papers.jsonl"
+      ],
+      "caveats": []
+    },
+    {
+      "id": "feynman.paper_rank.scoring",
+      "kind": "rank_scorer",
+      "label": "PaperRank deterministic scoring",
+      "status": "completed",
+      "outputArtifacts": [
+        "/Users/nikolaytrakiyski/Desktop/clients/second-brain/second-brain/outputs/agentic-knowledge-memory-systems-semantic-scores.jsonl",
+        "/Users/nikolaytrakiyski/Desktop/clients/second-brain/second-brain/outputs/agentic-knowledge-memory-systems-semantic-score-audit.md"
+      ],
+      "caveats": [
+        "Methodology and reproducibility are screening signals; they are not completed claim validation."
+      ]
+    },
+    {
+      "id": "feynman.paper_rank.field_map",
+      "kind": "artifact_exporter",
+      "label": "Field map and citation graph artifacts",
+      "status": "completed",
+      "outputArtifacts": [
+        "/Users/nikolaytrakiyski/Desktop/clients/second-brain/second-brain/outputs/agentic-knowledge-memory-systems-semantic-field-map.json",
+        "/Users/nikolaytrakiyski/Desktop/clients/second-brain/second-brain/outputs/agentic-knowledge-memory-systems-semantic-citation-graph.json",
+        "/Users/nikolaytrakiyski/Desktop/clients/second-brain/second-brain/outputs/agentic-knowledge-memory-systems-semantic-graph-explorer.html"
+      ]
+    },
+    {
+      "id": "feynman.paper_rank.full_text",
+      "kind": "access_resolver",
+      "label": "source-specific full-text enrichment",
+      "status": "not_run",
+      "outputArtifacts": [
+        "/Users/nikolaytrakiyski/Desktop/clients/second-brain/second-brain/outputs/agentic-knowledge-memory-systems-semantic-papers.jsonl",
+        "/Users/nikolaytrakiyski/Desktop/clients/second-brain/second-brain/outputs/agentic-knowledge-memory-systems-semantic-scores.jsonl"
+      ],
+      "caveats": [
+        "Raw full-text bodies are not written to PaperRank artifacts."
+      ]
+    }
+  ],
+  "artifacts": [
+    {
+      "kind": "manifest",
+      "path": "/Users/nikolaytrakiyski/Desktop/clients/second-brain/second-brain/outputs/agentic-knowledge-memory-systems-semantic-research-run.json",
+      "label": "ResearchRun manifest",
+      "role": "research_run_manifest",
+      "format": "application/json"
+    },
+    {
+      "kind": "report",
+      "path": "/Users/nikolaytrakiyski/Desktop/clients/second-brain/second-brain/outputs/agentic-knowledge-memory-systems-semantic-paper-rank.md",
+      "label": "PaperRank ranked brief",
+      "role": "primary_ranked_brief",
+      "primary": true,
+      "format": "text/markdown"
+    },
+    {
+      "kind": "jsonl",
+      "path": "/Users/nikolaytrakiyski/Desktop/clients/second-brain/second-brain/outputs/agentic-knowledge-memory-systems-semantic-papers.jsonl",
+      "label": "normalized papers",
+      "role": "paper_records",
+      "format": "application/jsonl"
+    },
+    {
+      "kind": "jsonl",
+      "path": "/Users/nikolaytrakiyski/Desktop/clients/second-brain/second-brain/outputs/agentic-knowledge-memory-systems-semantic-scores.jsonl",
+      "label": "component scores",
+      "role": "score_records",
+      "format": "application/jsonl"
+    },
+    {
+      "kind": "audit",
+      "path": "/Users/nikolaytrakiyski/Desktop/clients/second-brain/second-brain/outputs/agentic-knowledge-memory-systems-semantic-score-audit.md",
+      "label": "score audit",
+      "role": "score_explanation",
+      "format": "text/markdown"
+    },
+    {
+      "kind": "json",
+      "path": "/Users/nikolaytrakiyski/Desktop/clients/second-brain/second-brain/outputs/agentic-knowledge-memory-systems-semantic-rank-sensitivity.json",
+      "label": "rank sensitivity",
+      "role": "weight_sensitivity",
+      "format": "application/json"
+    },
+    {
+      "kind": "graph",
+      "path": "/Users/nikolaytrakiyski/Desktop/clients/second-brain/second-brain/outputs/agentic-knowledge-memory-systems-semantic-citation-graph.json",
+      "label": "citation graph",
+      "role": "citation_graph",
+      "format": "application/json"
+    },
+    {
+      "kind": "html",
+      "path": "/Users/nikolaytrakiyski/Desktop/clients/second-brain/second-brain/outputs/agentic-knowledge-memory-systems-semantic-graph-explorer.html",
+      "label": "graph explorer",
+      "role": "graph_visualizer",
+      "format": "text/html"
+    },
+    {
+      "kind": "json",
+      "path": "/Users/nikolaytrakiyski/Desktop/clients/second-brain/second-brain/outputs/agentic-knowledge-memory-systems-semantic-field-map.json",
+      "label": "field map",
+      "role": "field_structure",
+      "format": "application/json"
+    },
+    {
+      "kind": "provenance",
+      "path": "/Users/nikolaytrakiyski/Desktop/clients/second-brain/second-brain/outputs/agentic-knowledge-memory-systems-semantic-rank.provenance.md",
+      "label": "rank provenance",
+      "role": "source_accounting",
+      "format": "text/markdown"
+    }
+  ],
+  "nextActions": [
+    {
+      "id": "action-1",
+      "title": "Read #1: Knowledge graph refinement: A survey of approaches and evaluation methods",
+      "priority": "high",
+      "artifactPointers": [
+        "agentic-knowledge-memory-systems-semantic-paper-rank.md",
+        "agentic-knowledge-memory-systems-semantic-score-audit.md",
+        "agentic-knowledge-memory-systems-semantic-graph-explorer.html"
+      ]
+    },
+    {
+      "id": "action-2",
+      "title": "Start completed reproduction notes for the top ranked papers",
+      "priority": "high",
+      "artifactPointers": [
+        "agentic-knowledge-memory-systems-semantic-paper-rank.md",
+        "agentic-knowledge-memory-systems-semantic-score-audit.md",
+        "agentic-knowledge-memory-systems-semantic-scores.jsonl",
+        "agentic-knowledge-memory-systems-semantic-graph-explorer.html"
+      ]
+    },
+    {
+      "id": "action-3",
+      "title": "Collect independent read-order preferences",
+      "priority": "high",
+      "artifactPointers": [
+        "agentic-knowledge-memory-systems-semantic-paper-rank.md",
+        "agentic-knowledge-memory-systems-semantic-score-audit.md",
+        "agentic-knowledge-memory-systems-semantic-graph-explorer.html",
+        "agentic-knowledge-memory-systems-semantic-rank-sensitivity.json"
+      ]
+    },
+    {
+      "id": "action-4",
+      "title": "Stress-test rank movement for #2: Detection and Resolution of Rumours in Social Media",
+      "priority": "high",
+      "artifactPointers": [
+        "agentic-knowledge-memory-systems-semantic-rank-sensitivity.json",
+        "agentic-knowledge-memory-systems-semantic-score-audit.md"
+      ]
+    }
+  ],
+  "verification": {
+    "state": "partial",
+    "summary": "PaperRank ranked 25 seed papers, expanded 0 citation-neighborhood papers, fetched full text for 0/0 requested papers, and generated 4 next research actions.",
+    "caveats": [
+      "PaperRank is read-order triage, not a completed scientific validation.",
+      "Missing evidence means Feynman did not see it in fetched sources; it is not proof the paper lacks it.",
+      "Raw full-text bodies are not stored in the ResearchRun manifest."
+    ]
+  },
+  "constraints": {
+    "rawFullTextStored": false,
+    "promptsStored": false,
+    "modelOutputsStored": false
+  }
+}

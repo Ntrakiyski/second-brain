@@ -1,0 +1,2241 @@
+{
+  "topic": "agentic knowledge memory systems with semantic search knowledge graphs and contradiction detection",
+  "generatedAt": "2026-07-13T18:31:22.485Z",
+  "basis": [
+    "Each profile reruns the same component signals with a different weight vector and the same per-paper missing-component normalization.",
+    "Retracted-paper score caps are preserved across profiles.",
+    "Rank sensitivity is an audit signal: stable papers are robust to these weighting choices; volatile papers need closer inspection before treating the order as decisive.",
+    "Profiles are product-defined stress tests, not empirical proof that a field values those weights."
+  ],
+  "profiles": [
+    {
+      "id": "balanced",
+      "label": "Balanced PaperRank",
+      "description": "Default PaperRank weighting: topical relevance plus citation impact, graph prestige, velocity, methodology, and reproducibility.",
+      "weights": {
+        "topicalRelevance": 0.3,
+        "citationImpact": 0.2,
+        "graphPrestige": 0.2,
+        "citationVelocity": 0.1,
+        "methodologyQuality": 0.1,
+        "reproducibility": 0.1
+      }
+    },
+    {
+      "id": "influence_heavy",
+      "label": "Influence Heavy",
+      "description": "Stresses citation impact and local citation-network prestige.",
+      "weights": {
+        "topicalRelevance": 0.2,
+        "citationImpact": 0.3,
+        "graphPrestige": 0.3,
+        "citationVelocity": 0.1,
+        "methodologyQuality": 0.05,
+        "reproducibility": 0.05
+      }
+    },
+    {
+      "id": "method_repro_heavy",
+      "label": "Method + Reproducibility Heavy",
+      "description": "Stresses visible methodology and reproducibility evidence over popularity.",
+      "weights": {
+        "topicalRelevance": 0.2,
+        "citationImpact": 0.1,
+        "graphPrestige": 0.1,
+        "citationVelocity": 0.1,
+        "methodologyQuality": 0.25,
+        "reproducibility": 0.25
+      }
+    },
+    {
+      "id": "frontier_heavy",
+      "label": "Frontier Heavy",
+      "description": "Stresses recent citation velocity while keeping topic and quality checks active.",
+      "weights": {
+        "topicalRelevance": 0.25,
+        "citationImpact": 0.1,
+        "graphPrestige": 0.1,
+        "citationVelocity": 0.3,
+        "methodologyQuality": 0.15,
+        "reproducibility": 0.1
+      }
+    },
+    {
+      "id": "topic_heavy",
+      "label": "Topic Heavy",
+      "description": "Stresses query match when the user wants the most on-topic starting point.",
+      "weights": {
+        "topicalRelevance": 0.45,
+        "citationImpact": 0.15,
+        "graphPrestige": 0.1,
+        "citationVelocity": 0.1,
+        "methodologyQuality": 0.1,
+        "reproducibility": 0.1
+      }
+    }
+  ],
+  "papers": [
+    {
+      "paperId": "W2300469216",
+      "title": "Knowledge graph refinement: A survey of approaches and evaluation methods",
+      "baseRank": 1,
+      "baseScore": 67.44,
+      "rankRange": 0,
+      "scoreRange": 29.79,
+      "stability": "stable",
+      "profileRanks": [
+        {
+          "profileId": "balanced",
+          "label": "Balanced PaperRank",
+          "rank": 1,
+          "score": 67.44,
+          "appliedWeights": {
+            "topicalRelevance": 0.3,
+            "citationImpact": 0.2,
+            "graphPrestige": 0.2,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "influence_heavy",
+          "label": "Influence Heavy",
+          "rank": 1,
+          "score": 80.11,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.3,
+            "graphPrestige": 0.3,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.05,
+            "reproducibility": 0.05
+          }
+        },
+        {
+          "profileId": "method_repro_heavy",
+          "label": "Method + Reproducibility Heavy",
+          "rank": 1,
+          "score": 50.32,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.25,
+            "reproducibility": 0.25
+          }
+        },
+        {
+          "profileId": "frontier_heavy",
+          "label": "Frontier Heavy",
+          "rank": 1,
+          "score": 62.13,
+          "appliedWeights": {
+            "topicalRelevance": 0.25,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.3,
+            "methodologyQuality": 0.15,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "topic_heavy",
+          "label": "Topic Heavy",
+          "rank": 1,
+          "score": 59.61,
+          "appliedWeights": {
+            "topicalRelevance": 0.45,
+            "citationImpact": 0.15,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        }
+      ],
+      "drivers": [
+        "Rank is unchanged across all sensitivity profiles.",
+        "Best profile: Influence Heavy (#1, 80.1).",
+        "Weakest profile: Method + Reproducibility Heavy (#1, 50.3).",
+        "Strongest component signals: graph prestige 100.0/100; citation impact 100.0/100."
+      ]
+    },
+    {
+      "paperId": "W2610676001",
+      "title": "Detection and Resolution of Rumours in Social Media",
+      "baseRank": 2,
+      "baseScore": 52.2,
+      "rankRange": 4,
+      "scoreRange": 20.32,
+      "stability": "volatile",
+      "profileRanks": [
+        {
+          "profileId": "balanced",
+          "label": "Balanced PaperRank",
+          "rank": 2,
+          "score": 52.2,
+          "appliedWeights": {
+            "topicalRelevance": 0.3,
+            "citationImpact": 0.2,
+            "graphPrestige": 0.2,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "influence_heavy",
+          "label": "Influence Heavy",
+          "rank": 2,
+          "score": 60.71,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.3,
+            "graphPrestige": 0.3,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.05,
+            "reproducibility": 0.05
+          }
+        },
+        {
+          "profileId": "method_repro_heavy",
+          "label": "Method + Reproducibility Heavy",
+          "rank": 6,
+          "score": 40.39,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.25,
+            "reproducibility": 0.25
+          }
+        },
+        {
+          "profileId": "frontier_heavy",
+          "label": "Frontier Heavy",
+          "rank": 4,
+          "score": 50.69,
+          "appliedWeights": {
+            "topicalRelevance": 0.25,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.3,
+            "methodologyQuality": 0.15,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "topic_heavy",
+          "label": "Topic Heavy",
+          "rank": 4,
+          "score": 48.41,
+          "appliedWeights": {
+            "topicalRelevance": 0.45,
+            "citationImpact": 0.15,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        }
+      ],
+      "drivers": [
+        "Rank changes by 4 place(s) across the tested weighting profiles.",
+        "Best profile: Influence Heavy (#2, 60.7).",
+        "Weakest profile: Method + Reproducibility Heavy (#6, 40.4).",
+        "Strongest component signals: citation impact 100.0/100; citation velocity 71.4/100."
+      ]
+    },
+    {
+      "paperId": "W4401807469",
+      "title": "Construction of Knowledge Graphs: Current State and Challenges",
+      "baseRank": 3,
+      "baseScore": 52.1,
+      "rankRange": 5,
+      "scoreRange": 17.56,
+      "stability": "volatile",
+      "profileRanks": [
+        {
+          "profileId": "balanced",
+          "label": "Balanced PaperRank",
+          "rank": 3,
+          "score": 52.1,
+          "appliedWeights": {
+            "topicalRelevance": 0.3,
+            "citationImpact": 0.2,
+            "graphPrestige": 0.2,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "influence_heavy",
+          "label": "Influence Heavy",
+          "rank": 3,
+          "score": 57.78,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.3,
+            "graphPrestige": 0.3,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.05,
+            "reproducibility": 0.05
+          }
+        },
+        {
+          "profileId": "method_repro_heavy",
+          "label": "Method + Reproducibility Heavy",
+          "rank": 7,
+          "score": 40.22,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.25,
+            "reproducibility": 0.25
+          }
+        },
+        {
+          "profileId": "frontier_heavy",
+          "label": "Frontier Heavy",
+          "rank": 6,
+          "score": 47.84,
+          "appliedWeights": {
+            "topicalRelevance": 0.25,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.3,
+            "methodologyQuality": 0.15,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "topic_heavy",
+          "label": "Topic Heavy",
+          "rank": 2,
+          "score": 51.85,
+          "appliedWeights": {
+            "topicalRelevance": 0.45,
+            "citationImpact": 0.15,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        }
+      ],
+      "drivers": [
+        "Rank changes by 5 place(s) across the tested weighting profiles.",
+        "Best profile: Topic Heavy (#2, 51.9).",
+        "Weakest profile: Method + Reproducibility Heavy (#7, 40.2).",
+        "Strongest component signals: citation impact 99.8/100; citation velocity 54.4/100."
+      ]
+    },
+    {
+      "paperId": "W3125491592",
+      "title": "Detection and Resolution of Rumours in Social Media: A Survey",
+      "baseRank": 4,
+      "baseScore": 50.32,
+      "rankRange": 5,
+      "scoreRange": 17.94,
+      "stability": "volatile",
+      "profileRanks": [
+        {
+          "profileId": "balanced",
+          "label": "Balanced PaperRank",
+          "rank": 4,
+          "score": 50.32,
+          "appliedWeights": {
+            "topicalRelevance": 0.3,
+            "citationImpact": 0.2,
+            "graphPrestige": 0.2,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "influence_heavy",
+          "label": "Influence Heavy",
+          "rank": 4,
+          "score": 57.54,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.3,
+            "graphPrestige": 0.3,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.05,
+            "reproducibility": 0.05
+          }
+        },
+        {
+          "profileId": "method_repro_heavy",
+          "label": "Method + Reproducibility Heavy",
+          "rank": 9,
+          "score": 39.6,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.25,
+            "reproducibility": 0.25
+          }
+        },
+        {
+          "profileId": "frontier_heavy",
+          "label": "Frontier Heavy",
+          "rank": 5,
+          "score": 50.32,
+          "appliedWeights": {
+            "topicalRelevance": 0.25,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.3,
+            "methodologyQuality": 0.15,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "topic_heavy",
+          "label": "Topic Heavy",
+          "rank": 5,
+          "score": 47.28,
+          "appliedWeights": {
+            "topicalRelevance": 0.45,
+            "citationImpact": 0.15,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        }
+      ],
+      "drivers": [
+        "Rank changes by 5 place(s) across the tested weighting profiles.",
+        "Best profile: Influence Heavy (#4, 57.5).",
+        "Weakest profile: Method + Reproducibility Heavy (#9, 39.6).",
+        "Strongest component signals: citation impact 88.1/100; citation velocity 73.2/100."
+      ]
+    },
+    {
+      "paperId": "W4206484811",
+      "title": "A Metaverse: Taxonomy, Components, Applications, and Open Challenges",
+      "baseRank": 5,
+      "baseScore": 48.64,
+      "rankRange": 6,
+      "scoreRange": 13.8,
+      "stability": "volatile",
+      "profileRanks": [
+        {
+          "profileId": "balanced",
+          "label": "Balanced PaperRank",
+          "rank": 5,
+          "score": 48.64,
+          "appliedWeights": {
+            "topicalRelevance": 0.3,
+            "citationImpact": 0.2,
+            "graphPrestige": 0.2,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "influence_heavy",
+          "label": "Influence Heavy",
+          "rank": 5,
+          "score": 56.71,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.3,
+            "graphPrestige": 0.3,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.05,
+            "reproducibility": 0.05
+          }
+        },
+        {
+          "profileId": "method_repro_heavy",
+          "label": "Method + Reproducibility Heavy",
+          "rank": 3,
+          "score": 42.91,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.25,
+            "reproducibility": 0.25
+          }
+        },
+        {
+          "profileId": "frontier_heavy",
+          "label": "Frontier Heavy",
+          "rank": 2,
+          "score": 56.1,
+          "appliedWeights": {
+            "topicalRelevance": 0.25,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.3,
+            "methodologyQuality": 0.15,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "topic_heavy",
+          "label": "Topic Heavy",
+          "rank": 8,
+          "score": 43.4,
+          "appliedWeights": {
+            "topicalRelevance": 0.45,
+            "citationImpact": 0.15,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        }
+      ],
+      "drivers": [
+        "Rank changes by 6 place(s) across the tested weighting profiles.",
+        "Best profile: Frontier Heavy (#2, 56.1).",
+        "Weakest profile: Topic Heavy (#8, 43.4).",
+        "Strongest component signals: citation velocity 100.0/100; citation impact 100.0/100."
+      ]
+    },
+    {
+      "paperId": "W3113149630",
+      "title": "Neurosymbolic AI: the 3rd wave",
+      "baseRank": 6,
+      "baseScore": 48.27,
+      "rankRange": 7,
+      "scoreRange": 12.95,
+      "stability": "volatile",
+      "profileRanks": [
+        {
+          "profileId": "balanced",
+          "label": "Balanced PaperRank",
+          "rank": 6,
+          "score": 48.27,
+          "appliedWeights": {
+            "topicalRelevance": 0.33,
+            "citationImpact": 0.22,
+            "graphPrestige": 0.22,
+            "citationVelocity": 0.11,
+            "reproducibility": 0.11
+          }
+        },
+        {
+          "profileId": "influence_heavy",
+          "label": "Influence Heavy",
+          "rank": 6,
+          "score": 55.74,
+          "appliedWeights": {
+            "topicalRelevance": 0.21,
+            "citationImpact": 0.32,
+            "graphPrestige": 0.32,
+            "citationVelocity": 0.11,
+            "reproducibility": 0.05
+          }
+        },
+        {
+          "profileId": "method_repro_heavy",
+          "label": "Method + Reproducibility Heavy",
+          "rank": 2,
+          "score": 43.44,
+          "appliedWeights": {
+            "topicalRelevance": 0.27,
+            "citationImpact": 0.13,
+            "graphPrestige": 0.13,
+            "citationVelocity": 0.13,
+            "reproducibility": 0.33
+          }
+        },
+        {
+          "profileId": "frontier_heavy",
+          "label": "Frontier Heavy",
+          "rank": 3,
+          "score": 52.05,
+          "appliedWeights": {
+            "topicalRelevance": 0.29,
+            "citationImpact": 0.12,
+            "graphPrestige": 0.12,
+            "citationVelocity": 0.35,
+            "reproducibility": 0.12
+          }
+        },
+        {
+          "profileId": "topic_heavy",
+          "label": "Topic Heavy",
+          "rank": 9,
+          "score": 42.79,
+          "appliedWeights": {
+            "topicalRelevance": 0.5,
+            "citationImpact": 0.17,
+            "graphPrestige": 0.11,
+            "citationVelocity": 0.11,
+            "reproducibility": 0.11
+          }
+        }
+      ],
+      "drivers": [
+        "Rank changes by 7 place(s) across the tested weighting profiles.",
+        "Best profile: Method + Reproducibility Heavy (#2, 43.4).",
+        "Weakest profile: Topic Heavy (#9, 42.8).",
+        "Strongest component signals: citation impact 99.9/100; citation velocity 75.4/100."
+      ]
+    },
+    {
+      "paperId": "W2051547811",
+      "title": "Extracting semantically enriched events from biomedical literature",
+      "baseRank": 7,
+      "baseScore": 47.89,
+      "rankRange": 10,
+      "scoreRange": 12.38,
+      "stability": "volatile",
+      "profileRanks": [
+        {
+          "profileId": "balanced",
+          "label": "Balanced PaperRank",
+          "rank": 7,
+          "score": 47.89,
+          "appliedWeights": {
+            "topicalRelevance": 0.3,
+            "citationImpact": 0.2,
+            "graphPrestige": 0.2,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "influence_heavy",
+          "label": "Influence Heavy",
+          "rank": 11,
+          "score": 52.97,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.3,
+            "graphPrestige": 0.3,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.05,
+            "reproducibility": 0.05
+          }
+        },
+        {
+          "profileId": "method_repro_heavy",
+          "label": "Method + Reproducibility Heavy",
+          "rank": 4,
+          "score": 40.59,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.25,
+            "reproducibility": 0.25
+          }
+        },
+        {
+          "profileId": "frontier_heavy",
+          "label": "Frontier Heavy",
+          "rank": 14,
+          "score": 40.64,
+          "appliedWeights": {
+            "topicalRelevance": 0.25,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.3,
+            "methodologyQuality": 0.15,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "topic_heavy",
+          "label": "Topic Heavy",
+          "rank": 6,
+          "score": 46.49,
+          "appliedWeights": {
+            "topicalRelevance": 0.45,
+            "citationImpact": 0.15,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        }
+      ],
+      "drivers": [
+        "Rank changes by 10 place(s) across the tested weighting profiles.",
+        "Best profile: Method + Reproducibility Heavy (#4, 40.6).",
+        "Weakest profile: Frontier Heavy (#14, 40.6).",
+        "Strongest component signals: citation impact 94.9/100; topical relevance 43.6/100."
+      ]
+    },
+    {
+      "paperId": "W3123733941",
+      "title": "Semantic Systems. In the Era of Knowledge Graphs",
+      "baseRank": 8,
+      "baseScore": 47.23,
+      "rankRange": 15,
+      "scoreRange": 14.23,
+      "stability": "volatile",
+      "profileRanks": [
+        {
+          "profileId": "balanced",
+          "label": "Balanced PaperRank",
+          "rank": 8,
+          "score": 47.23,
+          "appliedWeights": {
+            "topicalRelevance": 0.3,
+            "citationImpact": 0.2,
+            "graphPrestige": 0.2,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "influence_heavy",
+          "label": "Influence Heavy",
+          "rank": 18,
+          "score": 50.32,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.3,
+            "graphPrestige": 0.3,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.05,
+            "reproducibility": 0.05
+          }
+        },
+        {
+          "profileId": "method_repro_heavy",
+          "label": "Method + Reproducibility Heavy",
+          "rank": 14,
+          "score": 37.37,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.25,
+            "reproducibility": 0.25
+          }
+        },
+        {
+          "profileId": "frontier_heavy",
+          "label": "Frontier Heavy",
+          "rank": 18,
+          "score": 36.09,
+          "appliedWeights": {
+            "topicalRelevance": 0.25,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.3,
+            "methodologyQuality": 0.15,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "topic_heavy",
+          "label": "Topic Heavy",
+          "rank": 3,
+          "score": 48.74,
+          "appliedWeights": {
+            "topicalRelevance": 0.45,
+            "citationImpact": 0.15,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        }
+      ],
+      "drivers": [
+        "Rank changes by 15 place(s) across the tested weighting profiles.",
+        "Best profile: Topic Heavy (#3, 48.7).",
+        "Weakest profile: Frontier Heavy (#18, 36.1).",
+        "Strongest component signals: citation impact 83.8/100; topical relevance 59.3/100."
+      ]
+    },
+    {
+      "paperId": "W3142044733",
+      "title": "A Review of Rule Learning-Based Intrusion Detection Systems and Their Prospects in Smart Grids",
+      "baseRank": 9,
+      "baseScore": 46.68,
+      "rankRange": 5,
+      "scoreRange": 15.86,
+      "stability": "volatile",
+      "profileRanks": [
+        {
+          "profileId": "balanced",
+          "label": "Balanced PaperRank",
+          "rank": 9,
+          "score": 46.68,
+          "appliedWeights": {
+            "topicalRelevance": 0.3,
+            "citationImpact": 0.2,
+            "graphPrestige": 0.2,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "influence_heavy",
+          "label": "Influence Heavy",
+          "rank": 7,
+          "score": 53.72,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.3,
+            "graphPrestige": 0.3,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.05,
+            "reproducibility": 0.05
+          }
+        },
+        {
+          "profileId": "method_repro_heavy",
+          "label": "Method + Reproducibility Heavy",
+          "rank": 12,
+          "score": 37.86,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.25,
+            "reproducibility": 0.25
+          }
+        },
+        {
+          "profileId": "frontier_heavy",
+          "label": "Frontier Heavy",
+          "rank": 10,
+          "score": 43.41,
+          "appliedWeights": {
+            "topicalRelevance": 0.25,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.3,
+            "methodologyQuality": 0.15,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "topic_heavy",
+          "label": "Topic Heavy",
+          "rank": 7,
+          "score": 43.72,
+          "appliedWeights": {
+            "topicalRelevance": 0.45,
+            "citationImpact": 0.15,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        }
+      ],
+      "drivers": [
+        "Rank changes by 5 place(s) across the tested weighting profiles.",
+        "Best profile: Influence Heavy (#7, 53.7).",
+        "Weakest profile: Method + Reproducibility Heavy (#12, 37.9).",
+        "Strongest component signals: citation impact 98.3/100; citation velocity 52.1/100."
+      ]
+    },
+    {
+      "paperId": "W4312257891",
+      "title": "Neural Architecture Search for Transformers: A Survey",
+      "baseRank": 10,
+      "baseScore": 46.24,
+      "rankRange": 2,
+      "scoreRange": 13.14,
+      "stability": "sensitive",
+      "profileRanks": [
+        {
+          "profileId": "balanced",
+          "label": "Balanced PaperRank",
+          "rank": 10,
+          "score": 46.24,
+          "appliedWeights": {
+            "topicalRelevance": 0.3,
+            "citationImpact": 0.2,
+            "graphPrestige": 0.2,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "influence_heavy",
+          "label": "Influence Heavy",
+          "rank": 9,
+          "score": 53.25,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.3,
+            "graphPrestige": 0.3,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.05,
+            "reproducibility": 0.05
+          }
+        },
+        {
+          "profileId": "method_repro_heavy",
+          "label": "Method + Reproducibility Heavy",
+          "rank": 8,
+          "score": 40.11,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.25,
+            "reproducibility": 0.25
+          }
+        },
+        {
+          "profileId": "frontier_heavy",
+          "label": "Frontier Heavy",
+          "rank": 9,
+          "score": 43.54,
+          "appliedWeights": {
+            "topicalRelevance": 0.25,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.3,
+            "methodologyQuality": 0.15,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "topic_heavy",
+          "label": "Topic Heavy",
+          "rank": 10,
+          "score": 42.31,
+          "appliedWeights": {
+            "topicalRelevance": 0.45,
+            "citationImpact": 0.15,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        }
+      ],
+      "drivers": [
+        "Rank changes by 2 place(s) across the tested weighting profiles.",
+        "Best profile: Method + Reproducibility Heavy (#8, 40.1).",
+        "Weakest profile: Topic Heavy (#10, 42.3).",
+        "Strongest component signals: citation impact 98.7/100; citation velocity 51.9/100."
+      ]
+    },
+    {
+      "paperId": "W2009434747",
+      "title": "AutoTutor and Family: A Review of 17 Years of Natural Language Tutoring",
+      "baseRank": 11,
+      "baseScore": 45.94,
+      "rankRange": 8,
+      "scoreRange": 12.77,
+      "stability": "volatile",
+      "profileRanks": [
+        {
+          "profileId": "balanced",
+          "label": "Balanced PaperRank",
+          "rank": 11,
+          "score": 45.94,
+          "appliedWeights": {
+            "topicalRelevance": 0.33,
+            "citationImpact": 0.22,
+            "graphPrestige": 0.22,
+            "citationVelocity": 0.11,
+            "reproducibility": 0.11
+          }
+        },
+        {
+          "profileId": "influence_heavy",
+          "label": "Influence Heavy",
+          "rank": 8,
+          "score": 53.35,
+          "appliedWeights": {
+            "topicalRelevance": 0.21,
+            "citationImpact": 0.32,
+            "graphPrestige": 0.32,
+            "citationVelocity": 0.11,
+            "reproducibility": 0.05
+          }
+        },
+        {
+          "profileId": "method_repro_heavy",
+          "label": "Method + Reproducibility Heavy",
+          "rank": 5,
+          "score": 40.58,
+          "appliedWeights": {
+            "topicalRelevance": 0.27,
+            "citationImpact": 0.13,
+            "graphPrestige": 0.13,
+            "citationVelocity": 0.13,
+            "reproducibility": 0.33
+          }
+        },
+        {
+          "profileId": "frontier_heavy",
+          "label": "Frontier Heavy",
+          "rank": 8,
+          "score": 44.2,
+          "appliedWeights": {
+            "topicalRelevance": 0.29,
+            "citationImpact": 0.12,
+            "graphPrestige": 0.12,
+            "citationVelocity": 0.35,
+            "reproducibility": 0.12
+          }
+        },
+        {
+          "profileId": "topic_heavy",
+          "label": "Topic Heavy",
+          "rank": 13,
+          "score": 40.68,
+          "appliedWeights": {
+            "topicalRelevance": 0.5,
+            "citationImpact": 0.17,
+            "graphPrestige": 0.11,
+            "citationVelocity": 0.11,
+            "reproducibility": 0.11
+          }
+        }
+      ],
+      "drivers": [
+        "Rank changes by 8 place(s) across the tested weighting profiles.",
+        "Best profile: Method + Reproducibility Heavy (#5, 40.6).",
+        "Weakest profile: Topic Heavy (#13, 40.7).",
+        "Strongest component signals: citation impact 99.2/100; citation velocity 52.5/100."
+      ]
+    },
+    {
+      "paperId": "W3188576818",
+      "title": "A Review of Intrusion Detection Systems in RPL Routing Protocol Based on Machine Learning for Internet of Things Applications",
+      "baseRank": 12,
+      "baseScore": 45.41,
+      "rankRange": 4,
+      "scoreRange": 12.54,
+      "stability": "volatile",
+      "profileRanks": [
+        {
+          "profileId": "balanced",
+          "label": "Balanced PaperRank",
+          "rank": 12,
+          "score": 45.41,
+          "appliedWeights": {
+            "topicalRelevance": 0.3,
+            "citationImpact": 0.2,
+            "graphPrestige": 0.2,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "influence_heavy",
+          "label": "Influence Heavy",
+          "rank": 13,
+          "score": 51.71,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.3,
+            "graphPrestige": 0.3,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.05,
+            "reproducibility": 0.05
+          }
+        },
+        {
+          "profileId": "method_repro_heavy",
+          "label": "Method + Reproducibility Heavy",
+          "rank": 11,
+          "score": 39.17,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.25,
+            "reproducibility": 0.25
+          }
+        },
+        {
+          "profileId": "frontier_heavy",
+          "label": "Frontier Heavy",
+          "rank": 15,
+          "score": 40.2,
+          "appliedWeights": {
+            "topicalRelevance": 0.25,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.3,
+            "methodologyQuality": 0.15,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "topic_heavy",
+          "label": "Topic Heavy",
+          "rank": 11,
+          "score": 42.26,
+          "appliedWeights": {
+            "topicalRelevance": 0.45,
+            "citationImpact": 0.15,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        }
+      ],
+      "drivers": [
+        "Rank changes by 4 place(s) across the tested weighting profiles.",
+        "Best profile: Topic Heavy (#11, 42.3).",
+        "Weakest profile: Frontier Heavy (#15, 40.2).",
+        "Strongest component signals: citation impact 95.7/100; citation velocity 37.1/100."
+      ]
+    },
+    {
+      "paperId": "W3085880068",
+      "title": "“Stopping for knowledge”: The sense of beauty in the perception-action cycle",
+      "baseRank": 13,
+      "baseScore": 45.04,
+      "rankRange": 4,
+      "scoreRange": 12.41,
+      "stability": "volatile",
+      "profileRanks": [
+        {
+          "profileId": "balanced",
+          "label": "Balanced PaperRank",
+          "rank": 13,
+          "score": 45.04,
+          "appliedWeights": {
+            "topicalRelevance": 0.33,
+            "citationImpact": 0.22,
+            "graphPrestige": 0.22,
+            "citationVelocity": 0.11,
+            "reproducibility": 0.11
+          }
+        },
+        {
+          "profileId": "influence_heavy",
+          "label": "Influence Heavy",
+          "rank": 12,
+          "score": 51.98,
+          "appliedWeights": {
+            "topicalRelevance": 0.21,
+            "citationImpact": 0.32,
+            "graphPrestige": 0.32,
+            "citationVelocity": 0.11,
+            "reproducibility": 0.05
+          }
+        },
+        {
+          "profileId": "method_repro_heavy",
+          "label": "Method + Reproducibility Heavy",
+          "rank": 10,
+          "score": 39.57,
+          "appliedWeights": {
+            "topicalRelevance": 0.27,
+            "citationImpact": 0.13,
+            "graphPrestige": 0.13,
+            "citationVelocity": 0.13,
+            "reproducibility": 0.33
+          }
+        },
+        {
+          "profileId": "frontier_heavy",
+          "label": "Frontier Heavy",
+          "rank": 12,
+          "score": 41.28,
+          "appliedWeights": {
+            "topicalRelevance": 0.29,
+            "citationImpact": 0.12,
+            "graphPrestige": 0.12,
+            "citationVelocity": 0.35,
+            "reproducibility": 0.12
+          }
+        },
+        {
+          "profileId": "topic_heavy",
+          "label": "Topic Heavy",
+          "rank": 14,
+          "score": 40.29,
+          "appliedWeights": {
+            "topicalRelevance": 0.5,
+            "citationImpact": 0.17,
+            "graphPrestige": 0.11,
+            "citationVelocity": 0.11,
+            "reproducibility": 0.11
+          }
+        }
+      ],
+      "drivers": [
+        "Rank changes by 4 place(s) across the tested weighting profiles.",
+        "Best profile: Method + Reproducibility Heavy (#10, 39.6).",
+        "Weakest profile: Topic Heavy (#14, 40.3).",
+        "Strongest component signals: citation impact 96.5/100; citation velocity 43.3/100."
+      ]
+    },
+    {
+      "paperId": "W3174385379",
+      "title": "Computer Vision, IoT and Data Fusion for Crop Disease Detection Using Machine Learning: A Survey and Ongoing Research",
+      "baseRank": 14,
+      "baseScore": 44.82,
+      "rankRange": 8,
+      "scoreRange": 16.17,
+      "stability": "volatile",
+      "profileRanks": [
+        {
+          "profileId": "balanced",
+          "label": "Balanced PaperRank",
+          "rank": 14,
+          "score": 44.82,
+          "appliedWeights": {
+            "topicalRelevance": 0.3,
+            "citationImpact": 0.2,
+            "graphPrestige": 0.2,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "influence_heavy",
+          "label": "Influence Heavy",
+          "rank": 10,
+          "score": 53.16,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.3,
+            "graphPrestige": 0.3,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.05,
+            "reproducibility": 0.05
+          }
+        },
+        {
+          "profileId": "method_repro_heavy",
+          "label": "Method + Reproducibility Heavy",
+          "rank": 15,
+          "score": 36.99,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.25,
+            "reproducibility": 0.25
+          }
+        },
+        {
+          "profileId": "frontier_heavy",
+          "label": "Frontier Heavy",
+          "rank": 7,
+          "score": 44.45,
+          "appliedWeights": {
+            "topicalRelevance": 0.25,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.3,
+            "methodologyQuality": 0.15,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "topic_heavy",
+          "label": "Topic Heavy",
+          "rank": 15,
+          "score": 40.08,
+          "appliedWeights": {
+            "topicalRelevance": 0.45,
+            "citationImpact": 0.15,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        }
+      ],
+      "drivers": [
+        "Rank changes by 8 place(s) across the tested weighting profiles.",
+        "Best profile: Frontier Heavy (#7, 44.5).",
+        "Weakest profile: Method + Reproducibility Heavy (#15, 37.0).",
+        "Strongest component signals: citation impact 99.8/100; citation velocity 64.6/100."
+      ]
+    },
+    {
+      "paperId": "W4206928079",
+      "title": "Unsupervised Anomaly Detection in Knowledge Graphs",
+      "baseRank": 15,
+      "baseScore": 44.38,
+      "rankRange": 11,
+      "scoreRange": 16.82,
+      "stability": "volatile",
+      "profileRanks": [
+        {
+          "profileId": "balanced",
+          "label": "Balanced PaperRank",
+          "rank": 15,
+          "score": 44.38,
+          "appliedWeights": {
+            "topicalRelevance": 0.3,
+            "citationImpact": 0.2,
+            "graphPrestige": 0.2,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "influence_heavy",
+          "label": "Influence Heavy",
+          "rank": 15,
+          "score": 50.74,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.3,
+            "graphPrestige": 0.3,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.05,
+            "reproducibility": 0.05
+          }
+        },
+        {
+          "profileId": "method_repro_heavy",
+          "label": "Method + Reproducibility Heavy",
+          "rank": 21,
+          "score": 35.2,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.25,
+            "reproducibility": 0.25
+          }
+        },
+        {
+          "profileId": "frontier_heavy",
+          "label": "Frontier Heavy",
+          "rank": 23,
+          "score": 33.92,
+          "appliedWeights": {
+            "topicalRelevance": 0.25,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.3,
+            "methodologyQuality": 0.15,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "topic_heavy",
+          "label": "Topic Heavy",
+          "rank": 12,
+          "score": 41.6,
+          "appliedWeights": {
+            "topicalRelevance": 0.45,
+            "citationImpact": 0.15,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        }
+      ],
+      "drivers": [
+        "Rank changes by 11 place(s) across the tested weighting profiles.",
+        "Best profile: Topic Heavy (#12, 41.6).",
+        "Weakest profile: Frontier Heavy (#23, 33.9).",
+        "Strongest component signals: citation impact 83.1/100; graph prestige 45.6/100."
+      ]
+    },
+    {
+      "paperId": "W2906927267",
+      "title": "Neural Networks in Big Data and Web Search",
+      "baseRank": 16,
+      "baseScore": 43.38,
+      "rankRange": 3,
+      "scoreRange": 14.66,
+      "stability": "volatile",
+      "profileRanks": [
+        {
+          "profileId": "balanced",
+          "label": "Balanced PaperRank",
+          "rank": 16,
+          "score": 43.38,
+          "appliedWeights": {
+            "topicalRelevance": 0.3,
+            "citationImpact": 0.2,
+            "graphPrestige": 0.2,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "influence_heavy",
+          "label": "Influence Heavy",
+          "rank": 17,
+          "score": 50.41,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.3,
+            "graphPrestige": 0.3,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.05,
+            "reproducibility": 0.05
+          }
+        },
+        {
+          "profileId": "method_repro_heavy",
+          "label": "Method + Reproducibility Heavy",
+          "rank": 17,
+          "score": 36.14,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.25,
+            "reproducibility": 0.25
+          }
+        },
+        {
+          "profileId": "frontier_heavy",
+          "label": "Frontier Heavy",
+          "rank": 19,
+          "score": 35.75,
+          "appliedWeights": {
+            "topicalRelevance": 0.25,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.3,
+            "methodologyQuality": 0.15,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "topic_heavy",
+          "label": "Topic Heavy",
+          "rank": 16,
+          "score": 39.81,
+          "appliedWeights": {
+            "topicalRelevance": 0.45,
+            "citationImpact": 0.15,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        }
+      ],
+      "drivers": [
+        "Rank changes by 3 place(s) across the tested weighting profiles.",
+        "Best profile: Balanced PaperRank (#16, 43.4).",
+        "Weakest profile: Frontier Heavy (#19, 35.8).",
+        "Strongest component signals: citation impact 97.4/100; graph prestige 32.0/100."
+      ]
+    },
+    {
+      "paperId": "W3207701354",
+      "title": "A Human-Centered Systematic Literature Review of the Computational Approaches for Online Sexual Risk Detection",
+      "baseRank": 17,
+      "baseScore": 42.5,
+      "rankRange": 5,
+      "scoreRange": 13.89,
+      "stability": "volatile",
+      "profileRanks": [
+        {
+          "profileId": "balanced",
+          "label": "Balanced PaperRank",
+          "rank": 17,
+          "score": 42.5,
+          "appliedWeights": {
+            "topicalRelevance": 0.3,
+            "citationImpact": 0.2,
+            "graphPrestige": 0.2,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "influence_heavy",
+          "label": "Influence Heavy",
+          "rank": 16,
+          "score": 50.72,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.3,
+            "graphPrestige": 0.3,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.05,
+            "reproducibility": 0.05
+          }
+        },
+        {
+          "profileId": "method_repro_heavy",
+          "label": "Method + Reproducibility Heavy",
+          "rank": 13,
+          "score": 37.46,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.25,
+            "reproducibility": 0.25
+          }
+        },
+        {
+          "profileId": "frontier_heavy",
+          "label": "Frontier Heavy",
+          "rank": 16,
+          "score": 39.45,
+          "appliedWeights": {
+            "topicalRelevance": 0.25,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.3,
+            "methodologyQuality": 0.15,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "topic_heavy",
+          "label": "Topic Heavy",
+          "rank": 18,
+          "score": 36.83,
+          "appliedWeights": {
+            "topicalRelevance": 0.45,
+            "citationImpact": 0.15,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        }
+      ],
+      "drivers": [
+        "Rank changes by 5 place(s) across the tested weighting profiles.",
+        "Best profile: Method + Reproducibility Heavy (#13, 37.5).",
+        "Weakest profile: Topic Heavy (#18, 36.8).",
+        "Strongest component signals: citation impact 99.3/100; citation velocity 47.6/100."
+      ]
+    },
+    {
+      "paperId": "W4390880258",
+      "title": "Machine Learning for Refining Knowledge Graphs: A Survey",
+      "baseRank": 18,
+      "baseScore": 42.36,
+      "rankRange": 3,
+      "scoreRange": 13.98,
+      "stability": "volatile",
+      "profileRanks": [
+        {
+          "profileId": "balanced",
+          "label": "Balanced PaperRank",
+          "rank": 18,
+          "score": 42.36,
+          "appliedWeights": {
+            "topicalRelevance": 0.3,
+            "citationImpact": 0.2,
+            "graphPrestige": 0.2,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "influence_heavy",
+          "label": "Influence Heavy",
+          "rank": 20,
+          "score": 49.45,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.3,
+            "graphPrestige": 0.3,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.05,
+            "reproducibility": 0.05
+          }
+        },
+        {
+          "profileId": "method_repro_heavy",
+          "label": "Method + Reproducibility Heavy",
+          "rank": 18,
+          "score": 35.66,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.25,
+            "reproducibility": 0.25
+          }
+        },
+        {
+          "profileId": "frontier_heavy",
+          "label": "Frontier Heavy",
+          "rank": 20,
+          "score": 35.47,
+          "appliedWeights": {
+            "topicalRelevance": 0.25,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.3,
+            "methodologyQuality": 0.15,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "topic_heavy",
+          "label": "Topic Heavy",
+          "rank": 17,
+          "score": 38.48,
+          "appliedWeights": {
+            "topicalRelevance": 0.45,
+            "citationImpact": 0.15,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        }
+      ],
+      "drivers": [
+        "Rank changes by 3 place(s) across the tested weighting profiles.",
+        "Best profile: Topic Heavy (#17, 38.5).",
+        "Weakest profile: Frontier Heavy (#20, 35.5).",
+        "Strongest component signals: citation impact 94.9/100; reproducibility 37.0/100."
+      ]
+    },
+    {
+      "paperId": "W4388524030",
+      "title": "A comprehensive survey on machine learning approaches for fake news detection",
+      "baseRank": 19,
+      "baseScore": 42.31,
+      "rankRange": 6,
+      "scoreRange": 14.84,
+      "stability": "volatile",
+      "profileRanks": [
+        {
+          "profileId": "balanced",
+          "label": "Balanced PaperRank",
+          "rank": 19,
+          "score": 42.31,
+          "appliedWeights": {
+            "topicalRelevance": 0.3,
+            "citationImpact": 0.2,
+            "graphPrestige": 0.2,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "influence_heavy",
+          "label": "Influence Heavy",
+          "rank": 14,
+          "score": 51.14,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.3,
+            "graphPrestige": 0.3,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.05,
+            "reproducibility": 0.05
+          }
+        },
+        {
+          "profileId": "method_repro_heavy",
+          "label": "Method + Reproducibility Heavy",
+          "rank": 16,
+          "score": 36.36,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.25,
+            "reproducibility": 0.25
+          }
+        },
+        {
+          "profileId": "frontier_heavy",
+          "label": "Frontier Heavy",
+          "rank": 13,
+          "score": 40.94,
+          "appliedWeights": {
+            "topicalRelevance": 0.25,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.3,
+            "methodologyQuality": 0.15,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "topic_heavy",
+          "label": "Topic Heavy",
+          "rank": 19,
+          "score": 36.3,
+          "appliedWeights": {
+            "topicalRelevance": 0.45,
+            "citationImpact": 0.15,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        }
+      ],
+      "drivers": [
+        "Rank changes by 6 place(s) across the tested weighting profiles.",
+        "Best profile: Frontier Heavy (#13, 40.9).",
+        "Weakest profile: Topic Heavy (#19, 36.3).",
+        "Strongest component signals: citation impact 99.9/100; citation velocity 57.5/100."
+      ]
+    },
+    {
+      "paperId": "W4412465717",
+      "title": "Practices, opportunities and challenges in the fusion of knowledge graphs and large language models",
+      "baseRank": 20,
+      "baseScore": 41.2,
+      "rankRange": 3,
+      "scoreRange": 15.03,
+      "stability": "volatile",
+      "profileRanks": [
+        {
+          "profileId": "balanced",
+          "label": "Balanced PaperRank",
+          "rank": 20,
+          "score": 41.2,
+          "appliedWeights": {
+            "topicalRelevance": 0.3,
+            "citationImpact": 0.2,
+            "graphPrestige": 0.2,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "influence_heavy",
+          "label": "Influence Heavy",
+          "rank": 19,
+          "score": 49.54,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.3,
+            "graphPrestige": 0.3,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.05,
+            "reproducibility": 0.05
+          }
+        },
+        {
+          "profileId": "method_repro_heavy",
+          "label": "Method + Reproducibility Heavy",
+          "rank": 22,
+          "score": 34.51,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.25,
+            "reproducibility": 0.25
+          }
+        },
+        {
+          "profileId": "frontier_heavy",
+          "label": "Frontier Heavy",
+          "rank": 21,
+          "score": 35.26,
+          "appliedWeights": {
+            "topicalRelevance": 0.25,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.3,
+            "methodologyQuality": 0.15,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "topic_heavy",
+          "label": "Topic Heavy",
+          "rank": 20,
+          "score": 36.01,
+          "appliedWeights": {
+            "topicalRelevance": 0.45,
+            "citationImpact": 0.15,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        }
+      ],
+      "drivers": [
+        "Rank changes by 3 place(s) across the tested weighting profiles.",
+        "Best profile: Influence Heavy (#19, 49.5).",
+        "Weakest profile: Method + Reproducibility Heavy (#22, 34.5).",
+        "Strongest component signals: citation impact 99.2/100; citation velocity 34.3/100."
+      ]
+    },
+    {
+      "paperId": "W4311405210",
+      "title": "EMVLight: A multi-agent reinforcement learning framework for an emergency vehicle decentralized routing and traffic signal control system",
+      "baseRank": 21,
+      "baseScore": 39.45,
+      "rankRange": 7,
+      "scoreRange": 17.74,
+      "stability": "volatile",
+      "profileRanks": [
+        {
+          "profileId": "balanced",
+          "label": "Balanced PaperRank",
+          "rank": 21,
+          "score": 39.45,
+          "appliedWeights": {
+            "topicalRelevance": 0.33,
+            "citationImpact": 0.22,
+            "graphPrestige": 0.22,
+            "citationVelocity": 0.11,
+            "reproducibility": 0.11
+          }
+        },
+        {
+          "profileId": "influence_heavy",
+          "label": "Influence Heavy",
+          "rank": 21,
+          "score": 49.01,
+          "appliedWeights": {
+            "topicalRelevance": 0.21,
+            "citationImpact": 0.32,
+            "graphPrestige": 0.32,
+            "citationVelocity": 0.11,
+            "reproducibility": 0.05
+          }
+        },
+        {
+          "profileId": "method_repro_heavy",
+          "label": "Method + Reproducibility Heavy",
+          "rank": 20,
+          "score": 35.21,
+          "appliedWeights": {
+            "topicalRelevance": 0.27,
+            "citationImpact": 0.13,
+            "graphPrestige": 0.13,
+            "citationVelocity": 0.13,
+            "reproducibility": 0.33
+          }
+        },
+        {
+          "profileId": "frontier_heavy",
+          "label": "Frontier Heavy",
+          "rank": 17,
+          "score": 37.33,
+          "appliedWeights": {
+            "topicalRelevance": 0.29,
+            "citationImpact": 0.12,
+            "graphPrestige": 0.12,
+            "citationVelocity": 0.35,
+            "reproducibility": 0.12
+          }
+        },
+        {
+          "profileId": "topic_heavy",
+          "label": "Topic Heavy",
+          "rank": 24,
+          "score": 31.27,
+          "appliedWeights": {
+            "topicalRelevance": 0.5,
+            "citationImpact": 0.17,
+            "graphPrestige": 0.11,
+            "citationVelocity": 0.11,
+            "reproducibility": 0.11
+          }
+        }
+      ],
+      "drivers": [
+        "Rank changes by 7 place(s) across the tested weighting profiles.",
+        "Best profile: Frontier Heavy (#17, 37.3).",
+        "Weakest profile: Topic Heavy (#24, 31.3).",
+        "Strongest component signals: citation impact 98.8/100; citation velocity 47.8/100."
+      ]
+    },
+    {
+      "paperId": "W4386501849",
+      "title": "Siren's Song in the AI Ocean: A Survey on Hallucination in Large Language Models",
+      "baseRank": 22,
+      "baseScore": 38.86,
+      "rankRange": 12,
+      "scoreRange": 10.38,
+      "stability": "volatile",
+      "profileRanks": [
+        {
+          "profileId": "balanced",
+          "label": "Balanced PaperRank",
+          "rank": 22,
+          "score": 38.86,
+          "appliedWeights": {
+            "topicalRelevance": 0.3,
+            "citationImpact": 0.2,
+            "graphPrestige": 0.2,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "influence_heavy",
+          "label": "Influence Heavy",
+          "rank": 23,
+          "score": 44.85,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.3,
+            "graphPrestige": 0.3,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.05,
+            "reproducibility": 0.05
+          }
+        },
+        {
+          "profileId": "method_repro_heavy",
+          "label": "Method + Reproducibility Heavy",
+          "rank": 19,
+          "score": 35.37,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.25,
+            "reproducibility": 0.25
+          }
+        },
+        {
+          "profileId": "frontier_heavy",
+          "label": "Frontier Heavy",
+          "rank": 11,
+          "score": 42.92,
+          "appliedWeights": {
+            "topicalRelevance": 0.25,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.3,
+            "methodologyQuality": 0.15,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "topic_heavy",
+          "label": "Topic Heavy",
+          "rank": 21,
+          "score": 34.47,
+          "appliedWeights": {
+            "topicalRelevance": 0.45,
+            "citationImpact": 0.15,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        }
+      ],
+      "drivers": [
+        "Rank changes by 12 place(s) across the tested weighting profiles.",
+        "Best profile: Frontier Heavy (#11, 42.9).",
+        "Weakest profile: Influence Heavy (#23, 44.9).",
+        "Strongest component signals: citation impact 73.4/100; citation velocity 70.2/100."
+      ]
+    },
+    {
+      "paperId": "W2739419429",
+      "title": "Argumentation mining: How can a machine acquire common sense and world knowledge?",
+      "baseRank": 23,
+      "baseScore": 37.94,
+      "rankRange": 2,
+      "scoreRange": 14.52,
+      "stability": "sensitive",
+      "profileRanks": [
+        {
+          "profileId": "balanced",
+          "label": "Balanced PaperRank",
+          "rank": 23,
+          "score": 37.94,
+          "appliedWeights": {
+            "topicalRelevance": 0.3,
+            "citationImpact": 0.2,
+            "graphPrestige": 0.2,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "influence_heavy",
+          "label": "Influence Heavy",
+          "rank": 22,
+          "score": 45.64,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.3,
+            "graphPrestige": 0.3,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.05,
+            "reproducibility": 0.05
+          }
+        },
+        {
+          "profileId": "method_repro_heavy",
+          "label": "Method + Reproducibility Heavy",
+          "rank": 24,
+          "score": 31.29,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.25,
+            "reproducibility": 0.25
+          }
+        },
+        {
+          "profileId": "frontier_heavy",
+          "label": "Frontier Heavy",
+          "rank": 24,
+          "score": 31.12,
+          "appliedWeights": {
+            "topicalRelevance": 0.25,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.3,
+            "methodologyQuality": 0.15,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "topic_heavy",
+          "label": "Topic Heavy",
+          "rank": 22,
+          "score": 33.21,
+          "appliedWeights": {
+            "topicalRelevance": 0.45,
+            "citationImpact": 0.15,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        }
+      ],
+      "drivers": [
+        "Rank changes by 2 place(s) across the tested weighting profiles.",
+        "Best profile: Influence Heavy (#22, 45.6).",
+        "Weakest profile: Frontier Heavy (#24, 31.1).",
+        "Strongest component signals: citation impact 89.8/100; graph prestige 32.0/100."
+      ]
+    },
+    {
+      "paperId": "W4387596421",
+      "title": "Survey on Factuality in Large Language Models: Knowledge, Retrieval and Domain-Specificity",
+      "baseRank": 24,
+      "baseScore": 32.86,
+      "rankRange": 3,
+      "scoreRange": 7.14,
+      "stability": "volatile",
+      "profileRanks": [
+        {
+          "profileId": "balanced",
+          "label": "Balanced PaperRank",
+          "rank": 24,
+          "score": 32.86,
+          "appliedWeights": {
+            "topicalRelevance": 0.3,
+            "citationImpact": 0.2,
+            "graphPrestige": 0.2,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "influence_heavy",
+          "label": "Influence Heavy",
+          "rank": 24,
+          "score": 36.77,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.3,
+            "graphPrestige": 0.3,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.05,
+            "reproducibility": 0.05
+          }
+        },
+        {
+          "profileId": "method_repro_heavy",
+          "label": "Method + Reproducibility Heavy",
+          "rank": 25,
+          "score": 31.21,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.25,
+            "reproducibility": 0.25
+          }
+        },
+        {
+          "profileId": "frontier_heavy",
+          "label": "Frontier Heavy",
+          "rank": 22,
+          "score": 33.96,
+          "appliedWeights": {
+            "topicalRelevance": 0.25,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.3,
+            "methodologyQuality": 0.15,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "topic_heavy",
+          "label": "Topic Heavy",
+          "rank": 25,
+          "score": 29.63,
+          "appliedWeights": {
+            "topicalRelevance": 0.45,
+            "citationImpact": 0.15,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        }
+      ],
+      "drivers": [
+        "Rank changes by 3 place(s) across the tested weighting profiles.",
+        "Best profile: Frontier Heavy (#22, 34.0).",
+        "Weakest profile: Topic Heavy (#25, 29.6).",
+        "Strongest component signals: citation impact 53.8/100; citation velocity 45.8/100."
+      ]
+    },
+    {
+      "paperId": "W4406840428",
+      "title": "Zep: A Temporal Knowledge Graph Architecture for Agent Memory",
+      "baseRank": 25,
+      "baseScore": 31.73,
+      "rankRange": 2,
+      "scoreRange": 4.41,
+      "stability": "sensitive",
+      "profileRanks": [
+        {
+          "profileId": "balanced",
+          "label": "Balanced PaperRank",
+          "rank": 25,
+          "score": 31.73,
+          "appliedWeights": {
+            "topicalRelevance": 0.3,
+            "citationImpact": 0.2,
+            "graphPrestige": 0.2,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "influence_heavy",
+          "label": "Influence Heavy",
+          "rank": 25,
+          "score": 29.89,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.3,
+            "graphPrestige": 0.3,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.05,
+            "reproducibility": 0.05
+          }
+        },
+        {
+          "profileId": "method_repro_heavy",
+          "label": "Method + Reproducibility Heavy",
+          "rank": 23,
+          "score": 34.3,
+          "appliedWeights": {
+            "topicalRelevance": 0.2,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.25,
+            "reproducibility": 0.25
+          }
+        },
+        {
+          "profileId": "frontier_heavy",
+          "label": "Frontier Heavy",
+          "rank": 25,
+          "score": 31.03,
+          "appliedWeights": {
+            "topicalRelevance": 0.25,
+            "citationImpact": 0.1,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.3,
+            "methodologyQuality": 0.15,
+            "reproducibility": 0.1
+          }
+        },
+        {
+          "profileId": "topic_heavy",
+          "label": "Topic Heavy",
+          "rank": 23,
+          "score": 32.63,
+          "appliedWeights": {
+            "topicalRelevance": 0.45,
+            "citationImpact": 0.15,
+            "graphPrestige": 0.1,
+            "citationVelocity": 0.1,
+            "methodologyQuality": 0.1,
+            "reproducibility": 0.1
+          }
+        }
+      ],
+      "drivers": [
+        "Rank changes by 2 place(s) across the tested weighting profiles.",
+        "Best profile: Method + Reproducibility Heavy (#23, 34.3).",
+        "Weakest profile: Influence Heavy (#25, 29.9).",
+        "Strongest component signals: methodology quality 48.0/100; topical relevance 35.4/100."
+      ]
+    }
+  ],
+  "summary": {
+    "stableCount": 1,
+    "sensitiveCount": 3,
+    "volatileCount": 21,
+    "topPaperStable": true,
+    "topPaper": "Knowledge graph refinement: A survey of approaches and evaluation methods"
+  }
+}

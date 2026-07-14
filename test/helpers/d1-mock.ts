@@ -10,6 +10,11 @@ export class D1Mock {
   entries: any[] = [];
   edges: any[] = [];
   users: any[] = [];
+  episodes: any[] = [];
+  passages: any[] = [];
+  documents: any[] = [];
+  document_sections: any[] = [];
+  entry_snapshots: any[] = [];
 
   prepare(sql: string) {
     const s = sql.replace(/\s+/g, " ").trim();
@@ -18,8 +23,8 @@ export class D1Mock {
     const makeStmt = (args: any[]) => ({
       async run() {
         if (s.startsWith("INSERT INTO entries")) {
-          const [id, content, tags, source, created_at, vector_ids, owner_user_id] = args;
-          db.entries.push({ id, content, tags, source, created_at, vector_ids, recall_count: 0, importance_score: 0, contradiction_wins: 0, contradiction_losses: 0, owner_user_id: owner_user_id ?? "" });
+          const [id, content, tags, source, created_at, vector_ids, owner_user_id, valid_from, recorded_at] = args;
+          db.entries.push({ id, content, tags, source, created_at, vector_ids, recall_count: 0, importance_score: 0, contradiction_wins: 0, contradiction_losses: 0, owner_user_id: owner_user_id ?? "", last_recalled_at: null, valid_from: valid_from ?? null, recorded_at: recorded_at ?? null, valid_to: null, epistemic_status: "canonical" });
           return { meta: { changes: 1 } };
         }
         if (s.startsWith("INSERT INTO users")) {
@@ -109,9 +114,12 @@ export class D1Mock {
           return { meta: { changes: row ? 1 : 0 } };
         }
         if (s.startsWith("UPDATE entries SET recall_count")) {
-          const [id] = args;
+          const [value, id] = args;
           const row = db.entries.find((e: any) => e.id === id);
-          if (row) row.recall_count = (row.recall_count ?? 0) + 1;
+          if (row) {
+            row.recall_count = (row.recall_count ?? 0) + 1;
+            if (s.includes("last_recalled_at")) row.last_recalled_at = value;
+          }
           return { meta: { changes: row ? 1 : 0 } };
         }
         if (s.startsWith("UPDATE entries SET importance_score")) {
@@ -119,6 +127,61 @@ export class D1Mock {
           const row = db.entries.find((e: any) => e.id === id);
           if (row) row.importance_score = score;
           return { meta: { changes: row ? 1 : 0 } };
+        }
+        if (s.startsWith("UPDATE entries SET epistemic_status")) {
+          if (s.includes("WHERE valid_to IS NOT NULL")) {
+            // detectStaleness: mark entries with valid_to set
+            let changes = 0;
+            for (const e of db.entries) {
+              if (e.valid_to != null && e.epistemic_status !== "stale") {
+                e.epistemic_status = "stale";
+                changes++;
+              }
+            }
+            return { meta: { changes } };
+          }
+          if (s.includes("WHERE id IN")) {
+            // detectStaleness: mark entries with low-confidence incoming edges
+            // The subquery selects target_id from edges where confidence < threshold
+            const threshold = args[0] as number;
+            const staleIds = new Set(
+              db.edges
+                .filter((e: any) => {
+                  const meta = e.metadata ? JSON.parse(e.metadata) : {};
+                  const conf = meta.confidence ?? e.weight;
+                  return conf < threshold && conf > 0;
+                })
+                .map((e: any) => e.target_id)
+            );
+            let changes = 0;
+            for (const e of db.entries) {
+              if (staleIds.has(e.id) && e.epistemic_status !== "stale") {
+                e.epistemic_status = "stale";
+                changes++;
+              }
+            }
+            return { meta: { changes } };
+          }
+          if (s.includes("WHERE created_at <")) {
+            // detectStaleness: mark old entries with no recalls
+            const cutoff = args[0] as number;
+            let changes = 0;
+            for (const e of db.entries) {
+              if (e.created_at < cutoff && (e.recall_count ?? 0) === 0 && e.epistemic_status !== "stale") {
+                e.epistemic_status = "stale";
+                changes++;
+              }
+            }
+            return { meta: { changes } };
+          }
+          // Generic epistemic_status update (e.g., POST /epistemic-status)
+          const [newStatus, id] = args;
+          const row = db.entries.find((e: any) => e.id === id);
+          if (row) {
+            row.epistemic_status = newStatus;
+            return { meta: { changes: 1 } };
+          }
+          return { meta: { changes: 0 } };
         }
         if (s.startsWith("DELETE FROM entries WHERE id")) {
           const [id] = args;
@@ -135,6 +198,31 @@ export class D1Mock {
           } else {
             db.edges.push({ id, source_id, target_id, type, weight, provenance, metadata, created_at, updated_at });
           }
+          return { meta: { changes: 1 } };
+        }
+        if (s.startsWith("INSERT INTO episodes")) {
+          const [id, entry_id, content, content_type, source, created_at] = args;
+          db.episodes.push({ id, entry_id, content, content_type, source, created_at });
+          return { meta: { changes: 1 } };
+        }
+        if (s.startsWith("INSERT INTO passages")) {
+          const [id, entry_id, episode_id, content, section, start_offset, end_offset, vector_ids, created_at] = args;
+          db.passages.push({ id, entry_id, episode_id, content, section, start_offset, end_offset, vector_ids, created_at });
+          return { meta: { changes: 1 } };
+        }
+        if (s.startsWith("INSERT INTO documents")) {
+          const [id, title, source_url, content_type, created_at] = args;
+          db.documents.push({ id, title, source_url, content_type, created_at });
+          return { meta: { changes: 1 } };
+        }
+        if (s.startsWith("INSERT INTO document_sections")) {
+          const [id, document_id, parent_section_id, title, level, order_index, created_at] = args;
+          db.document_sections.push({ id, document_id, parent_section_id, title, level, order_index, created_at });
+          return { meta: { changes: 1 } };
+        }
+        if (s.startsWith("INSERT INTO entry_snapshots")) {
+          const [id, entry_id, content, tags, source, created_at] = args;
+          db.entry_snapshots.push({ id, entry_id, content, tags, source, created_at });
           return { meta: { changes: 1 } };
         }
         if (s.startsWith("DELETE FROM edges WHERE ((source_id")) {
@@ -247,6 +335,22 @@ export class D1Mock {
         if (s.includes("COUNT(*) as count")) {
           return { count: db.entries.length };
         }
+        // Table-specific WHERE id handlers (must precede generic entries handler)
+        if (s.includes("FROM entry_snapshots") && s.includes("WHERE id")) {
+          return db.entry_snapshots.find((r: any) => r.id === args[0]) ?? null;
+        }
+        if (s.includes("FROM episodes") && s.includes("WHERE id")) {
+          return db.episodes.find((r: any) => r.id === args[0]) ?? null;
+        }
+        if (s.includes("FROM passages") && s.includes("WHERE id")) {
+          return db.passages.find((r: any) => r.id === args[0]) ?? null;
+        }
+        if (s.includes("FROM documents") && s.includes("WHERE id")) {
+          return db.documents.find((r: any) => r.id === args[0]) ?? null;
+        }
+        if (s.includes("FROM document_sections") && s.includes("WHERE id")) {
+          return db.document_sections.find((r: any) => r.id === args[0]) ?? null;
+        }
         if (s.includes("WHERE id") && !s.includes("json_each")) {
           return db.entries.find((e: any) => e.id === args[0]) ?? null;
         }
@@ -266,6 +370,16 @@ export class D1Mock {
             });
           });
           return match ? { id: match.id } : null;
+        }
+        if (s.includes("FROM episodes WHERE entry_id")) {
+          const entryId = args[0] as string;
+          const ep = db.episodes.find((e: any) => e.entry_id === entryId);
+          return ep ? { id: ep.id } : null;
+        }
+        if (s.includes("SELECT owner_user_id, epistemic_status FROM entries WHERE id")) {
+          const id = args[0] as string;
+          const row = db.entries.find((e: any) => e.id === id);
+          return row ? { owner_user_id: row.owner_user_id ?? "", epistemic_status: row.epistemic_status ?? "canonical" } : null;
         }
         return null;
       },
@@ -295,6 +409,11 @@ export class D1Mock {
           const userId = args[0] as string;
           const user = db.users.find((u: any) => u.id === userId);
           return { results: user ? [{ username: user.username }] : [] };
+        }
+        if (s.includes("recall_count, importance_score, contradiction_wins, contradiction_losses, last_recalled_at, created_at, epistemic_status FROM entries WHERE id IN")) {
+          const ids = args.map((a: any) => String(a));
+          const rows = db.entries.filter((e: any) => ids.includes(e.id));
+          return { results: rows.map((r: any) => ({ id: r.id, recall_count: r.recall_count ?? 0, importance_score: r.importance_score ?? 0, contradiction_wins: r.contradiction_wins ?? 0, contradiction_losses: r.contradiction_losses ?? 0, last_recalled_at: r.last_recalled_at ?? null, created_at: r.created_at, epistemic_status: r.epistemic_status ?? "canonical" })) };
         }
         if (s.includes("SELECT tags, owner_user_id FROM entries WHERE id =")) {
           // createEdge visibility check.
@@ -439,7 +558,7 @@ export class D1Mock {
           const results = db.edges
             .filter((e: any) => ids.has(e.source_id) || ids.has(e.target_id))
             .sort((a: any, b: any) => b.weight - a.weight)
-            .map((e: any) => ({ source_id: e.source_id, target_id: e.target_id, type: e.type, weight: e.weight }));
+            .map((e: any) => ({ source_id: e.source_id, target_id: e.target_id, type: e.type, weight: e.weight, confidence: e.weight ?? 1.0 }));
           return { results };
         }
         if (s.includes("SELECT source_id, target_id FROM edges ORDER BY weight DESC")) {
@@ -499,7 +618,7 @@ export class D1Mock {
         if (s.includes("SELECT id, recall_count, importance_score") && s.includes("WHERE id IN")) {
           const results = db.entries
             .filter((e: any) => args.includes(e.id))
-            .map((e: any) => ({ id: e.id, recall_count: e.recall_count ?? 0, importance_score: e.importance_score ?? 0, contradiction_wins: e.contradiction_wins ?? 0, contradiction_losses: e.contradiction_losses ?? 0 }));
+            .map((e: any) => ({ id: e.id, recall_count: e.recall_count ?? 0, importance_score: e.importance_score ?? 0, contradiction_wins: e.contradiction_wins ?? 0, contradiction_losses: e.contradiction_losses ?? 0, last_recalled_at: e.last_recalled_at ?? null, created_at: e.created_at }));
           return { results };
         }
         if (s.includes("FROM entries WHERE id IN") && s.includes("tags NOT LIKE")) {
@@ -507,7 +626,9 @@ export class D1Mock {
           const inMatch = s.match(/WHERE id IN \(([^)]*)\)/);
           const idCount = inMatch ? inMatch[1].split(",").length : 0;
           const ids = args.slice(0, idCount);
-          const rest = args.slice(idCount);
+          // Skip the visibility clause binding (owner_user_id = ?) if present
+          const visOffset = s.includes("owner_user_id = ?") ? 1 : 0;
+          const rest = args.slice(idCount + visOffset);
           let argIdx = 0;
           const kindMatch = s.match(/tags LIKE '%"(kind:(?:episodic|semantic))"%'/);
           let rows = db.entries.filter((e: any) => {
@@ -518,6 +639,11 @@ export class D1Mock {
             if (kindMatch && !tags.includes(kindMatch[1])) return false;
             return true;
           });
+          // Apply visibility: owner_user_id = userId OR entries not tagged private
+          if (s.includes("owner_user_id = ?") && s.includes("tags NOT LIKE")) {
+            const ownerId = args[ids.length] as string;
+            rows = rows.filter((e: any) => e.owner_user_id === ownerId || !(JSON.parse(e.tags ?? "[]") as string[]).includes("private"));
+          }
           if (s.includes("created_at >= ?")) {
             const after = Number(rest[argIdx++]);
             rows = rows.filter((e: any) => e.created_at >= after);
@@ -525,6 +651,14 @@ export class D1Mock {
           if (s.includes("created_at <= ?")) {
             const before = Number(rest[argIdx++]);
             rows = rows.filter((e: any) => e.created_at <= before);
+          }
+          if (s.includes("valid_from IS NULL OR valid_from <= ?")) {
+            const asOf = Number(rest[argIdx++]);
+            rows = rows.filter((e: any) => e.valid_from == null || e.valid_from <= asOf);
+          }
+          if (s.includes("valid_to IS NULL OR valid_to > ?")) {
+            const asOf = Number(rest[argIdx++]);
+            rows = rows.filter((e: any) => e.valid_to == null || e.valid_to > asOf);
           }
           const results = rows.map((e: any) => ({ id: e.id, content: e.content, tags: e.tags, source: e.source, created_at: e.created_at }));
           return { results };
@@ -563,6 +697,39 @@ export class D1Mock {
           const results = db.entries
             .filter((e: any) => args.includes(e.id))
             .map((e: any) => ({ id: e.id, content: e.content }));
+          return { results };
+        }
+        if (s.includes("FROM passages WHERE entry_id")) {
+          const entryIds = args.map((a: any) => String(a));
+          const results = db.passages
+            .filter((p: any) => entryIds.includes(p.entry_id))
+            .sort((a: any, b: any) => (a.start_offset ?? 0) - (b.start_offset ?? 0))
+            .map((p: any) => ({ id: p.id, entry_id: p.entry_id, content: p.content, section: p.section ?? null, start_offset: p.start_offset ?? null, end_offset: p.end_offset ?? null }));
+          return { results };
+        }
+        if (s.includes("FROM document_sections ds") && s.includes("JOIN documents d")) {
+          // Hierarchy query — return all document sections
+          const results = db.document_sections.map((ds: any) => ({
+            id: ds.id, title: ds.title, level: ds.level, order_index: ds.order_index, parent_section_id: ds.parent_section_id,
+          }));
+          return { results };
+        }
+        if (s.includes("FROM document_sections ds") && s.includes("WHERE ds.title IN")) {
+          // Hierarchy query (by passage section names) — match section titles
+          const titles = args.map((a: any) => String(a));
+          const results = db.document_sections
+            .filter((ds: any) => titles.includes(ds.title))
+            .sort((a: any, b: any) => a.order_index - b.order_index)
+            .map((ds: any) => ({
+              id: ds.id, title: ds.title, level: ds.level, order_index: ds.order_index, parent_section_id: ds.parent_section_id,
+            }));
+          return { results };
+        }
+        if (s.includes("FROM entry_snapshots") && s.includes("WHERE entry_id")) {
+          const entryId = args[0] as string;
+          const results = db.entry_snapshots
+            .filter((s: any) => s.entry_id === entryId)
+            .map((s: any) => ({ id: s.id }));
           return { results };
         }
         if (s.includes("json_each(entries.tags)") && s.includes("HAVING count > 10")) {
