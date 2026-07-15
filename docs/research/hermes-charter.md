@@ -105,7 +105,7 @@ Hermes authenticates to Second Brain as a specific user via `X-Second-Brain-User
 | **Gated** | — | Set `canonical`, merge entries, modify research agenda priority |
 | **Never** | — | Delete entries, modify user permissions, change system config |
 
-All gated actions produce a `knowledge_proposals` row that appears in the morning digest. A human approves or rejects via the dashboard or MCP.
+All gated actions produce a `knowledge_proposals` row. Hermes generates a morning digest (via MCP queries to Second Brain) that surfaces these proposals to human reviewers. A human approves or rejects via the dashboard or MCP.
 
 ---
 

@@ -176,6 +176,20 @@ export { defaultHandler } from "./routes";
   export { runNightlyCompression, runGraphPass, detectStaleness, detectCrossUserContradictions } from "./lifecycle";
 export { runScheduledIntegrationSync } from "./integrations-mirror";
 
+export {
+  startRun, endRun, logToolCall,
+  getToolUsageStats, getActiveUserCount, getRecentRuns, getRunEvents, getTotalRunCount,
+} from "./audit";
+export type { AgentRun, ToolCallRecord } from "./audit";
+
+export {
+  checkToolAutonomy, getToolLevel, getAutonomyMap, getAutonomyStats,
+} from "./autonomy";
+export type { GateResult } from "./autonomy";
+
+export { TOOL_AUTONOMY } from "./config";
+export type { AutonomyLevel } from "./config";
+
 // Also export the integration framework symbols that tests may import
 export {
   INTEGRATION_PROVIDERS,

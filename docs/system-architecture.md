@@ -46,7 +46,7 @@ Second Brain v2 is a **multi-user shared memory** platform for AI agents and hum
 | `OAUTH_KV` | KV Namespace | OAuth tokens, grants, clients + integration state |
 | `AUTH_TOKEN` | Secret (deployment token) | Bearer auth for all requests |
 
-**Cron:** `0 1 * * *` — nightly compression + graph pass + integration sync + cross-user contradiction detection
+**Cron:** `0 1 * * *` — nightly compression + graph pass + integration sync + cross-user contradiction detection. Hermes (the external agent) owns higher-level scheduled jobs like the morning digest.
 
 ### Database Schema
 
@@ -115,13 +115,16 @@ The backend is organized across multiple TypeScript modules (re-exported through
 | Module | Lines | Purpose |
 |--------|-------|---------|
 | `src/index.ts` | ~220 | Entry point, re-exports all modules |
-| `src/routes.ts` | ~1289 | REST route handlers (if/else chain) |
+| `src/routes.ts` | ~1300 | REST route handlers (if/else chain) |
 | `src/recall.ts` | ~716 | Recall pipeline (semantic search, RRF fusion, cross-user detection) |
-| `src/mcp.ts` | ~693 | MCP tool definitions and handlers |
+| `src/mcp.ts` | ~693 | MCP tool definitions and handlers (with audit wrapper) |
 | `src/graph.ts` | ~474 | Graph traversal, edge creation, expansion |
 | `src/lifecycle.ts` | ~519 | Nightly cron jobs (compression, graph pass, contradiction detection) |
 | `src/auth.ts` | ~175 | Authentication, HMAC key generation, user resolution |
 | `src/db.ts` | ~162 | Database schema, initialization, helpers |
+| `src/audit.ts` | ~166 | Agent audit logging (runs + tool call events) |
+| `src/autonomy.ts` | ~66 | Per-tool governance levels (automatic/gated/never) |
+| `src/config.ts` | ~159 | Application-wide constants and thresholds |
 
 Two handler paths wrapped in `OAuthProvider`:
 
@@ -716,6 +719,38 @@ Provider pattern in `src/integrations/`:
 - **`notion.ts`** — Notion sync. Resource-budgeted for Workers free plan (~35 external fetches per sync batch)
 
 **Mirror semantics:** External source is source of truth. Each sync batch replaces content wholesale. Dedup by external item ID. Items that disappear upstream delete their mirror. Mirrors bypass the duplicate/contradiction pipeline entirely.
+
+---
+
+## 13. Agent Governance (Pillar 3 — Operator)
+
+Infrastructure for external agents (e.g., Hermes) to operate on Second Brain with auditability and human oversight.
+
+### Audit Logging (`src/audit.ts`)
+
+Every MCP session and tool call is logged to D1:
+
+- **`agent_runs`** — one row per MCP session (user_id, started_at, completed_at, tool_count)
+- **`agent_events`** — one row per tool invocation (run_id, tool_name, input_summary, output_summary, duration_ms, error)
+
+The `audited()` wrapper in `src/mcp.ts` automatically intercepts every tool handler — no per-tool instrumentation needed.
+
+### Autonomy Governance (`src/autonomy.ts`)
+
+Each MCP tool has a governance level defined in `TOOL_AUTONOMY` (`src/config.ts`):
+
+| Level | Behavior | Tools |
+|-------|----------|-------|
+| `automatic` | Executes without approval | recall, list_recent, connections, passages, list-proposals |
+| `gated` | Requires human approval | remember, append, update, link, unlink, set_status, propose_edge, approve/reject-proposal, restore |
+| `never` | Blocked for autonomous agents | forget |
+
+`checkToolAutonomy(toolName)` returns `{ allowed: true/false, reason, level }`. Unknown tools default to `gated`.
+
+### Scheduled Jobs
+
+- **Second Brain cron** (`0 1 * * *`): nightly compression, graph pass, integration sync, cross-user contradiction detection
+- **Hermes** (external agent): morning digest, source scouting, research execution, knowledge extraction — runs as scheduled MCP sessions, all audited via `agent_runs`/`agent_events`
 
 ---
 

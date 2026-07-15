@@ -126,3 +126,30 @@ export const RETENTION_HALF_LIFE_DAYS = 30;
 export const STALENESS_THRESHOLD_DAYS = 180;
 export const STALENESS_CONFIDENCE_THRESHOLD = 0.5;
 export const STALENESS_RECALL_PENALTY = 0.5;
+
+// ─── Autonomy governance (Pillar 3 — Operator) ───────────────────────────────
+export type AutonomyLevel = "automatic" | "gated" | "never";
+
+// Default governance: which tools can the agent run without human approval?
+export const TOOL_AUTONOMY: Record<string, AutonomyLevel> = {
+  // Read-only — always safe
+  recall:                  "automatic",
+  list_recent:             "automatic",
+  connections:             "automatic",
+  passages:                "automatic",
+  "list-proposals":        "automatic",
+  // Write — gated (need human approval)
+  remember:                "gated",
+  append:                  "gated",
+  update:                  "gated",
+  set_status:              "gated",
+  set_epistemic_status:    "gated",
+  link:                    "gated",
+  unlink:                  "gated",
+  propose_edge:            "gated",
+  "approve-proposal":      "gated",
+  "reject-proposal":       "gated",
+  restore:                 "gated",
+  // Destructive — never autonomous
+  forget:                  "never",
+};

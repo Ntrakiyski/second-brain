@@ -120,3 +120,29 @@ CREATE TABLE IF NOT EXISTS document_sections (
 );
 CREATE INDEX IF NOT EXISTS idx_sections_document_id ON document_sections(document_id);
 CREATE INDEX IF NOT EXISTS idx_sections_parent ON document_sections(parent_section_id);
+
+-- Agent audit log: one row per MCP session (Pillar 3 — Operator)
+CREATE TABLE IF NOT EXISTS agent_runs (
+  id          TEXT PRIMARY KEY,
+  user_id     TEXT NOT NULL,
+  started_at  INTEGER NOT NULL,
+  completed_at INTEGER,
+  tool_count  INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_user_id ON agent_runs(user_id);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_started_at ON agent_runs(started_at DESC);
+
+-- Agent tool call events: one row per tool invocation (Pillar 3 — Operator)
+CREATE TABLE IF NOT EXISTS agent_events (
+  id          TEXT PRIMARY KEY,
+  run_id      TEXT NOT NULL,
+  tool_name   TEXT NOT NULL,
+  input_summary TEXT,
+  output_summary TEXT,
+  duration_ms INTEGER,
+  error       TEXT,
+  created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agent_events_run_id ON agent_events(run_id);
+CREATE INDEX IF NOT EXISTS idx_agent_events_tool_name ON agent_events(tool_name);
+CREATE INDEX IF NOT EXISTS idx_agent_events_created_at ON agent_events(created_at DESC);

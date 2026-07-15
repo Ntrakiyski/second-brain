@@ -31,12 +31,45 @@ import { createEdge, deleteEdge, getConnections, EDGE_TYPES, isValidEdgeType, ed
 import { EPISTEMIC_STATUS_VALUES, isValidTransition, VALID_EPISTEMIC_TRANSITIONS, type EpistemicStatus } from "./types";
 import { isManagedMirror, mirrorEditError } from "./integrations-mirror";
 import { MEMORY_KIND_VALUES, KIND_VALUES, type MemoryKind, type MemoryStatus, STATUS_VALUES } from "./types";
-import { VECTORIZE_FIX_HINT } from "./config";
+import { VECTORIZE_FIX_HINT, TOOL_AUTONOMY } from "./config";
+import { startRun, endRun, logToolCall } from "./audit";
 
 // ─── MCP Server ───────────────────────────────────────────────────────────────
 
 export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string): McpServer {
   const server = new McpServer({ name: "second-brain", version: "1.0.0" });
+
+  // Audit state: one run per MCP session, lazily created on first tool call.
+  let runId: string | null = null;
+  let toolCount = 0;
+
+  /**
+   * Wrap a tool handler with audit logging. Creates a run on first call,
+   * logs each tool call with timing and error info, ends run on completion.
+   */
+  function audited<I extends Record<string, unknown>>(
+    toolName: string,
+    handler: (input: I, extra: any) => any,
+  ): (input: I, extra: any) => any {
+    return async (input: I, extra: any) => {
+      if (!runId) runId = await startRun(env, userId ?? "anonymous");
+      toolCount++;
+      const t0 = Date.now();
+      let error: string | undefined;
+      let result: { content: { type: string; text: string }[] };
+      try {
+        result = await handler(input, extra);
+      } catch (e) {
+        error = e instanceof Error ? e.message : String(e);
+        result = { content: [{ type: "text", text: `Error: ${error}` }] };
+      }
+      const durationMs = Date.now() - t0;
+      const outputText = result.content?.[0]?.text ?? "";
+      ctx.waitUntil(logToolCall(env, runId, toolName, input as Record<string, unknown>, outputText, durationMs, error).catch(() => {}));
+      if (runId) ctx.waitUntil(endRun(env, runId, toolCount).catch(() => {}));
+      return result;
+    };
+  }
 
   // ── remember ────────────────────────────────────────────────────────────
   server.registerTool(
@@ -49,7 +82,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
         source: z.string().optional().describe("Origin: phone, browser, voice, claude"),
       },
     },
-    async ({ content, tags, source }) => {
+    audited("remember", async ({ content, tags, source }) => {
       const result = await captureEntry(content, tags ?? [], source ?? "claude", env, ctx, userId);
       if (result.status === "blocked") {
         return { content: [{ type: "text", text: `Duplicate detected (${(result.score * 100).toFixed(0)}% match) — not stored. Existing entry ID: ${result.matchId}` }] };
@@ -70,7 +103,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
         return { content: [{ type: "text", text: `Stored with ID: ${result.id} — note: similar entry exists (${(result.score * 100).toFixed(0)}% match, ID: ${result.matchId}). Tagged as duplicate-candidate.` }] };
       }
       return { content: [{ type: "text", text: `Stored. ID: ${result.id}` }] };
-    }
+    })
   );
 
   // ── append ───────────────────────────────────────────────────────────────
@@ -83,7 +116,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
         addition: z.string().describe("The new information to add to the existing entry"),
       },
     },
-    async ({ id, addition }) => {
+    audited("append", async ({ id, addition }) => {
       const row = await env.DB.prepare(
         `SELECT id, content, tags, source, owner_user_id FROM entries WHERE id = ?`
       ).bind(id).first() as Record<string, any> | null;
@@ -128,7 +161,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
           text: `Appended to entry ${id}. The original content is preserved and your update has been added with today's date.`,
         }],
       };
-    }
+    })
   );
 
   // ── update ───────────────────────────────────────────────────────────────
@@ -141,7 +174,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
         content: z.string().describe("The new content to replace the existing entry with"),
       },
     },
-    async ({ id, content }) => {
+    audited("update", async ({ id, content }) => {
       const newContent = content.trim();
       if (!newContent) {
         return { content: [{ type: "text", text: "Content cannot be empty." }] };
@@ -195,7 +228,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
       return {
         content: [{ type: "text", text: `Updated entry ${id}. Re-embedded as ${newVectorCount} vector(s).` }],
       };
-    }
+    })
   );
 
   // ── set_status ─────────────────────────────────────────────────────────────
@@ -208,7 +241,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
         status: z.enum([...STATUS_VALUES] as [string, ...string[]]).describe("canonical | draft | deprecated"),
       },
     },
-    async ({ id, status }) => {
+    audited("set_status", async ({ id, status }) => {
       if (userId) {
         const row = await env.DB.prepare(`SELECT owner_user_id FROM entries WHERE id = ?`).bind(id).first() as { owner_user_id: string } | null;
         if (row && row.owner_user_id && row.owner_user_id !== userId && row.owner_user_id !== "") {
@@ -218,7 +251,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
       const ok = await applyStatus(id, status as MemoryStatus, env);
       if (!ok) return { content: [{ type: "text", text: `No entry found with ID: ${id}` }] };
       return { content: [{ type: "text", text: status === "deprecated" ? `Entry ${id} deprecated — removed from recall, kept for audit.` : `Entry ${id} marked ${status}.` }] };
-    }
+    })
   );
 
   // ── set_epistemic_status ──────────────────────────────────────────────────
@@ -231,7 +264,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
         new_status: z.enum([...EPISTEMIC_STATUS_VALUES] as [string, ...string[]]).describe("New epistemic status"),
       },
     },
-    async ({ entry_id, new_status }) => {
+    audited("set_epistemic_status", async ({ entry_id, new_status }) => {
       if (userId) {
         const row = await env.DB.prepare(`SELECT owner_user_id FROM entries WHERE id = ?`).bind(entry_id).first() as { owner_user_id: string } | null;
         if (row && row.owner_user_id && row.owner_user_id !== userId && row.owner_user_id !== "") {
@@ -247,7 +280,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
       }
       await env.DB.prepare(`UPDATE entries SET epistemic_status = ? WHERE id = ?`).bind(new_status, entry_id).run();
       return { content: [{ type: "text", text: `Entry ${entry_id} transitioned: ${currentStatus} → ${new_status}.` }] };
-    }
+    })
   );
 
   // ── recall ───────────────────────────────────────────────────────────────
@@ -266,7 +299,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
         as_of: z.number().int().optional().describe("Unix timestamp — return only facts valid at this time"),
       },
     },
-    async ({ query, topK, tag, after, before, kind, hops, as_of }) => {
+    audited("recall", async ({ query, topK, tag, after, before, kind, hops, as_of }) => {
       const { matches, insight, semanticUnavailable, proposed_edges } = await recallEntries({ query, topK, tag, after, before, kind: kind as MemoryKind | undefined, hops, userId, asOf: as_of }, env, ctx);
 
       const notice = semanticUnavailable
@@ -284,7 +317,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
           `\n\nUse \`list-proposals\` to review, or \`approve-proposal\` / \`reject-proposal\` to act.`;
       }
       return { content: [{ type: "text", text }] };
-    }
+    })
   );
 
   // ── list_recent ──────────────────────────────────────────────────────────
@@ -299,7 +332,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
         before: z.number().int().optional().describe("Only return entries before this Unix ms timestamp"),
       },
     },
-    async ({ n, tag, after, before }) => {
+    audited("list_recent", async ({ n, tag, after, before }) => {
       const { sql, bindings } = buildEntryFilterQuery({ n, tag, after, before, userId });
       const { results } = await env.DB.prepare(sql).bind(...bindings).all();
 
@@ -315,7 +348,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
       }).join("\n\n");
 
       return { content: [{ type: "text", text }] };
-    }
+    })
   );
 
   // ── forget ───────────────────────────────────────────────────────────────
@@ -327,7 +360,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
         id: z.string().describe("Entry ID from recall or list_recent"),
       },
     },
-    async ({ id }) => {
+    audited("forget", async ({ id }) => {
       if (userId) {
         const row = await env.DB.prepare(`SELECT owner_user_id FROM entries WHERE id = ?`).bind(id).first() as { owner_user_id: string } | null;
         if (row && row.owner_user_id && row.owner_user_id !== userId && row.owner_user_id !== "") {
@@ -339,7 +372,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
         return { content: [{ type: "text", text: `No entry found with ID: ${id}` }] };
       }
       return { content: [{ type: "text", text: `Deleted entry ${id} and ${result.vectorCount} vector(s)` }] };
-    }
+    })
   );
 
   // ── link ─────────────────────────────────────────────────────────────────
@@ -353,7 +386,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
         type: z.enum(Object.keys(EDGE_TYPES) as [string, ...string[]]).default("relates_to").describe("Relationship type"),
       },
     },
-    async ({ source_id, target_id, type }) => {
+    audited("link", async ({ source_id, target_id, type }) => {
       if (userId) {
         const ids = [source_id, target_id];
         const rows = await env.DB.prepare(`SELECT id, tags, owner_user_id FROM entries WHERE id IN (?, ?)`).bind(...ids).all() as { results: { id: string; tags: string; owner_user_id: string }[] };
@@ -367,7 +400,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
       const edge = await createEdge(source_id, target_id, type, { provenance: "explicit", weight: 1.0 }, env);
       if (!edge) return { content: [{ type: "text", text: "Cannot link an entry to itself." }] };
       return { content: [{ type: "text", text: `Linked ${edge.source_id} → ${edge.target_id} (${edgeLabel(edge.type)}).` }] };
-    }
+    })
   );
 
   // ── unlink ───────────────────────────────────────────────────────────────
@@ -381,7 +414,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
         type: z.enum(Object.keys(EDGE_TYPES) as [string, ...string[]]).optional().describe("Only remove this relationship type; omit to remove all links between the pair"),
       },
     },
-    async ({ source_id, target_id, type }) => {
+    audited("unlink", async ({ source_id, target_id, type }) => {
       if (userId) {
         const ids = [source_id, target_id];
         const rows = await env.DB.prepare(`SELECT id, tags, owner_user_id FROM entries WHERE id IN (?, ?)`).bind(...ids).all() as { results: { id: string; tags: string; owner_user_id: string }[] };
@@ -395,7 +428,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
       const deleted = await deleteEdge(source_id, target_id, type, env);
       if (!deleted) return { content: [{ type: "text", text: "No link found between those entries." }] };
       return { content: [{ type: "text", text: `Removed ${deleted} link(s) between ${source_id} and ${target_id}.` }] };
-    }
+    })
   );
 
   // ── connections ──────────────────────────────────────────────────────────
@@ -408,7 +441,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
         type: z.enum(Object.keys(EDGE_TYPES) as [string, ...string[]]).optional().describe("Filter to a single relationship type"),
       },
     },
-    async ({ id, type }) => {
+    audited("connections", async ({ id, type }) => {
       const connections = await getConnections(id, type, env, userId);
       if (!connections.length) {
         return { content: [{ type: "text", text: `No connections found for ${id}.` }] };
@@ -417,7 +450,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
         .map(c => `- (${c.label}) ${c.id}: ${c.content.slice(0, 120)} [confidence: ${(c.confidence * 100).toFixed(0)}%]`)
         .join("\n");
       return { content: [{ type: "text", text }] };
-    }
+    })
   );
 
   // ── passages ──────────────────────────────────────────────────────────────
@@ -429,7 +462,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
         entry_id: z.string().describe("Entry ID from recall or list_recent"),
       },
     },
-    async ({ entry_id }) => {
+    audited("passages", async ({ entry_id }) => {
       const { results } = await env.DB.prepare(
         `SELECT id, content, section, start_offset, end_offset, created_at FROM passages WHERE entry_id = ? ORDER BY created_at DESC LIMIT 10`
       ).bind(entry_id).all() as { results: { id: string; content: string; section: string | null; start_offset: number | null; end_offset: number | null; created_at: number }[] };
@@ -440,7 +473,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
         return `${i + 1}. ${section}${offset}\n${r.content.slice(0, 300)}${r.content.length > 300 ? "..." : ""}`;
       }).join("\n\n");
       return { content: [{ type: "text", text: `Passages for ${entry_id}:\n\n${text}` }] };
-    }
+    })
   );
 
   // ── restore ──────────────────────────────────────────────────────────────
@@ -453,7 +486,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
         snapshot_id: z.string().optional().describe("Optional specific snapshot ID; if omitted, restores the most recent snapshot"),
       },
     },
-    async ({ entry_id, snapshot_id }) => {
+    audited("restore", async ({ entry_id, snapshot_id }) => {
       let snapshot;
       if (snapshot_id) {
         snapshot = await env.DB.prepare(
@@ -483,7 +516,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
       }
 
       return { content: [{ type: "text", text: `Restored. New entry ID: ${result.id} — based on snapshot ${snapshot.id} from ${new Date(snapshot.created_at as number).toISOString()}.` }] };
-    }
+    })
   );
 
   // ── propose_edge ──────────────────────────────────────────────────────
@@ -498,7 +531,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
         reason: z.string().optional().describe("Why this link should exist"),
       },
     },
-    async ({ source_id, target_id, type, reason }) => {
+    audited("propose_edge", async ({ source_id, target_id, type, reason }) => {
       const trimmedSource = source_id.trim();
       const trimmedTarget = target_id.trim();
       if (!trimmedSource || !trimmedTarget) return { content: [{ type: "text", text: "source_id and target_id are required." }] };
@@ -517,7 +550,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
       ).bind(proposalId, trimmedSource, trimmedTarget, type, reason ?? "", userId ?? "", now).run();
 
       return { content: [{ type: "text", text: `Proposal ${proposalId} created: ${trimmedSource} —[${type}]→ ${trimmedTarget}. Reason: ${reason ?? "(none)"}. Awaiting human approval.` }] };
-    }
+    })
   );
 
   // ── list-proposals ───────────────────────────────────────────────────
@@ -527,7 +560,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
       description: "List pending edge proposals awaiting human approval.",
       inputSchema: {},
     },
-    async () => {
+    audited("list-proposals", async () => {
       const vis = userId ? buildVisibilityClause(userId) : null;
       let sql = `SELECT id, source_id, target_id, type, reason, proposed_by, status, created_at FROM edge_proposals WHERE status = 'pending'`;
       const bindings: any[] = [];
@@ -548,7 +581,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
       }).join("\n");
 
       return { content: [{ type: "text", text }] };
-    }
+    })
   );
 
   // ── approve-proposal ─────────────────────────────────────────────────
@@ -560,7 +593,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
         proposal_id: z.string().describe("The proposal ID from list-proposals"),
       },
     },
-    async ({ proposal_id }) => {
+    audited("approve-proposal", async ({ proposal_id }) => {
       const proposal = await env.DB.prepare(
         `SELECT id, source_id, target_id, type, reason, proposed_by, status, created_at FROM edge_proposals WHERE id = ?`
       ).bind(proposal_id).first() as Record<string, any> | null;
@@ -575,7 +608,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
       ).bind(now, proposal_id).run();
 
       return { content: [{ type: "text", text: `Approved proposal ${proposal_id}: ${proposal.source_id} —[${proposal.type}]→ ${proposal.target_id}. Edge created.` }] };
-    }
+    })
   );
 
   // ── reject-proposal ──────────────────────────────────────────────────
@@ -587,7 +620,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
         proposal_id: z.string().describe("The proposal ID from list-proposals"),
       },
     },
-    async ({ proposal_id }) => {
+    audited("reject-proposal", async ({ proposal_id }) => {
       const proposal = await env.DB.prepare(
         `SELECT id, source_id, target_id, type, reason, proposed_by, status, created_at FROM edge_proposals WHERE id = ?`
       ).bind(proposal_id).first() as Record<string, any> | null;
@@ -601,7 +634,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
       ).bind(now, proposal_id).run();
 
       return { content: [{ type: "text", text: `Rejected proposal ${proposal_id}: ${proposal.source_id} —[${proposal.type}]→ ${proposal.target_id}.` }] };
-    }
+    })
   );
 
   return server;

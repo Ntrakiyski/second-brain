@@ -16,6 +16,8 @@ export class D1Mock {
   document_sections: any[] = [];
   entry_snapshots: any[] = [];
   edgeProposals: any[] = [];
+  agentRuns: any[] = [];
+  agentEvents: any[] = [];
 
   prepare(sql: string) {
     const s = sql.replace(/\s+/g, " ").trim();
@@ -183,6 +185,22 @@ export class D1Mock {
             return { meta: { changes: 1 } };
           }
           return { meta: { changes: 0 } };
+        }
+        if (s.startsWith("INSERT INTO agent_runs")) {
+          const [id, userId, startedAt] = args;
+          db.agentRuns.push({ id, user_id: userId, started_at: startedAt, completed_at: null, tool_count: 0 });
+          return { meta: { changes: 1 } };
+        }
+        if (s.startsWith("INSERT INTO agent_events")) {
+          const [id, runId, toolName, inputSummary, outputSummary, durationMs, error, createdAt] = args;
+          db.agentEvents.push({ id, run_id: runId, tool_name: toolName, input_summary: inputSummary, output_summary: outputSummary, duration_ms: durationMs, error, created_at: createdAt });
+          return { meta: { changes: 1 } };
+        }
+        if (s.startsWith("UPDATE agent_runs SET completed_at")) {
+          const [completedAt, toolCount, id] = args;
+          const row = db.agentRuns.find((r: any) => r.id === id);
+          if (row) { row.completed_at = completedAt; row.tool_count = toolCount; }
+          return { meta: { changes: row ? 1 : 0 } };
         }
         if (s.startsWith("DELETE FROM entries WHERE id")) {
           const [id] = args;
@@ -369,6 +387,33 @@ export class D1Mock {
         }
         if (s.includes("COUNT(*) as count") && s.includes(`tags NOT LIKE '%"status:%'`) && s.includes(`tags NOT LIKE '%"kind:%'`)) {
           const count = db.entries.filter((e: any) => !String(e.tags).includes('"status:') && !String(e.tags).includes('"kind:')).length;
+          return { count };
+        }
+        // ─── Table-specific COUNT handlers (must precede generic COUNT) ─────
+        if (s.includes("COUNT(*) as count") && s.includes("FROM edge_proposals") && s.includes("status = 'pending'")) {
+          return { count: db.edgeProposals.filter((p: any) => p.status === "pending").length };
+        }
+        if (s.includes("COUNT(*) as count") && s.includes("FROM entries") && s.includes("created_at >= ?")) {
+          const cutoff = Number(args[0]);
+          return { count: db.entries.filter((e: any) => e.created_at >= cutoff).length };
+        }
+        if (s.includes("COUNT(*) as count") && s.includes("FROM entries") && s.includes("epistemic_status = 'stale'")) {
+          return { count: db.entries.filter((e: any) => e.epistemic_status === "stale").length };
+        }
+        // ─── Agent runs/events first() — must precede generic COUNT ──
+        if (s.includes("FROM agent_runs") && s.includes("COUNT(*) as count") && s.includes("started_at >= ?")) {
+          const cutoff = args[0] as number;
+          const count = db.agentRuns.filter((r: any) => r.started_at >= cutoff).length;
+          return { count };
+        }
+        if (s.includes("FROM agent_runs") && s.includes("COUNT(DISTINCT user_id)") && s.includes("started_at >= ?")) {
+          const cutoff = args[0] as number;
+          const users = new Set(db.agentRuns.filter((r: any) => r.started_at >= cutoff).map((r: any) => r.user_id));
+          return { count: users.size };
+        }
+        if (s.includes("FROM agent_events") && s.includes("COUNT(*) as count") && s.includes("created_at >= ?")) {
+          const cutoff = args[0] as number;
+          const count = db.agentEvents.filter((e: any) => e.created_at >= cutoff).length;
           return { count };
         }
         if (s.includes("COUNT(*) as count")) {
@@ -1020,6 +1065,40 @@ export class D1Mock {
           rows.sort((a: any, b: any) => b.created_at - a.created_at);
           return { results: rows.slice(0, limit) };
         }
+        // ─── Agent runs/events all() ────────────────────────────────
+        if (s.includes("FROM agent_events") && s.includes("tool_name") && s.includes("GROUP BY tool_name")) {
+          const cutoff = args[0] as number;
+          const filtered = db.agentEvents.filter((e: any) => e.created_at >= cutoff);
+          const grouped = new Map<string, { count: number; totalDuration: number; errorCount: number }>();
+          for (const e of filtered) {
+            const existing = grouped.get(e.tool_name) ?? { count: 0, totalDuration: 0, errorCount: 0 };
+            existing.count++;
+            existing.totalDuration += e.duration_ms ?? 0;
+            if (e.error) existing.errorCount++;
+            grouped.set(e.tool_name, existing);
+          }
+          const results = [...grouped.entries()]
+            .map(([tool_name, g]) => ({ tool_name, count: g.count, avg_duration_ms: g.count > 0 ? g.totalDuration / g.count : 0, errorCount: g.errorCount }))
+            .sort((a: any, b: any) => b.count - a.count);
+          return { results };
+        }
+        if (s.includes("FROM agent_runs") && s.includes("ORDER BY started_at DESC")) {
+          let rows = [...db.agentRuns];
+          const userIdx = s.indexOf("WHERE user_id = ?");
+          if (userIdx !== -1) {
+            const userId = args[0] as string;
+            rows = rows.filter((r: any) => r.user_id === userId);
+          }
+          const limitIdx = s.indexOf("LIMIT ?");
+          const limit = limitIdx !== -1 ? Number(args[args.length - 1]) : rows.length;
+          rows.sort((a: any, b: any) => b.started_at - a.started_at);
+          return { results: rows.slice(0, limit).map((r: any) => ({ id: r.id, userId: r.user_id, startedAt: r.started_at, completedAt: r.completed_at, toolCount: r.tool_count })) };
+        }
+        if (s.includes("FROM agent_events") && s.includes("WHERE run_id = ?") && s.includes("ORDER BY created_at ASC")) {
+          const runId = args[0] as string;
+          const rows = db.agentEvents.filter((e: any) => e.run_id === runId).sort((a: any, b: any) => a.created_at - b.created_at);
+          return { results: rows.map((r: any) => ({ id: r.id, runId: r.run_id, toolName: r.tool_name, inputSummary: r.input_summary, outputSummary: r.output_summary, durationMs: r.duration_ms, error: r.error, createdAt: r.created_at })) };
+        }
         return { results: [] };
       },
     });
@@ -1032,5 +1111,5 @@ export class D1Mock {
 
   async exec(_sql: string) { }
   async batch(stmts: any[]) { return Promise.all(stmts.map((s: any) => s.run())); }
-  reset() { this.entries = []; this.edges = []; this.users = []; this.edgeProposals = []; }
+  reset() { this.entries = []; this.edges = []; this.users = []; this.edgeProposals = []; this.agentRuns = []; this.agentEvents = []; }
 }
