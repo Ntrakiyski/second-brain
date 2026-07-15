@@ -101,6 +101,8 @@ export async function initializeDatabase(env: Env): Promise<void> {
     await env.DB.exec(`CREATE TABLE IF NOT EXISTS document_sections (id TEXT PRIMARY KEY, document_id TEXT NOT NULL, parent_section_id TEXT, title TEXT NOT NULL, level INTEGER NOT NULL DEFAULT 0, order_index INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL)`);
     await env.DB.exec(`CREATE INDEX IF NOT EXISTS idx_sections_document_id ON document_sections(document_id)`);
     await env.DB.exec(`CREATE INDEX IF NOT EXISTS idx_sections_parent ON document_sections(parent_section_id)`);
+    // Edge proposals: human-gated contradiction inbox (Pillar 2)
+    await env.DB.exec(`CREATE TABLE IF NOT EXISTS edge_proposals (id TEXT PRIMARY KEY, source_id TEXT NOT NULL, target_id TEXT NOT NULL, type TEXT NOT NULL DEFAULT 'contradicts', reason TEXT NOT NULL DEFAULT '', proposed_by TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', created_at INTEGER NOT NULL, resolved_at INTEGER, UNIQUE(source_id, target_id, type, status))`);
   } catch (e) {
     console.error("Database initialization error (non-fatal):", e);
   }

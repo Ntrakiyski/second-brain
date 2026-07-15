@@ -195,6 +195,8 @@ export interface RecallSearchResult {
   // True when the dense (Vectorize) step could not run — recall fell back to
   // keyword-only. Lets callers tell the user semantic search is unavailable.
   semanticUnavailable: boolean;
+  // Cross-user contradiction proposals detected during recall
+  proposed_edges: { source_id: string; target_id: string; type: string; reason: string }[];
 }
 
 // Render recall matches as the MCP tool's text reply. Crucially includes each entry's
@@ -328,7 +330,7 @@ export async function recallEntries(
     const { results: tagRows } = await env.DB.prepare(
       `SELECT id, vector_ids, content, tags, source, created_at FROM entries WHERE tags LIKE ?`
     ).bind(`%"${escapeLikePattern(tag)}"%`).all();
-    if (!tagRows.length) return { matches: [], insight: "", semanticUnavailable };
+    if (!tagRows.length) return { matches: [], insight: "", semanticUnavailable, proposed_edges: [] };
 
     // Visibility filter: exclude other users' private entries
     const visibleTagRows = userId
@@ -337,14 +339,14 @@ export async function recallEntries(
           return !(tags.includes("private") && r.owner_user_id !== userId);
         })
       : tagRows as any[];
-    if (!visibleTagRows.length) return { matches: [], insight: "", semanticUnavailable };
+    if (!visibleTagRows.length) return { matches: [], insight: "", semanticUnavailable, proposed_edges: [] };
 
     keywordRows = visibleTagRows as unknown as KeywordRow[];
 
     const vectorIds = [...new Set(
       (visibleTagRows as any[]).flatMap(r => JSON.parse((r.vector_ids as string) ?? "[]") as string[])
     )];
-    if (!vectorIds.length) return { matches: [], insight: "", semanticUnavailable };
+    if (!vectorIds.length) return { matches: [], insight: "", semanticUnavailable, proposed_edges: [] };
 
     const vectors: VectorizeVector[] = [];
     try {
@@ -416,7 +418,7 @@ export async function recallEntries(
   // keyword is a re-ranking signal only (allowKeywordOnly=false); on the default path it can
   // also surface exact-identifier matches the dense top-K missed entirely.
   const fusedMatches = fuseDenseAndKeyword(results.matches as VectorizeMatch[], keywordRows, tokens, !tag || semanticUnavailable);
-  if (!fusedMatches.length) return { matches: [], insight: "", semanticUnavailable };
+  if (!fusedMatches.length) return { matches: [], insight: "", semanticUnavailable, proposed_edges: [] };
 
   // Visibility filter: after RRF fusion, remove candidates that are other users' private entries.
   let visibleFusedMatches = fusedMatches;
@@ -433,7 +435,7 @@ export async function recallEntries(
       }).map((r: any) => r.id)
     );
     visibleFusedMatches = fusedMatches.filter(m => !hiddenIds.has((m.metadata as any)?.parentId ?? m.id));
-    if (!visibleFusedMatches.length) return { matches: [], insight: "", semanticUnavailable };
+    if (!visibleFusedMatches.length) return { matches: [], insight: "", semanticUnavailable, proposed_edges: [] };
   }
 
   // Fetch recall_count, importance_score, and last_recalled_at for all candidates.
@@ -466,7 +468,7 @@ export async function recallEntries(
     return true;
   }).slice(0, topK);
 
-  if (!deduped.length) return { matches: [], insight: "", semanticUnavailable };
+  if (!deduped.length) return { matches: [], insight: "", semanticUnavailable, proposed_edges: [] };
 
   const seedParentIds = deduped.map((m) => (m.metadata as any)?.parentId ?? m.id);
 
@@ -491,7 +493,7 @@ export async function recallEntries(
   const allParentIds = [...seedParentIds, ...expandedScored.map(e => e.parentId)];
   const placeholders = allParentIds.map(() => "?").join(", ");
   const d1Bindings: (string | number)[] = [...allParentIds];
-  let d1Sql = `SELECT id, content, tags, source, created_at FROM entries WHERE id IN (${placeholders}) AND tags NOT LIKE '%"auto-pattern"%' AND tags NOT LIKE '%"status:deprecated"%'`;
+  let d1Sql = `SELECT id, content, tags, source, created_at, owner_user_id FROM entries WHERE id IN (${placeholders}) AND tags NOT LIKE '%"auto-pattern"%' AND tags NOT LIKE '%"status:deprecated"%'`;
   if (userId) {
     const vis = buildVisibilityClause(userId);
     d1Sql += ` AND ${vis.sql}`;
@@ -647,6 +649,56 @@ export async function recallEntries(
     }
   }
 
+  // ── Cross-user contradiction detection (S05) ─────────────────────────────
+  // For each cross-user match, embed it and query Vectorize for similar entries
+  // owned by the caller. If cosine ≥ 0.85, create a proposal in edge_proposals.
+  const proposed_edges: { source_id: string; target_id: string; type: string; reason: string }[] = [];
+  if (userId) {
+    const crossUserMatches = matches
+      .filter(m => {
+        const ownerId = (d1Map.get(m.id) as any)?.owner_user_id;
+        return ownerId && ownerId !== userId;
+      })
+      .slice(0, 5); // Limit to 5 cross-user results for latency
+
+    for (const crossMatch of crossUserMatches) {
+      try {
+        const crossVec = await embed(crossMatch.content, env);
+        // Query Vectorize for similar entries owned by the caller
+        const callerOpts: Record<string, any> = { topK: 3, returnMetadata: "all" };
+        callerOpts.metadataFilter = { owner_user_id: { $eq: userId } };
+        const callerResults = await env.VECTORIZE.query(crossVec, callerOpts);
+
+        for (const callerMatch of callerResults.matches) {
+          const callerEntryId = (callerMatch.metadata as any)?.parentId ?? callerMatch.id;
+          if (callerEntryId === crossMatch.id) continue;
+          if ((callerMatch.score ?? 0) >= 0.85) {
+            // Dedup: check if proposal already exists for this pair
+            const existing = await env.DB.prepare(
+              `SELECT id FROM edge_proposals WHERE source_id = ? AND target_id = ? AND type = 'contradicts' AND status = 'pending'`
+            ).bind(callerEntryId, crossMatch.id).first();
+            if (!existing) {
+              const proposalId = crypto.randomUUID();
+              const now = Date.now();
+              await env.DB.prepare(
+                `INSERT INTO edge_proposals (id, source_id, target_id, type, reason, proposed_by, status, created_at) VALUES (?, ?, ?, 'contradicts', ?, ?, 'pending', ?)`
+              ).bind(proposalId, callerEntryId, crossMatch.id, `Auto-detected contradiction during recall (similarity: ${(callerMatch.score * 100).toFixed(0)}%)`, userId, now).run();
+              proposed_edges.push({
+                source_id: callerEntryId,
+                target_id: crossMatch.id,
+                type: "contradicts",
+                reason: `Auto-detected contradiction (similarity: ${(callerMatch.score * 100).toFixed(0)}%)`,
+              });
+            }
+            break; // Only one proposal per cross-user match
+          }
+        }
+      } catch (e) {
+        console.error("Cross-user contradiction detection failed (non-fatal):", e);
+      }
+    }
+  }
+
   // Synthesize over exactly what's shown (seeds + any surfaced neighbors) so the
   // insight stays grounded in the returned results.
   const insight = matches.length > 1
@@ -660,5 +712,5 @@ export async function recallEntries(
     );
   }
 
-  return { matches, insight, semanticUnavailable };
+  return { matches, insight, semanticUnavailable, proposed_edges };
 }

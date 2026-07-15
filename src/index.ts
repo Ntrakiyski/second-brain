@@ -18,7 +18,7 @@ import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
 import type { Env } from "./types";
 import { apiHandler } from "./api-handler";
 import { defaultHandler } from "./routes";
-import { runNightlyCompression, runGraphPass } from "./lifecycle";
+import { runNightlyCompression, runGraphPass, detectCrossUserContradictions } from "./lifecycle";
 import { runScheduledIntegrationSync } from "./integrations-mirror";
 
 // ─── Re-exports ───────────────────────────────────────────────────────────────
@@ -173,7 +173,7 @@ export {
 
 export { apiHandler } from "./api-handler";
 export { defaultHandler } from "./routes";
-export { runNightlyCompression, runGraphPass, detectStaleness } from "./lifecycle";
+  export { runNightlyCompression, runGraphPass, detectStaleness, detectCrossUserContradictions } from "./lifecycle";
 export { runScheduledIntegrationSync } from "./integrations-mirror";
 
 // Also export the integration framework symbols that tests may import
@@ -214,6 +214,7 @@ export default {
   scheduled: async (_event: ScheduledEvent, env: Env, ctx: ExecutionContext) => {
     ctx.waitUntil(runNightlyCompression(env, ctx));
     ctx.waitUntil(runGraphPass(env, ctx));
+    ctx.waitUntil(detectCrossUserContradictions(env).catch(e => console.error("detectCrossUserContradictions failed (non-fatal):", e)));
     ctx.waitUntil(runScheduledIntegrationSync(env));
   },
 };

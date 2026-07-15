@@ -75,7 +75,27 @@ describe("createEdge", () => {
   it("stores provenance and metadata", async () => {
     await createEdge("a", "b", "relates_to", { provenance: "explicit", metadata: { note: "hi" } }, env);
     expect(db.edges[0].provenance).toBe("explicit");
-    expect(JSON.parse(db.edges[0].metadata)).toEqual({ note: "hi", confidence: 0.5 });
+    expect(JSON.parse(db.edges[0].metadata)).toEqual({ note: "hi", confidence: 1.0 });
+  });
+
+  it("defaults confidence to 1.0 for explicit provenance", async () => {
+    await createEdge("a", "b", "relates_to", { provenance: "explicit" }, env);
+    expect(JSON.parse(db.edges[0].metadata).confidence).toBe(1.0);
+  });
+
+  it("defaults confidence to 1.0 for system provenance", async () => {
+    await createEdge("a", "b", "supersedes", { provenance: "system" }, env);
+    expect(JSON.parse(db.edges[0].metadata).confidence).toBe(1.0);
+  });
+
+  it("defaults confidence to weight for inferred provenance", async () => {
+    await createEdge("a", "b", "relates_to", { provenance: "inferred", weight: 0.8 }, env);
+    expect(JSON.parse(db.edges[0].metadata).confidence).toBe(0.8);
+  });
+
+  it("uses explicit confidence when provided, overriding provenance default", async () => {
+    await createEdge("a", "b", "relates_to", { provenance: "inferred", weight: 0.8, confidence: 0.3 }, env);
+    expect(JSON.parse(db.edges[0].metadata).confidence).toBe(0.3);
   });
 });
 

@@ -15,6 +15,7 @@ export class D1Mock {
   documents: any[] = [];
   document_sections: any[] = [];
   entry_snapshots: any[] = [];
+  edgeProposals: any[] = [];
 
   prepare(sql: string) {
     const s = sql.replace(/\s+/g, " ").trim();
@@ -195,8 +196,11 @@ export class D1Mock {
           if (existing) {
             existing.weight = Math.max(existing.weight, weight); // ON CONFLICT ... max(weight)
             existing.updated_at = updated_at;
+            const meta = typeof metadata === "string" ? JSON.parse(metadata) : metadata;
+            if (meta?.confidence != null) existing.confidence = meta.confidence;
           } else {
-            db.edges.push({ id, source_id, target_id, type, weight, provenance, metadata, created_at, updated_at });
+            const meta = typeof metadata === "string" ? JSON.parse(metadata) : metadata;
+            db.edges.push({ id, source_id, target_id, type, weight, provenance, metadata, created_at, updated_at, confidence: meta?.confidence ?? 1.0 });
           }
           return { meta: { changes: 1 } };
         }
@@ -262,6 +266,41 @@ export class D1Mock {
           const before = db.entries.length;
           db.entries = db.entries.filter((e: any) => !(e.owner_user_id === ownerId && (JSON.parse(e.tags ?? "[]") as string[]).includes("private")));
           return { meta: { changes: before - db.entries.length } };
+        }
+        // ─── Edge proposals (run) ───────────────────────────────────────
+        if (s.startsWith("INSERT INTO edge_proposals")) {
+          // Parse columns and values from SQL to handle both:
+          //   VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)   — 7 args (MCP)
+          //   VALUES (?, ?, ?, 'contradicts', ?, ?, 'pending', ?) — 6 args (lifecycle)
+          const colMatch = s.match(/INSERT INTO edge_proposals \(([^)]+)\) VALUES \(([^)]+)\)/);
+          if (colMatch) {
+            const columns = colMatch[1].split(',').map((c: string) => c.trim());
+            const values = colMatch[2].split(',').map((v: string) => v.trim());
+            const proposal: any = {};
+            let argIdx = 0;
+            for (let i = 0; i < columns.length; i++) {
+              if (values[i] === '?') {
+                proposal[columns[i]] = args[argIdx++];
+              } else {
+                proposal[columns[i]] = values[i].replace(/^'|'$/g, '');
+              }
+            }
+            proposal.status = proposal.status ?? "pending";
+            db.edgeProposals.push(proposal);
+            return { meta: { changes: 1 } };
+          }
+          // Fallback (shouldn't be reached)
+          const [id, source_id, target_id, type, reason, proposed_by, _status, created_at] = args;
+          db.edgeProposals.push({ id, source_id, target_id, type, reason, proposed_by, status: "pending", created_at });
+          return { meta: { changes: 1 } };
+        }
+        if (s.startsWith("UPDATE edge_proposals SET status")) {
+          const status = s.includes("'approved'") ? "approved" : "rejected";
+          const resolvedAt = args[0] as number;
+          const id = args[1] as string;
+          const p = db.edgeProposals.find((pp: any) => pp.id === id);
+          if (p) { p.status = status; p.resolved_at = resolvedAt; }
+          return { meta: { changes: p ? 1 : 0 } };
         }
         return { meta: {} };
       },
@@ -350,6 +389,17 @@ export class D1Mock {
         }
         if (s.includes("FROM document_sections") && s.includes("WHERE id")) {
           return db.document_sections.find((r: any) => r.id === args[0]) ?? null;
+        }
+        // ─── Edge proposals (first) — must precede generic WHERE id ──────
+        if (s.includes("FROM edge_proposals WHERE id = ?")) {
+          const id = args[0];
+          return db.edgeProposals.find((p: any) => p.id === id) ?? null;
+        }
+        if (s.includes("FROM edge_proposals WHERE source_id = ? AND target_id = ? AND type") && s.includes("status = 'pending'")) {
+          const typeMatch = s.match(/type = '?(\w+)'?/);
+          const typeValue = typeMatch ? typeMatch[1] : args[2];
+          const [sourceId, targetId] = args;
+          return db.edgeProposals.find((pp: any) => pp.source_id === sourceId && pp.target_id === targetId && pp.type === typeValue && pp.status === "pending") ?? null;
         }
         if (s.includes("WHERE id") && !s.includes("json_each")) {
           return db.entries.find((e: any) => e.id === args[0]) ?? null;
@@ -442,6 +492,21 @@ export class D1Mock {
               created_at: e.created_at, vector_ids: e.vector_ids,
               owner_user_id: (e as any).owner_user_id ?? "",
             }));
+          return { results };
+        }
+        // ─── detectCrossUserContradictions query ────────────────────────
+        if (s.includes("SELECT id, content, owner_user_id FROM entries WHERE created_at >= ?") && s.includes("tags NOT LIKE")) {
+          const cutoff = args[0] as number;
+          const limit = args[1] as number;
+          const results = db.entries
+            .filter((e: any) => e.created_at >= cutoff)
+            .filter((e: any) => {
+              const tags: string[] = JSON.parse(e.tags ?? "[]");
+              return !tags.includes("private");
+            })
+            .sort((a: any, b: any) => b.created_at - a.created_at)
+            .slice(0, limit)
+            .map((e: any) => ({ id: e.id, content: e.content, owner_user_id: e.owner_user_id ?? "" }));
           return { results };
         }
         if (s.includes("SELECT id, content, tags, source, created_at, vector_ids, owner_user_id FROM entries")) {
@@ -558,7 +623,7 @@ export class D1Mock {
           const results = db.edges
             .filter((e: any) => ids.has(e.source_id) || ids.has(e.target_id))
             .sort((a: any, b: any) => b.weight - a.weight)
-            .map((e: any) => ({ source_id: e.source_id, target_id: e.target_id, type: e.type, weight: e.weight, confidence: e.weight ?? 1.0 }));
+            .map((e: any) => ({ source_id: e.source_id, target_id: e.target_id, type: e.type, weight: e.weight, confidence: e.confidence ?? 1.0 }));
           return { results };
         }
         if (s.includes("SELECT source_id, target_id FROM edges ORDER BY weight DESC")) {
@@ -605,6 +670,108 @@ export class D1Mock {
             .filter((e: any) => args.includes(e.id))
             .map((e: any) => ({ id: e.id, tags: e.tags }));
           return { results };
+        }
+        if (s.includes("FROM entries e LEFT JOIN users u ON e.owner_user_id = u.id")) {
+          // GET /team-activity query.
+          let rows = [...db.entries] as any[];
+          // Filter to public entries only
+          rows = rows.filter(e => !(JSON.parse(e.tags ?? "[]") as string[]).includes("private"));
+          // Apply user filter
+          if (s.includes("WHERE e.tags NOT LIKE") && s.includes("owner_user_id = (SELECT id FROM users WHERE username = ?)")) {
+            const username = args[0] as string;
+            const user = db.users.find((u: any) => u.username === username);
+            if (user) {
+              rows = rows.filter(e => e.owner_user_id === user.id);
+            } else {
+              rows = [];
+            }
+          }
+          // Apply after cursor
+          const afterMatch = s.match(/e\.created_at <= \?/);
+          if (afterMatch) {
+            const idx = s.indexOf("e.created_at <= ?");
+            const beforeStr = s.substring(0, idx);
+            const bindCount = (beforeStr.match(/\?/g) || []).length;
+            const afterVal = Number(args[bindCount]);
+            rows = rows.filter(e => e.created_at <= afterVal);
+          }
+          // Sort and limit
+          const limitMatch = s.match(/LIMIT \?/);
+          const limit = limitMatch ? Number(args[args.length - 1]) : 20;
+          rows.sort((a: any, b: any) => b.created_at - a.created_at);
+          rows = rows.slice(0, limit);
+          // Hydrate usernames
+          const results = rows.map((e: any) => {
+            const user = db.users.find((u: any) => u.id === e.owner_user_id);
+            return {
+              id: e.id,
+              content: e.content,
+              tags: e.tags,
+              source: e.source,
+              created_at: e.created_at,
+              owner_user_id: e.owner_user_id ?? "",
+              owner_username: user?.username ?? "",
+            };
+          });
+          return { results };
+        }
+        // ─── Edge proposals ──────────────────────────────────────────────
+        if (s.includes("FROM edge_proposals WHERE id = ?") && !s.includes("status = 'pending'")) {
+          // GET single proposal
+          const id = args[0];
+          const p = db.edgeProposals.find((p: any) => p.id === id);
+          return { results: p ? [p] : [] };
+        }
+        if (s.includes("FROM edge_proposals WHERE source_id = ? AND target_id = ? AND type") && s.includes("status = 'pending'")) {
+          // Dedup check — handles both: type = ? (MCP) and type = 'contradicts' (lifecycle)
+          const typeMatch = s.match(/type = '?(\w+)'?/);
+          const typeValue = typeMatch ? typeMatch[1] : args[2];
+          const [sourceId, targetId] = args;
+          const p = db.edgeProposals.find((pp: any) => pp.source_id === sourceId && pp.target_id === targetId && pp.type === typeValue && pp.status === "pending");
+          return { results: p ? [p] : [] };
+        }
+        if (s.includes("FROM edge_proposals") && s.includes("status = 'pending'") && !s.includes("source_id = ?")) {
+          // List pending proposals — handles both aliased and non-aliased SQL
+          const results = db.edgeProposals
+            .filter((p: any) => p.status === "pending")
+            .sort((a: any, b: any) => b.created_at - a.created_at);
+          return { results };
+        }
+        if (s.includes("INSERT INTO edge_proposals")) {
+          // Parse columns and values to handle hardcoded literals
+          const colMatch = s.match(/INSERT INTO edge_proposals \(([^)]+)\) VALUES \(([^)]+)\)/);
+          if (colMatch) {
+            const columns = colMatch[1].split(',').map((c: string) => c.trim());
+            const values = colMatch[2].split(',').map((v: string) => v.trim());
+            const proposal: any = {};
+            let argIdx = 0;
+            for (let i = 0; i < columns.length; i++) {
+              if (values[i] === '?') {
+                proposal[columns[i]] = args[argIdx++];
+              } else {
+                proposal[columns[i]] = values[i].replace(/^'|'$/g, '');
+              }
+            }
+            proposal.status = proposal.status ?? "pending";
+            db.edgeProposals.push(proposal as any);
+            return { results: [] };
+          }
+          // Fallback
+          const id = args[0] as string;
+          const proposal = {
+            id, source_id: args[1], target_id: args[2], type: args[3],
+            reason: args[4], proposed_by: args[5], status: "pending", created_at: args[7] as number,
+          };
+          db.edgeProposals.push(proposal as any);
+          return { results: [] };
+        }
+        if (s.includes("UPDATE edge_proposals SET status =")) {
+          const status = s.includes("'approved'") ? "approved" : "rejected";
+          const resolvedAt = args[0] as number;
+          const id = args[1] as string;
+          const p = db.edgeProposals.find((pp: any) => pp.id === id);
+          if (p) { p.status = status; p.resolved_at = resolvedAt; }
+          return { results: [] };
         }
         if (s.includes("SELECT id, content, tags, source, created_at") && s.includes("FROM entries WHERE id IN") && !s.includes("tags NOT LIKE")) {
           // Graph node hydration (/connections, /graph). The `tags NOT LIKE` guard
@@ -660,7 +827,7 @@ export class D1Mock {
             const asOf = Number(rest[argIdx++]);
             rows = rows.filter((e: any) => e.valid_to == null || e.valid_to > asOf);
           }
-          const results = rows.map((e: any) => ({ id: e.id, content: e.content, tags: e.tags, source: e.source, created_at: e.created_at }));
+          const results = rows.map((e: any) => ({ id: e.id, content: e.content, tags: e.tags, source: e.source, created_at: e.created_at, owner_user_id: e.owner_user_id ?? "" }));
           return { results };
         }
         if (s.includes("SELECT id, content FROM entries") && s.includes("WHERE tags LIKE") && s.includes("ORDER BY created_at DESC")) {
@@ -816,11 +983,12 @@ export class D1Mock {
             }));
           return { results };
         }
-        if (s.startsWith("SELECT source_id, target_id, type, weight, provenance, created_at FROM edges")) {
+        if (s.startsWith("SELECT source_id, target_id, type, weight, provenance, created_at") && s.includes("FROM edges") && !s.includes("WHERE")) {
           // GET /export: the whole edges table.
           const results = db.edges.map((e: any) => ({
             source_id: e.source_id, target_id: e.target_id, type: e.type,
             weight: e.weight, provenance: e.provenance, created_at: e.created_at,
+            confidence: e.confidence ?? 1.0,
           }));
           return { results };
         }
@@ -864,5 +1032,5 @@ export class D1Mock {
 
   async exec(_sql: string) { }
   async batch(stmts: any[]) { return Promise.all(stmts.map((s: any) => s.run())); }
-  reset() { this.entries = []; this.edges = []; this.users = []; }
+  reset() { this.entries = []; this.edges = []; this.users = []; this.edgeProposals = []; }
 }

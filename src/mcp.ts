@@ -267,7 +267,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
       },
     },
     async ({ query, topK, tag, after, before, kind, hops, as_of }) => {
-      const { matches, insight, semanticUnavailable } = await recallEntries({ query, topK, tag, after, before, kind: kind as MemoryKind | undefined, hops, userId, asOf: as_of }, env, ctx);
+      const { matches, insight, semanticUnavailable, proposed_edges } = await recallEntries({ query, topK, tag, after, before, kind: kind as MemoryKind | undefined, hops, userId, asOf: as_of }, env, ctx);
 
       const notice = semanticUnavailable
         ? `Note: semantic search is unavailable because the Vectorize index is missing, so these are keyword matches only. Fix: ${VECTORIZE_FIX_HINT}.\n\n`
@@ -277,7 +277,13 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
         return { content: [{ type: "text", text: notice + "Nothing found matching that query." }] };
       }
 
-      return { content: [{ type: "text", text: notice + renderRecallText(matches, insight) }] };
+      let text = notice + renderRecallText(matches, insight);
+      if (proposed_edges.length) {
+        text += `\n\n⚠️ **Contradictions detected** (${proposed_edges.length}):\n` +
+          proposed_edges.map(pe => `  • ${pe.source_id} vs ${pe.target_id} — ${pe.reason}`).join("\n") +
+          `\n\nUse \`list-proposals\` to review, or \`approve-proposal\` / \`reject-proposal\` to act.`;
+      }
+      return { content: [{ type: "text", text }] };
     }
   );
 
@@ -408,7 +414,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
         return { content: [{ type: "text", text: `No connections found for ${id}.` }] };
       }
       const text = connections
-        .map(c => `- (${c.label}) ${c.id}: ${c.content.slice(0, 120)}`)
+        .map(c => `- (${c.label}) ${c.id}: ${c.content.slice(0, 120)} [confidence: ${(c.confidence * 100).toFixed(0)}%]`)
         .join("\n");
       return { content: [{ type: "text", text }] };
     }
@@ -477,6 +483,124 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
       }
 
       return { content: [{ type: "text", text: `Restored. New entry ID: ${result.id} — based on snapshot ${snapshot.id} from ${new Date(snapshot.created_at as number).toISOString()}.` }] };
+    }
+  );
+
+  // ── propose_edge ──────────────────────────────────────────────────────
+  server.registerTool(
+    "propose_edge",
+    {
+      description: "Propose a new relationship between two entries. Creates a pending edge proposal that requires human approval. Use for contradictions, clarifications, or other relationships you're not certain about.",
+      inputSchema: {
+        source_id: z.string().describe("Source entry ID"),
+        target_id: z.string().describe("Target entry ID"),
+        type: z.enum(Object.keys(EDGE_TYPES) as [string, ...string[]]).default("contradicts").describe("Relationship type"),
+        reason: z.string().optional().describe("Why this link should exist"),
+      },
+    },
+    async ({ source_id, target_id, type, reason }) => {
+      const trimmedSource = source_id.trim();
+      const trimmedTarget = target_id.trim();
+      if (!trimmedSource || !trimmedTarget) return { content: [{ type: "text", text: "source_id and target_id are required." }] };
+
+      // Dedup check
+      const existing = await env.DB.prepare(
+        `SELECT id, source_id, target_id, type, reason, proposed_by, status, created_at FROM edge_proposals WHERE source_id = ? AND target_id = ? AND type = ? AND status = 'pending'`
+      ).bind(trimmedSource, trimmedTarget, type).first() as Record<string, any> | null;
+
+      if (existing) return { content: [{ type: "text", text: `Existing pending proposal found: ${existing.id}. No duplicate created.` }] };
+
+      const proposalId = crypto.randomUUID();
+      const now = Date.now();
+      await env.DB.prepare(
+        `INSERT INTO edge_proposals (id, source_id, target_id, type, reason, proposed_by, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`
+      ).bind(proposalId, trimmedSource, trimmedTarget, type, reason ?? "", userId ?? "", now).run();
+
+      return { content: [{ type: "text", text: `Proposal ${proposalId} created: ${trimmedSource} —[${type}]→ ${trimmedTarget}. Reason: ${reason ?? "(none)"}. Awaiting human approval.` }] };
+    }
+  );
+
+  // ── list-proposals ───────────────────────────────────────────────────
+  server.registerTool(
+    "list-proposals",
+    {
+      description: "List pending edge proposals awaiting human approval.",
+      inputSchema: {},
+    },
+    async () => {
+      const vis = userId ? buildVisibilityClause(userId) : null;
+      let sql = `SELECT id, source_id, target_id, type, reason, proposed_by, status, created_at FROM edge_proposals WHERE status = 'pending'`;
+      const bindings: any[] = [];
+
+      if (vis) {
+        sql += ` AND EXISTS (SELECT 1 FROM entries e1 WHERE e1.id = edge_proposals.source_id AND ${vis.sql})`;
+        sql += ` AND EXISTS (SELECT 1 FROM entries e2 WHERE e2.id = edge_proposals.target_id AND ${vis.sql})`;
+        bindings.push(...vis.bind, ...vis.bind);
+      }
+      sql += ` ORDER BY created_at DESC`;
+
+      const { results } = await env.DB.prepare(sql).bind(...bindings).all();
+      if (!results.length) return { content: [{ type: "text", text: "No pending proposals." }] };
+
+      const text = (results as Record<string, any>[]).map(r => {
+        const date = new Date(r.created_at as number).toISOString().split("T")[0];
+        return `- ${r.id}: ${r.source_id} —[${r.type}]→ ${r.target_id} (by ${r.proposed_by})\n  Reason: ${r.reason || "(none)"} [${date}]`;
+      }).join("\n");
+
+      return { content: [{ type: "text", text }] };
+    }
+  );
+
+  // ── approve-proposal ─────────────────────────────────────────────────
+  server.registerTool(
+    "approve-proposal",
+    {
+      description: "Approve a pending edge proposal, creating the relationship edge in the graph. Any authenticated user can approve.",
+      inputSchema: {
+        proposal_id: z.string().describe("The proposal ID from list-proposals"),
+      },
+    },
+    async ({ proposal_id }) => {
+      const proposal = await env.DB.prepare(
+        `SELECT id, source_id, target_id, type, reason, proposed_by, status, created_at FROM edge_proposals WHERE id = ?`
+      ).bind(proposal_id).first() as Record<string, any> | null;
+
+      if (!proposal) return { content: [{ type: "text", text: `Proposal not found: ${proposal_id}` }] };
+      if (proposal.status !== "pending") return { content: [{ type: "text", text: `Proposal is already ${proposal.status}.` }] };
+
+      const now = Date.now();
+      await createEdge(proposal.source_id, proposal.target_id, proposal.type, { provenance: "system", confidence: 1.0 }, env);
+      await env.DB.prepare(
+        `UPDATE edge_proposals SET status = 'approved', resolved_at = ? WHERE id = ?`
+      ).bind(now, proposal_id).run();
+
+      return { content: [{ type: "text", text: `Approved proposal ${proposal_id}: ${proposal.source_id} —[${proposal.type}]→ ${proposal.target_id}. Edge created.` }] };
+    }
+  );
+
+  // ── reject-proposal ──────────────────────────────────────────────────
+  server.registerTool(
+    "reject-proposal",
+    {
+      description: "Reject a pending edge proposal, dismissing it without creating an edge. Any authenticated user can reject.",
+      inputSchema: {
+        proposal_id: z.string().describe("The proposal ID from list-proposals"),
+      },
+    },
+    async ({ proposal_id }) => {
+      const proposal = await env.DB.prepare(
+        `SELECT id, source_id, target_id, type, reason, proposed_by, status, created_at FROM edge_proposals WHERE id = ?`
+      ).bind(proposal_id).first() as Record<string, any> | null;
+
+      if (!proposal) return { content: [{ type: "text", text: `Proposal not found: ${proposal_id}` }] };
+      if (proposal.status !== "pending") return { content: [{ type: "text", text: `Proposal is already ${proposal.status}.` }] };
+
+      const now = Date.now();
+      await env.DB.prepare(
+        `UPDATE edge_proposals SET status = 'rejected', resolved_at = ? WHERE id = ?`
+      ).bind(now, proposal_id).run();
+
+      return { content: [{ type: "text", text: `Rejected proposal ${proposal_id}: ${proposal.source_id} —[${proposal.type}]→ ${proposal.target_id}.` }] };
     }
   );
 

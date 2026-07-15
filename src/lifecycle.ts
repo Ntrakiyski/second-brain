@@ -452,3 +452,68 @@ export async function applyStatus(id: string, status: MemoryStatus, env: Env): P
   await env.DB.prepare(`UPDATE entries SET tags = ? WHERE id = ?`).bind(JSON.stringify(withStatus(tags, status)), id).run();
   return true;
 }
+
+// ─── Nightly cross-user contradiction detection (S06) ─────────────────────────
+// Scans recent public entries and checks for contradictions against other users'
+// entries. Writes proposals to edge_proposals table (deduplicated).
+export async function detectCrossUserContradictions(env: Env): Promise<{ scanned: number; proposals: number }> {
+  const SEVEN_DAYS_AGO = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const CONTRADICTION_THRESHOLD = 0.85;
+  const MAX_ENTRIES = 25;
+
+  // Fetch recent public entries (exclude private)
+  const { results: recentEntries } = await env.DB.prepare(
+    `SELECT id, content, owner_user_id FROM entries WHERE created_at >= ? AND tags NOT LIKE '%"private"%' ORDER BY created_at DESC LIMIT ?`
+  ).bind(SEVEN_DAYS_AGO, MAX_ENTRIES).all() as { results: { id: string; content: string; owner_user_id: string }[] };
+
+  let scanned = 0;
+  let proposals = 0;
+
+  for (const entry of recentEntries) {
+    scanned++;
+    try {
+      const entryVec = await embed(entry.content, env);
+      // Query Vectorize for similar entries owned by OTHER users
+      const scanOpts: Record<string, any> = { topK: 5, returnMetadata: "all" };
+      scanOpts.metadataFilter = {
+        OR: [
+          { owner_user_id: { $neq: entry.owner_user_id } },
+          { is_private: { $eq: false } },
+        ],
+      };
+      const { matches } = await env.VECTORIZE.query(entryVec, scanOpts);
+
+      for (const match of matches) {
+        const matchOwnerId = (match.metadata as any)?.owner_user_id;
+        const matchEntryId = (match.metadata as any)?.parentId ?? match.id;
+        if (!matchOwnerId || matchOwnerId === entry.owner_user_id) continue;
+        if (matchEntryId === entry.id) continue;
+        if ((match.score ?? 0) < CONTRADICTION_THRESHOLD) continue;
+
+        // Dedup: check if proposal already exists
+        const existing = await env.DB.prepare(
+          `SELECT id FROM edge_proposals WHERE source_id = ? AND target_id = ? AND type = 'contradicts' AND status = 'pending'`
+        ).bind(matchEntryId, entry.id).first();
+        if (existing) continue;
+
+        const proposalId = crypto.randomUUID();
+        const now = Date.now();
+        await env.DB.prepare(
+          `INSERT INTO edge_proposals (id, source_id, target_id, type, reason, proposed_by, status, created_at) VALUES (?, ?, ?, 'contradicts', ?, ?, 'pending', ?)`
+        ).bind(
+          proposalId,
+          matchEntryId,
+          entry.id,
+          `Nightly contradiction scan (similarity: ${(match.score * 100).toFixed(0)}%)`,
+          "_nightly_scan",
+          now,
+        ).run();
+        proposals++;
+      }
+    } catch (e) {
+      console.error(`Contradiction scan failed for entry ${entry.id} (non-fatal):`, e);
+    }
+  }
+
+  return { scanned, proposals };
+}

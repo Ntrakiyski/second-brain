@@ -108,7 +108,8 @@ export async function createEdge(
 
   const weight = Math.max(0, Math.min(1, opts.weight ?? DEFAULT_EDGE_WEIGHT));
   const provenance = opts.provenance ?? "inferred";
-  const confidence = Math.max(0, Math.min(1, opts.confidence ?? DEFAULT_EDGE_WEIGHT));
+  const defaultConfidence = provenance === "explicit" || provenance === "system" ? 1.0 : weight;
+  const confidence = Math.max(0, Math.min(1, opts.confidence ?? defaultConfidence));
   const meta = { ...(opts.metadata ?? {}), confidence };
   const metadata = JSON.stringify(meta);
   const now = Date.now();
@@ -151,6 +152,7 @@ export interface GraphNeighbor {
   hop: number;
   viaWeight: number;
   viaType: EdgeType;
+  viaConfidence: number;
 }
 
 // Returns the subset of `ids` whose entry is tagged status:deprecated.
@@ -190,12 +192,12 @@ export async function expandGraph(
 
   for (let hop = 1; hop <= hops && frontier.length && out.length < maxNodes; hop++) {
     // Pull every edge touching the current frontier, strongest first (batched).
-    const edgeRows: { source_id: string; target_id: string; type: string; weight: number }[] = [];
+    const edgeRows: { source_id: string; target_id: string; type: string; weight: number; confidence: number }[] = [];
     for (let i = 0; i < frontier.length; i += EDGE_QUERY_BATCH) {
       const batch = frontier.slice(i, i + EDGE_QUERY_BATCH);
       const ph = batch.map(() => "?").join(", ");
       const { results } = await env.DB.prepare(
-        `SELECT source_id, target_id, type, weight FROM edges WHERE source_id IN (${ph}) OR target_id IN (${ph}) ORDER BY weight DESC`
+        `SELECT source_id, target_id, type, weight, confidence FROM edges WHERE source_id IN (${ph}) OR target_id IN (${ph}) ORDER BY weight DESC`
       ).bind(...batch, ...batch).all() as { results: any[] };
       edgeRows.push(...results);
     }
@@ -213,7 +215,7 @@ export async function expandGraph(
       const n = perNodeCount.get(from) ?? 0;
       if (n >= fanoutCap) continue;
       perNodeCount.set(from, n + 1);
-      candidates.push({ id: to, hop, viaWeight: e.weight, viaType: e.type as EdgeType });
+      candidates.push({ id: to, hop, viaWeight: e.weight, viaType: e.type as EdgeType, viaConfidence: e.confidence ?? 1.0 });
     }
 
     // Drop deprecated nodes before they enter results or the next frontier.
@@ -289,6 +291,7 @@ export interface Connection {
   type: EdgeType;
   label: string;
   weight: number;
+  confidence: number;
 }
 
 // 1-hop neighborhood of an entry, hydrated and annotated with edge type/weight.
@@ -315,6 +318,7 @@ export async function getConnections(id: string, type: string | undefined, env: 
       type: n.viaType,
       label: edgeLabel(n.viaType),
       weight: n.viaWeight,
+      confidence: n.viaConfidence,
     });
   }
   return out;
@@ -332,7 +336,7 @@ export interface GraphNode {
 
 export interface GraphView {
   nodes: GraphNode[];
-  edges: { source: string; target: string; type: string; weight: number }[];
+  edges: { source: string; target: string; type: string; weight: number; confidence: number }[];
 }
 
 // Assemble a node+edge subgraph for the dashboard graph view. Either the 2-hop
@@ -407,14 +411,14 @@ export async function buildGraph(opts: { seed?: string; limit?: number; userId?:
     const batch = presentIds.slice(i, i + EDGE_QUERY_BATCH);
     const ph = batch.map(() => "?").join(", ");
     const { results } = await env.DB.prepare(
-      `SELECT source_id, target_id, type, weight FROM edges WHERE source_id IN (${ph}) OR target_id IN (${ph}) ORDER BY weight DESC`
+      `SELECT source_id, target_id, type, weight, confidence FROM edges WHERE source_id IN (${ph}) OR target_id IN (${ph}) ORDER BY weight DESC`
     ).bind(...batch, ...batch).all() as { results: any[] };
     for (const e of results) {
       if (!nodeIdSet.has(e.source_id) || !nodeIdSet.has(e.target_id)) continue;
       const key = `${e.source_id}|${e.target_id}|${e.type}`;
       if (edgeSeen.has(key)) continue;
       edgeSeen.add(key);
-      edges.push({ source: e.source_id, target: e.target_id, type: e.type, weight: e.weight });
+      edges.push({ source: e.source_id, target: e.target_id, type: e.type, weight: e.weight, confidence: e.confidence ?? 1.0 });
     }
   }
 

@@ -47,6 +47,47 @@
 
 ---
 
+## v2.2.0 — Shared Knowledge Base (Pillar 2)
+
+### Confidence Scoring
+- **Default confidence by provenance** — edges created via `inferEdgesOnWrite()` (auto-link) default to `0.78`; explicit user-created edges default to `1.0`; system edges (`supersedes`) default to `1.0`
+- **Confidence exposed everywhere** — `Connection` interface, `GraphNeighbor.viaConfidence`, REST `/connections`, `/graph`, MCP `recall` output, and `GET /edge-proposals` all include confidence values
+- **Confidence modulates graph traversal** — edge weight in BFS expansion now factors in confidence for more accurate relevance scoring
+
+### Team Activity
+- **`GET /team-activity` endpoint** — returns recent memory activity across all users, filterable by `?user=<username>`, `?limit=N`, `?after=<unix_ms>`
+- **Visibility-scoped** — only returns entries the requesting user can see (respects private/public boundaries)
+
+### Edge Proposals (S04)
+- **`edge_proposals` table** — `id, source_id, target_id, type, reason, proposed_by, status, created_at, resolved_at` with `UNIQUE(source_id, target_id, type, status)`
+- **REST API** — `POST /edge-proposals` (create), `GET /edge-proposals` (list pending, visibility-scoped), `POST /edge-proposals/:id/approve|reject` (resolve)
+- **MCP tools** — `propose-edge`, `list-proposals`, `approve-proposal`, `reject-proposal` for agent-driven proposal workflows
+- **Proposal lifecycle** — `pending → approved|rejected`, with dedup check preventing duplicate pending proposals for the same pair/type
+
+### Cross-User Contradiction Detection (S05 + S06)
+- **Recall-path detection (S05)** — when recall surfaces a cross-user match with similarity ≥ 0.85, a `contradicts` edge proposal is automatically created in `edge_proposals`
+- **Nightly-path detection (S06)** — `detectCrossUserContradictions()` runs during the nightly cron, scanning recent public entries (last 7 days) for cross-user contradictions
+- **Dual-path coverage** — recall catches contradictions at query time; nightly catches contradictions for entries that weren't recently recalled
+
+### Frontend (S07)
+- **Edge opacity modulated by confidence** — stronger confidence = more visible edges in the graph visualization
+- **Confidence tooltip** on edge hover shows the confidence score
+- **Edge highlights** — high-confidence edges are visually distinguished
+
+### Bug Fixes
+- **D1 hydration query now includes `owner_user_id`** — cross-user contradiction detection in recall path was silently failing because `d1Map` entries lacked `owner_user_id`, causing all cross-user matches to be filtered out
+- **GET /edge-proposals visibility filtering** — aliased SQL (`FROM edge_proposals ep WHERE`) now correctly matches D1Mock handler
+- **D1Mock dedup check** handles both parameterized (`type = ?`) and hardcoded (`type = 'contradicts'`) type values in edge proposal queries
+- **D1Mock hydration handler** — consolidated to a single handler that correctly applies `as_of`, `kind`, `after`/`before` filters (previously a duplicate handler shadowed the complete one, breaking bitemporal tests)
+- **Test imports** — added `vi` to vitest imports in cross-user contradiction test files
+
+### Test Coverage
+- **784 tests across 78 files** — all passing, typecheck clean
+- New test suites: `cross-user-contradiction.test.ts` (5 tests), `cross-user-contradiction-nightly.test.ts` (7 tests), `edge-proposals.test.ts` (15 tests), `team-activity.test.ts` (5 tests)
+- D1Mock expanded with handlers for `edge_proposals` CRUD, visibility-scoped proposal listing, `detectCrossUserContradictions` query, and `owner_user_id` in hydration results
+
+---
+
 ## v2.0.0 — Shared Memory (July 2026)
 
 ### Multi-User Team Memory

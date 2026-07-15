@@ -49,7 +49,7 @@ describe("GET /export", () => {
     const a = data.entries.find((e: any) => e.id === "a");
     expect(a.tags).toEqual(["work", "kind:semantic"]); // array, not a JSON string
     expect(data.edges).toEqual([
-      { source_id: "a", target_id: "b", type: "relates_to", weight: 0.7, provenance: "inferred", created_at: 1 },
+      { source_id: "a", target_id: "b", type: "relates_to", weight: 0.7, provenance: "inferred", created_at: 1, confidence: 1 },
     ]);
   });
 

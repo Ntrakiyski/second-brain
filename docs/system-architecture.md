@@ -4,7 +4,7 @@
 
 Second Brain v2 is a **multi-user shared memory** platform for AI agents and humans. It provides persistent, semantically-searchable, graph-linked memory via the Model Context Protocol (MCP) and a web dashboard.
 
-**Deployment:** Cloudflare Workers (single-file, ~4200 lines)
+**Deployment:** Cloudflare Workers (~3900 lines across modules)
 **Live:** `https://second-brain.nikolaytrakiyski.workers.dev`
 
 ### Infrastructure Map
@@ -46,7 +46,7 @@ Second Brain v2 is a **multi-user shared memory** platform for AI agents and hum
 | `OAUTH_KV` | KV Namespace | OAuth tokens, grants, clients + integration state |
 | `AUTH_TOKEN` | Secret (deployment token) | Bearer auth for all requests |
 
-**Cron:** `0 1 * * *` — nightly compression + graph pass + integration sync
+**Cron:** `0 1 * * *` — nightly compression + graph pass + integration sync + cross-user contradiction detection
 
 ### Database Schema
 
@@ -73,12 +73,27 @@ source_id   TEXT NOT NULL,
 target_id   TEXT NOT NULL,
 type        TEXT NOT NULL DEFAULT 'relates_to',
 weight      REAL NOT NULL DEFAULT 0.5,            -- 0..1
+confidence  REAL NOT NULL DEFAULT 1.0,            -- 0..1, set by provenance
 provenance  TEXT NOT NULL DEFAULT 'inferred',      -- explicit | inferred | system
 metadata    TEXT NOT NULL DEFAULT '{}',            -- JSON escape-hatch
 created_at  INTEGER NOT NULL,
 updated_at  INTEGER NOT NULL,
 UNIQUE(source_id, target_id, type)
 -- Indexes: source_id, target_id
+```
+
+**`edge_proposals`** — proposed cross-user relationships:
+```sql
+id          TEXT PRIMARY KEY,
+source_id   TEXT NOT NULL,
+target_id   TEXT NOT NULL,
+type        TEXT NOT NULL DEFAULT 'contradicts',
+reason      TEXT NOT NULL DEFAULT '',
+proposed_by TEXT NOT NULL DEFAULT '',
+status      TEXT NOT NULL DEFAULT 'pending',      -- pending | approved | rejected
+created_at  INTEGER NOT NULL,
+resolved_at INTEGER,
+UNIQUE(source_id, target_id, type, status)
 ```
 
 **`users`** — multi-user auth:
@@ -95,7 +110,20 @@ last_used_at         INTEGER
 
 ### Application Structure
 
-The entire backend is a **single TypeScript file** (`src/index.ts`, ~4213 lines). No router framework — URL pathname matching with if/else chains. Two handler paths wrapped in `OAuthProvider`:
+The backend is organized across multiple TypeScript modules (re-exported through `src/index.ts`):
+
+| Module | Lines | Purpose |
+|--------|-------|---------|
+| `src/index.ts` | ~220 | Entry point, re-exports all modules |
+| `src/routes.ts` | ~1289 | REST route handlers (if/else chain) |
+| `src/recall.ts` | ~716 | Recall pipeline (semantic search, RRF fusion, cross-user detection) |
+| `src/mcp.ts` | ~693 | MCP tool definitions and handlers |
+| `src/graph.ts` | ~474 | Graph traversal, edge creation, expansion |
+| `src/lifecycle.ts` | ~519 | Nightly cron jobs (compression, graph pass, contradiction detection) |
+| `src/auth.ts` | ~175 | Authentication, HMAC key generation, user resolution |
+| `src/db.ts` | ~162 | Database schema, initialization, helpers |
+
+Two handler paths wrapped in `OAuthProvider`:
 
 - **`apiHandler`** — serves `/mcp` (MCP protocol), resolves per-user identity from `X-Second-Brain-User` + `X-Second-Brain-User-Key` headers
 - **`defaultHandler`** — all REST routes (`/recall`, `/remember`, `/forget`, `/link`, `/list`, `/graph`, `/health`, etc.) + static assets from `public/`
@@ -312,6 +340,13 @@ Normalize scores to [0, 1]  (divide by maxScore)
 Cross-user mentions annotation
         │
         ▼
+Cross-user contradiction detection (S05):
+  For each cross-user match (owner ≠ caller):
+    embed(crossMatch.content)
+    Vectorize.query(caller's entries, topK=3)
+    If caller match score ≥ 0.85 → INSERT edge_proposals (type: contradicts)
+        │
+        ▼
 synthesizeInsight()  ─── LLM, if >1 match (async)
 derivePattern()      ─── LLM, if ≥5 results (async, max 1/48h)
 ```
@@ -411,6 +446,15 @@ decided         { directed: true }   — episodic only
 about_person    { directed: true }
 part_of_project { directed: true }
 follows         { directed: true }   — episodic only
+derives_from    { directed: true }
+supports        { directed: true }
+evaluates_on    { directed: true }
+has_limitation  { directed: true }
+contradicts     { directed: true }   — cross-user contradiction proposals
+temporal_after  { directed: true }
+temporal_before { directed: true }
+prerequisite    { directed: true }
+context_for     { directed: true }
 ```
 
 ### `createEdge()` — Write Path
@@ -422,7 +466,8 @@ follows         { directed: true }   — episodic only
    - Public + public → allowed
 3. Symmetric normalization (undirected types only): store with smaller ID first
 4. Weight clamped to [0, 1], default 0.5
-5. Idempotent upsert: `ON CONFLICT DO UPDATE SET weight = max(weight, excluded.weight)`
+5. **Confidence by provenance:** auto-link edges → `0.78`; explicit user edges → `1.0`; system edges → `1.0`
+6. Idempotent upsert: `ON CONFLICT DO UPDATE SET weight = max(weight, excluded.weight), confidence = max(confidence, excluded.confidence)`
 
 ### Auto-Link Flow (`inferEdgesOnWrite`, `:560`)
 
@@ -453,9 +498,105 @@ Expanded node score (in recall): `minSeedScore × 0.6^hop × edgeWeight`
 1. **Prune:** DELETE inferred edges with `weight < 0.3 AND age > 7 days`
 2. **Backfill:** Find up to 25 entries with zero edges. For each: embed → Vectorize.query(top 5) → filter visibility → `inferEdgesOnWrite()`
 
+### Nightly Cross-User Contradiction Detection (`detectCrossUserContradictions`, `src/lifecycle.ts:459`)
+
+Runs during the nightly cron after compression and graph pass:
+
+1. Query D1 for public entries created in the last 7 days (excluding private entries)
+2. For each entry, embed its content and query Vectorize for similar entries owned by a different user
+3. If cosine similarity ≥ 0.85, create a `contradicts` edge proposal in `edge_proposals`
+4. Dedup: skip if a pending proposal already exists for the same source/target/type
+
+**Coverage gap:** This catches contradictions between entries that weren't recently recalled. The recall-path detection (S05) catches contradictions at query time for entries the user actually searches for.
+
 ---
 
-## 7. Compression Pipeline
+## 7. Edge Proposals
+
+Proposed relationships between entries from different users, created automatically (cross-user contradiction detection) or manually (MCP tools / REST API).
+
+### Lifecycle
+
+```
+POST /edge-proposals  or  MCP propose-edge  or  auto-detection (S05/S06)
+        │
+        ▼
+  Dedup check: same (source_id, target_id, type) with status='pending'?
+        │
+        ├─ yes → return existing proposal
+        └─ no  → INSERT with status='pending'
+                │
+                ▼
+  POST /edge-proposals/:id/approve  or  MCP approve-proposal
+  POST /edge-proposals/:id/reject   or  MCP reject-proposal
+                │
+                ▼
+  status → 'approved' | 'rejected', resolved_at set
+```
+
+### REST Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/edge-proposals` | POST | Create a new proposal |
+| `/edge-proposals` | GET | List pending proposals (visibility-scoped) |
+| `/edge-proposals/:id/approve` | POST | Approve a proposal |
+| `/edge-proposals/:id/reject` | POST | Reject a proposal |
+
+### MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `propose-edge` | Create a cross-user edge proposal |
+| `list-proposals` | List pending proposals (visibility-scoped) |
+| `approve-proposal` | Approve a pending proposal |
+| `reject-proposal` | Reject a pending proposal |
+
+### Visibility Scoping
+
+GET /edge-proposals uses `EXISTS` subqueries to ensure both the source and target entries are visible to the requesting user:
+
+```sql
+SELECT ... FROM edge_proposals ep WHERE ep.status = 'pending'
+  AND EXISTS (SELECT 1 FROM entries e1 WHERE e1.id = ep.source_id AND <visibility>)
+  AND EXISTS (SELECT 1 FROM entries e2 WHERE e2.id = ep.target_id AND <visibility>)
+```
+
+---
+
+## 8. Team Activity
+
+### `GET /team-activity`
+
+Returns recent memory activity across all users, visibility-scoped.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `user` | string | Filter by username |
+| `limit` | number | Max results (default 20) |
+| `after` | number | Unix ms timestamp — only entries created after this time |
+
+Response shape:
+```json
+{
+  "ok": true,
+  "results": [
+    {
+      "id": "...",
+      "content": "...",
+      "tags": "...",
+      "source": "...",
+      "created_at": 1234567890,
+      "owner_user_id": "...",
+      "owner_username": "alice"
+    }
+  ]
+}
+```
+
+---
+
+## 9. Compression Pipeline
 
 Runs nightly via cron (`{scheduled}` handler at `:4209`).
 
@@ -501,7 +642,7 @@ State of "{tag}":
 
 ---
 
-## 8. Pattern Derivation
+## 10. Pattern Derivation
 
 `derivePattern()` at `src/index.ts:1660`
 
@@ -533,7 +674,7 @@ Stored as entry tagged `["auto-pattern"]`. Hidden from normal recall until confi
 
 ---
 
-## 9. Auth & Multi-User
+## 11. Auth & Multi-User
 
 ### Two-Layer Auth
 
@@ -566,7 +707,7 @@ Applied to every entry-reading query. Users see:
 
 ---
 
-## 10. Integrations
+## 12. Integrations
 
 Provider pattern in `src/integrations/`:
 
@@ -578,7 +719,7 @@ Provider pattern in `src/integrations/`:
 
 ---
 
-## 11. Tunable Constants — Master Table
+## 13. Tunable Constants — Master Table
 
 | Constant | File:Line | Value | Domain | Sensitivity |
 |----------|-----------|-------|--------|-------------|
@@ -609,10 +750,13 @@ Provider pattern in `src/integrations/`:
 | `GRAPH_PASS_BACKFILL_LIMIT` | `:1861` | 25 | entries/night | Low — graph maintenance pace |
 | `EDGE_PRUNE_WEIGHT` | `:1862` | 0.3 | weight | Medium — auto-edge pruning |
 | `EDGE_PRUNE_MIN_AGE_MS` | `:1863` | 7 days | ms | Medium — auto-edge pruning |
+| `AUTO_LINK_CONFIDENCE` | graph.ts | 0.78 | confidence | High — default for inferred edges |
+| `EXPLICIT_CONFIDENCE` | graph.ts | 1.0 | confidence | High — default for user-created edges |
+| `CONTRADICTION_THRESHOLD` | recall.ts | 0.85 | cosine sim | High — cross-user contradiction detection |
 
 ---
 
-## 12. Data Science Questions
+## 14. Data Science Questions
 
 ### Embedding Quality
 1. BGE-small-en-v1.5 (384d) — what's the actual cosine score distribution across the corpus? Are the tier boundaries (0.45, 0.78, 0.85, 0.95) empirically validated?

@@ -462,6 +462,131 @@ export const defaultHandler = {
       return json(enriched);
     }
 
+    // GET /team-activity — recent public entries from all team members
+    if (url.pathname === "/team-activity" && request.method === "GET") {
+      const { error: authErr, user_id } = await requireAuthAsync(request, env);
+      if (authErr) return authErr;
+
+      const limit = Math.min(Math.max(parseInt(url.searchParams.get("limit") ?? "20", 10), 1), 50);
+      const userFilter = url.searchParams.get("user")?.trim();
+      const after = url.searchParams.has("after") ? parseInt(url.searchParams.get("after")!, 10) : undefined;
+
+      let sql = `SELECT e.id, e.content, e.tags, e.source, e.created_at, e.owner_user_id, u.username as owner_username
+        FROM entries e LEFT JOIN users u ON e.owner_user_id = u.id
+        WHERE e.tags NOT LIKE '%"private"%'`;
+      const bindings: any[] = [];
+
+      if (userFilter) {
+        sql += ` AND e.owner_user_id = (SELECT id FROM users WHERE username = ?)`;
+        bindings.push(userFilter);
+      }
+      if (after !== undefined) {
+        sql += ` AND e.created_at <= ?`;
+        bindings.push(after);
+      }
+      sql += ` ORDER BY e.created_at DESC LIMIT ?`;
+      bindings.push(limit);
+
+      const { results } = await env.DB.prepare(sql).bind(...bindings).all();
+      return json({ ok: true, entries: results ?? [] });
+    }
+
+    // ─── Edge Proposals (Pillar 2) ──────────────────────────────────────────
+
+    // POST /edge-proposals — create a new proposal
+    if (url.pathname === "/edge-proposals" && request.method === "POST") {
+      const { error: authErr, user_id } = await requireAuthAsync(request, env);
+      if (authErr) return authErr;
+
+      let body: { source_id?: string; target_id?: string; type?: string; reason?: string };
+      try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
+      if (!body.source_id?.trim() || !body.target_id?.trim()) return json({ ok: false, error: "source_id and target_id are required" }, 400);
+      const type = body.type?.trim() || "contradicts";
+      if (!isValidEdgeType(type)) return json({ ok: false, error: `type must be one of: ${Object.keys(EDGE_TYPES).join(", ")}` }, 400);
+
+      const sourceId = body.source_id.trim();
+      const targetId = body.target_id.trim();
+      const reason = body.reason?.trim() || "";
+
+      // Dedup: check for existing pending proposal for same (source_id, target_id, type)
+      const existing = await env.DB.prepare(
+        `SELECT id, source_id, target_id, type, reason, proposed_by, status, created_at FROM edge_proposals WHERE source_id = ? AND target_id = ? AND type = ? AND status = 'pending'`
+      ).bind(sourceId, targetId, type).first() as Record<string, any> | null;
+
+      if (existing) {
+        return json({ ok: true, proposal: existing });
+      }
+
+      const proposalId = crypto.randomUUID();
+      const now = Date.now();
+      await env.DB.prepare(
+        `INSERT INTO edge_proposals (id, source_id, target_id, type, reason, proposed_by, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`
+      ).bind(proposalId, sourceId, targetId, type, reason, user_id ?? "", now).run();
+
+      return json({
+        ok: true,
+        proposal: { id: proposalId, source_id: sourceId, target_id: targetId, type, reason, proposed_by: user_id ?? "", status: "pending", created_at: now },
+      });
+    }
+
+    // GET /edge-proposals — list pending proposals (visibility-scoped)
+    if (url.pathname === "/edge-proposals" && request.method === "GET") {
+      const { error: authErr, user_id } = await requireAuthAsync(request, env);
+      if (authErr) return authErr;
+
+      const vis = user_id ? buildVisibilityClause(user_id) : null;
+      let sql = `SELECT ep.id, ep.source_id, ep.target_id, ep.type, ep.reason, ep.proposed_by, ep.status, ep.created_at
+        FROM edge_proposals ep WHERE ep.status = 'pending'`;
+      const bindings: any[] = [];
+
+      if (vis) {
+        sql += ` AND EXISTS (SELECT 1 FROM entries e1 WHERE e1.id = ep.source_id AND ${vis.sql})`;
+        sql += ` AND EXISTS (SELECT 1 FROM entries e2 WHERE e2.id = ep.target_id AND ${vis.sql})`;
+        bindings.push(...vis.bind, ...vis.bind);
+      }
+      sql += ` ORDER BY ep.created_at DESC`;
+
+      const { results } = await env.DB.prepare(sql).bind(...bindings).all();
+      return json({ ok: true, proposals: results ?? [] });
+    }
+
+    // POST /edge-proposals/:id/approve or /reject
+    {
+      const proposalActionMatch = url.pathname.match(/^\/edge-proposals\/([^/]+)\/(approve|reject)$/);
+      if (proposalActionMatch && request.method === "POST") {
+        const { error: authErr, user_id } = await requireAuthAsync(request, env);
+        if (authErr) return authErr;
+
+        const proposalId = proposalActionMatch[1];
+        const action = proposalActionMatch[2];
+
+        const proposal = await env.DB.prepare(
+          `SELECT id, source_id, target_id, type, reason, proposed_by, status, created_at FROM edge_proposals WHERE id = ?`
+        ).bind(proposalId).first() as Record<string, any> | null;
+
+        if (!proposal) return json({ ok: false, error: "Proposal not found" }, 404);
+        if (proposal.status !== "pending") return json({ ok: false, error: `Proposal is already ${proposal.status}` }, 400);
+
+        const now = Date.now();
+        if (action === "approve") {
+          // Create the actual edge
+          await createEdge(proposal.source_id, proposal.target_id, proposal.type, { provenance: "system", confidence: 1.0 }, env);
+          await env.DB.prepare(
+            `UPDATE edge_proposals SET status = 'approved', resolved_at = ? WHERE id = ?`
+          ).bind(now, proposalId).run();
+        } else {
+          await env.DB.prepare(
+            `UPDATE edge_proposals SET status = 'rejected', resolved_at = ? WHERE id = ?`
+          ).bind(now, proposalId).run();
+        }
+
+        return json({
+          ok: true,
+          proposal: { ...proposal, status: action === "approve" ? "approved" : "rejected", resolved_at: now },
+        });
+      }
+    }
+
     // GET /export — complete backup: every entry plus the edges table. Single
     // unbounded SELECTs are acceptable here: D1 handles tens of thousands of rows in
     // one read and this route runs on explicit user action only. If response size
@@ -498,7 +623,7 @@ export const defaultHandler = {
       // Filter edges to only include those where both endpoints are in the exported set
       const entryIds = new Set(entryRows.map(r => r.id as string));
       const { results: edgeRows } = await env.DB.prepare(
-        `SELECT source_id, target_id, type, weight, provenance, created_at FROM edges`
+        `SELECT source_id, target_id, type, weight, provenance, created_at, confidence FROM edges`
       ).all() as { results: Record<string, any>[] };
 
       const edges = edgeRows
@@ -508,6 +633,7 @@ export const defaultHandler = {
           target_id: r.target_id,
           type: r.type,
           weight: r.weight,
+          confidence: r.confidence ?? 1.0,
           provenance: r.provenance,
           created_at: r.created_at,
         }));
@@ -545,13 +671,14 @@ export const defaultHandler = {
       const hops = Math.min(Math.max(parseInt(url.searchParams.get("hops") ?? "0", 10), 0), 3);
       const asOf = url.searchParams.has("as_of") ? parseInt(url.searchParams.get("as_of")!, 10) : undefined;
 
-      const { matches, insight, semanticUnavailable } = await recallEntries({ query, topK, tag, after, before, kind, hops, userId: user_id, asOf }, env, ctx);
+      const { matches, insight, semanticUnavailable, proposed_edges } = await recallEntries({ query, topK, tag, after, before, kind, hops, userId: user_id, asOf }, env, ctx);
 
       if (!matches.length) {
         return json({
           ok: true,
           results: [],
           semantic_unavailable: semanticUnavailable,
+          proposed_edges,
           message: semanticUnavailable
             ? `Semantic search unavailable (Vectorize index missing). Fix: ${VECTORIZE_FIX_HINT}.`
             : "Nothing found matching that query.",
@@ -576,6 +703,7 @@ export const defaultHandler = {
         })),
         insight: insight || null,
         semantic_unavailable: semanticUnavailable,
+        proposed_edges,
       });
     }
 
