@@ -28,7 +28,11 @@ CREATE TABLE IF NOT EXISTS entries (
   recorded_at            INTEGER,
   epistemic_status       TEXT NOT NULL DEFAULT 'canonical',
   current_episode_id     TEXT,
-  revision               INTEGER NOT NULL DEFAULT 0
+  revision               INTEGER NOT NULL DEFAULT 0,
+  created_by_user_id     TEXT NOT NULL DEFAULT '',
+  visibility             TEXT NOT NULL DEFAULT 'private',
+  vector_sync_pending    INTEGER NOT NULL DEFAULT 0,
+  updated_at             INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_entries_created_at ON entries(created_at DESC);
@@ -46,7 +50,8 @@ CREATE TABLE IF NOT EXISTS users (
   auth_key_prefix     TEXT NOT NULL,
   status              TEXT NOT NULL DEFAULT 'active',
   created_at          INTEGER NOT NULL,
-  last_used_at        INTEGER
+  last_used_at        INTEGER,
+  role                TEXT NOT NULL DEFAULT 'member'
 );
 
 CREATE INDEX IF NOT EXISTS idx_users_normalized_username ON users(normalized_username);
@@ -164,34 +169,264 @@ CREATE TABLE IF NOT EXISTS edge_proposals (
   status      TEXT NOT NULL DEFAULT 'pending',
   created_at  INTEGER NOT NULL,
   resolved_at INTEGER,
-  UNIQUE(source_id, target_id, type, status)
+  resolved_by TEXT
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_edge_proposals_pending_unique
+  ON edge_proposals(source_id, target_id, type)
+  WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_edge_proposals_status_created
+  ON edge_proposals(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_edge_proposals_source_target
+  ON edge_proposals(source_id, target_id);
+
+-- Indexes over migration-added entry/user columns are created by runtime
+-- migration 5 after legacy tables have been upgraded.
+
+CREATE TABLE IF NOT EXISTS user_deactivations (
+  id                   TEXT PRIMARY KEY,
+  user_id              TEXT NOT NULL,
+  requested_by_user_id TEXT NOT NULL,
+  transfer_to_user_id  TEXT,
+  transfer_cursor      TEXT,
+  processed_entries    INTEGER NOT NULL DEFAULT 0,
+  status               TEXT NOT NULL DEFAULT 'pending',
+  last_error           TEXT,
+  requested_at         INTEGER NOT NULL,
+  started_at           INTEGER,
+  updated_at           INTEGER NOT NULL,
+  completed_at         INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_deactivations_user_created
+  ON user_deactivations(user_id, requested_at DESC);
+CREATE INDEX IF NOT EXISTS idx_user_deactivations_resume
+  ON user_deactivations(status, updated_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_deactivations_active_user
+  ON user_deactivations(user_id)
+  WHERE status IN ('pending', 'running');
+
 CREATE TABLE IF NOT EXISTS agent_runs (
-  id           TEXT PRIMARY KEY,
-  user_id      TEXT NOT NULL,
-  started_at   INTEGER NOT NULL,
-  completed_at INTEGER,
-  tool_count   INTEGER NOT NULL DEFAULT 0
+  id                  TEXT PRIMARY KEY,
+  user_id             TEXT NOT NULL,
+  started_at          INTEGER NOT NULL,
+  completed_at        INTEGER,
+  tool_count          INTEGER NOT NULL DEFAULT 0,
+  actor_kind          TEXT NOT NULL DEFAULT 'human',
+  actor_id            TEXT NOT NULL DEFAULT '',
+  service_identity_id TEXT,
+  credential_id       TEXT,
+  auth_method         TEXT NOT NULL DEFAULT 'legacy',
+  autonomy_profile    TEXT NOT NULL DEFAULT 'legacy',
+  policy_version      TEXT NOT NULL DEFAULT 'legacy',
+  correlation_id      TEXT,
+  status              TEXT NOT NULL DEFAULT 'legacy',
+  policy_decision     TEXT,
+  requested_scopes    TEXT NOT NULL DEFAULT '[]',
+  granted_scopes      TEXT NOT NULL DEFAULT '[]',
+  decision_reason     TEXT,
+  proposal_id         TEXT,
+  target_ids          TEXT NOT NULL DEFAULT '[]',
+  redacted_request_summary TEXT,
+  request_hash        TEXT,
+  redacted_result_summary TEXT,
+  result_hash         TEXT,
+  error_code          TEXT,
+  requested_at        INTEGER,
+  succeeded_at        INTEGER,
+  failed_at           INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_runs_user_id ON agent_runs(user_id);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_started_at ON agent_runs(started_at DESC);
+-- Indexes over migration-added audit columns are created by migration 6.
 
 CREATE TABLE IF NOT EXISTS agent_events (
-  id             TEXT PRIMARY KEY,
-  run_id         TEXT NOT NULL,
-  tool_name      TEXT NOT NULL,
-  input_summary  TEXT,
-  output_summary TEXT,
-  duration_ms    INTEGER,
-  error          TEXT,
-  created_at     INTEGER NOT NULL
+  id                  TEXT PRIMARY KEY,
+  run_id              TEXT NOT NULL,
+  tool_name           TEXT NOT NULL,
+  input_summary       TEXT,
+  output_summary      TEXT,
+  duration_ms         INTEGER,
+  error               TEXT,
+  created_at          INTEGER NOT NULL,
+  sequence            INTEGER NOT NULL DEFAULT 0,
+  event_type          TEXT NOT NULL DEFAULT 'legacy',
+  actor_kind          TEXT NOT NULL DEFAULT 'human',
+  actor_id            TEXT NOT NULL DEFAULT '',
+  service_identity_id TEXT,
+  credential_id       TEXT,
+  auth_method         TEXT NOT NULL DEFAULT 'legacy',
+  autonomy_profile    TEXT NOT NULL DEFAULT 'legacy',
+  policy_version      TEXT NOT NULL DEFAULT 'legacy',
+  correlation_id      TEXT,
+  status              TEXT NOT NULL DEFAULT 'legacy',
+  policy_decision     TEXT,
+  requested_scopes    TEXT NOT NULL DEFAULT '[]',
+  granted_scopes      TEXT NOT NULL DEFAULT '[]',
+  decision_reason     TEXT,
+  proposal_id         TEXT,
+  target_ids          TEXT NOT NULL DEFAULT '[]',
+  redacted_input_summary  TEXT,
+  redacted_output_summary TEXT,
+  input_hash          TEXT,
+  output_hash         TEXT,
+  error_code          TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_events_run_id ON agent_events(run_id);
 CREATE INDEX IF NOT EXISTS idx_agent_events_tool_name ON agent_events(tool_name);
 CREATE INDEX IF NOT EXISTS idx_agent_events_created_at ON agent_events(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS service_identities (
+  id                       TEXT PRIMARY KEY,
+  name                     TEXT NOT NULL UNIQUE,
+  description              TEXT,
+  owner_user_id            TEXT NOT NULL,
+  status                   TEXT NOT NULL DEFAULT 'active',
+  default_autonomy_profile TEXT NOT NULL DEFAULT 'observe',
+  created_by_user_id       TEXT NOT NULL,
+  created_at               INTEGER NOT NULL,
+  updated_at               INTEGER NOT NULL,
+  revoked_at               INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_service_identities_owner_status
+  ON service_identities(owner_user_id, status);
+CREATE INDEX IF NOT EXISTS idx_service_identities_status_updated
+  ON service_identities(status, updated_at);
+
+CREATE TABLE IF NOT EXISTS service_credentials (
+  id                         TEXT PRIMARY KEY,
+  service_identity_id        TEXT NOT NULL,
+  credential_hash            TEXT NOT NULL UNIQUE,
+  credential_prefix          TEXT NOT NULL,
+  scopes                     TEXT NOT NULL DEFAULT '[]',
+  status                     TEXT NOT NULL DEFAULT 'active',
+  expires_at                 INTEGER,
+  last_used_at               INTEGER,
+  use_count                  INTEGER NOT NULL DEFAULT 0,
+  last_used_metadata         TEXT,
+  rotated_from_credential_id TEXT,
+  created_by_user_id         TEXT NOT NULL,
+  created_at                 INTEGER NOT NULL,
+  revoked_at                 INTEGER,
+  revoked_by_user_id         TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_service_credentials_service_status
+  ON service_credentials(service_identity_id, status);
+CREATE INDEX IF NOT EXISTS idx_service_credentials_prefix
+  ON service_credentials(credential_prefix);
+CREATE INDEX IF NOT EXISTS idx_service_credentials_expiry
+  ON service_credentials(status, expires_at);
+
+CREATE TABLE IF NOT EXISTS security_events (
+  id                  TEXT PRIMARY KEY,
+  event_type          TEXT NOT NULL,
+  actor_kind          TEXT,
+  actor_id            TEXT,
+  service_identity_id TEXT,
+  credential_id       TEXT,
+  auth_method         TEXT,
+  correlation_id      TEXT,
+  source_ip_hash      TEXT,
+  user_agent_hash     TEXT,
+  reason              TEXT NOT NULL,
+  error_code          TEXT,
+  redacted_summary    TEXT,
+  summary_hash        TEXT,
+  metadata            TEXT NOT NULL DEFAULT '{}',
+  created_at          INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_security_events_created
+  ON security_events(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_security_events_actor
+  ON security_events(actor_kind, actor_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_security_events_correlation
+  ON security_events(correlation_id);
+
+CREATE TABLE IF NOT EXISTS action_proposals (
+  id                     TEXT PRIMARY KEY,
+  action_type            TEXT NOT NULL,
+  proposer_kind          TEXT NOT NULL,
+  proposer_id            TEXT NOT NULL,
+  visibility_scope       TEXT NOT NULL DEFAULT 'private',
+  payload_json           TEXT NOT NULL,
+  payload_hash           TEXT,
+  target_ids             TEXT NOT NULL DEFAULT '[]',
+  expected_preconditions TEXT NOT NULL DEFAULT '{}',
+  expected_revision      INTEGER,
+  status                 TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'executing', 'executed', 'rejected', 'failed', 'stale', 'expired')),
+  risk_level             TEXT NOT NULL DEFAULT 'medium',
+  reason                 TEXT NOT NULL,
+  evidence_json          TEXT NOT NULL DEFAULT '[]',
+  autonomy_profile       TEXT NOT NULL,
+  policy_version         TEXT NOT NULL,
+  idempotency_key        TEXT NOT NULL,
+  expires_at             INTEGER,
+  reviewer_kind          TEXT,
+  reviewer_id            TEXT,
+  review_reason          TEXT,
+  reviewed_at            INTEGER,
+  executor_kind          TEXT,
+  executor_id            TEXT,
+  execution_started_at   INTEGER,
+  executed_at            INTEGER,
+  rejected_at            INTEGER,
+  failed_at              INTEGER,
+  stale_at               INTEGER,
+  expired_at             INTEGER,
+  result_json            TEXT,
+  result_hash            TEXT,
+  error_code             TEXT,
+  error_message          TEXT,
+  created_at             INTEGER NOT NULL,
+  updated_at             INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_action_proposals_status_created
+  ON action_proposals(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_action_proposals_proposer
+  ON action_proposals(proposer_kind, proposer_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_action_proposals_action_status
+  ON action_proposals(action_type, status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_action_proposals_expiry
+  ON action_proposals(status, expires_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_action_proposals_idempotency
+  ON action_proposals(idempotency_key);
+
+CREATE TABLE IF NOT EXISTS proposal_events (
+  id          TEXT PRIMARY KEY,
+  proposal_id TEXT NOT NULL,
+  sequence    INTEGER NOT NULL,
+  event_type  TEXT NOT NULL,
+  actor_kind  TEXT NOT NULL,
+  actor_id    TEXT NOT NULL,
+  data_json   TEXT NOT NULL DEFAULT '{}',
+  data_hash   TEXT,
+  created_at  INTEGER NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_proposal_events_sequence
+  ON proposal_events(proposal_id, sequence);
+CREATE INDEX IF NOT EXISTS idx_proposal_events_proposal_created
+  ON proposal_events(proposal_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_proposal_events_type_created
+  ON proposal_events(event_type, created_at DESC);
+
+CREATE TRIGGER IF NOT EXISTS proposal_events_no_update
+  BEFORE UPDATE ON proposal_events
+  BEGIN
+    SELECT RAISE(ABORT, 'proposal_events are append-only');
+  END;
+CREATE TRIGGER IF NOT EXISTS proposal_events_no_delete
+  BEFORE DELETE ON proposal_events
+  BEGIN
+    SELECT RAISE(ABORT, 'proposal_events are append-only');
+  END;
 
 CREATE TABLE IF NOT EXISTS vector_cleanup_queue (
   id         TEXT PRIMARY KEY,

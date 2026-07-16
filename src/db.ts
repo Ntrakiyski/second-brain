@@ -80,6 +80,13 @@ async function tableColumns(db: D1Database, table: string): Promise<Set<string>>
   return new Set(result.results.map((row) => row.name));
 }
 
+async function tableDefinition(db: D1Database, table: string): Promise<string | null> {
+  const row = await db.prepare(
+    `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?`,
+  ).bind(table).first<{ sql: string | null }>();
+  return row?.sql ?? null;
+}
+
 function addColumnIfMissing(
   statements: string[],
   columns: Set<string>,
@@ -344,6 +351,518 @@ const MIGRATIONS: readonly Migration[] = [
       return statements;
     },
   },
+  {
+    version: 5,
+    name: "team_tenancy",
+    statements: async (db) => {
+      const users = await tableColumns(db, "users");
+      const entries = await tableColumns(db, "entries");
+      const edgeProposals = await tableColumns(db, "edge_proposals");
+      const edgeProposalDefinition = await tableDefinition(db, "edge_proposals");
+      const statements: string[] = [];
+
+      addColumnIfMissing(statements, users, "users", "role", "TEXT NOT NULL DEFAULT 'member'");
+
+      addColumnIfMissing(statements, entries, "entries", "created_by_user_id", "TEXT NOT NULL DEFAULT ''");
+      addColumnIfMissing(statements, entries, "entries", "visibility", "TEXT NOT NULL DEFAULT 'private'");
+      addColumnIfMissing(statements, entries, "entries", "vector_sync_pending", "INTEGER NOT NULL DEFAULT 0");
+      addColumnIfMissing(statements, entries, "entries", "updated_at", "INTEGER NOT NULL DEFAULT 0");
+
+      statements.push(
+        `UPDATE entries
+         SET created_by_user_id = owner_user_id
+         WHERE created_by_user_id = ''`,
+        // CASE evaluation is ordered in SQLite. Malformed JSON never reaches
+        // json_type/json_each and therefore fails closed to private.
+        `UPDATE entries
+         SET visibility = CASE
+           WHEN json_valid(tags) = 0 THEN 'private'
+           WHEN json_type(tags) <> 'array' THEN 'private'
+           WHEN EXISTS (
+             SELECT 1 FROM json_each(entries.tags)
+             WHERE json_each.type <> 'text'
+           ) THEN 'private'
+           WHEN EXISTS (
+             SELECT 1 FROM json_each(entries.tags)
+             WHERE json_each.type = 'text' AND json_each.value = 'private'
+           ) THEN 'private'
+           ELSE 'public'
+         END`,
+        `UPDATE entries
+         SET updated_at = created_at
+         WHERE updated_at = 0`,
+        // Promote at most one deterministic bootstrap administrator. Existing
+        // active administrators always win, and the inactive system principal
+        // is never eligible.
+        `UPDATE users
+         SET role = 'admin'
+         WHERE id = (
+           SELECT id FROM users
+           WHERE status = 'active' AND normalized_username <> '_system'
+           ORDER BY created_at ASC, id ASC
+           LIMIT 1
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM users
+           WHERE status = 'active'
+             AND normalized_username <> '_system'
+             AND role = 'admin'
+         )`,
+        `CREATE INDEX IF NOT EXISTS idx_entries_owner_visibility_created
+           ON entries(owner_user_id, visibility, created_at DESC)`,
+        `CREATE INDEX IF NOT EXISTS idx_entries_creator_created
+           ON entries(created_by_user_id, created_at DESC)`,
+        `CREATE INDEX IF NOT EXISTS idx_users_role_status_created
+           ON users(role, status, created_at)`,
+        `CREATE TABLE IF NOT EXISTS user_deactivations (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          requested_by_user_id TEXT NOT NULL,
+          transfer_to_user_id TEXT,
+          transfer_cursor TEXT,
+          processed_entries INTEGER NOT NULL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'pending',
+          last_error TEXT,
+          requested_at INTEGER NOT NULL,
+          started_at INTEGER,
+          updated_at INTEGER NOT NULL,
+          completed_at INTEGER
+        )`,
+        `CREATE INDEX IF NOT EXISTS idx_user_deactivations_user_created
+           ON user_deactivations(user_id, requested_at DESC)`,
+        `CREATE INDEX IF NOT EXISTS idx_user_deactivations_resume
+           ON user_deactivations(status, updated_at)`,
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_user_deactivations_active_user
+           ON user_deactivations(user_id)
+           WHERE status IN ('pending', 'running')`,
+      );
+
+      // Migration 3 encoded status into a table-level UNIQUE constraint. That
+      // prevented a second historical rejection or approval forever. Rebuild
+      // atomically only when that legacy definition is present; D1 batch()
+      // rolls the table swap and the migration marker back together.
+      const hasLegacyStatusUnique = Boolean(edgeProposalDefinition &&
+        /UNIQUE\s*\(\s*source_id\s*,\s*target_id\s*,\s*type\s*,\s*status\s*\)/i.test(edgeProposalDefinition));
+
+      if (hasLegacyStatusUnique) {
+        const resolvedByProjection = edgeProposals.has("resolved_by") ? "resolved_by" : "NULL";
+        statements.push(
+          `DROP TABLE IF EXISTS edge_proposals_v5`,
+          `CREATE TABLE edge_proposals_v5 (
+            id TEXT PRIMARY KEY,
+            source_id TEXT NOT NULL,
+            target_id TEXT NOT NULL,
+            type TEXT NOT NULL DEFAULT 'contradicts',
+            reason TEXT NOT NULL DEFAULT '',
+            proposed_by TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at INTEGER NOT NULL,
+            resolved_at INTEGER,
+            resolved_by TEXT
+          )`,
+          `INSERT INTO edge_proposals_v5 (
+             id, source_id, target_id, type, reason, proposed_by, status,
+             created_at, resolved_at, resolved_by
+           )
+           SELECT id, source_id, target_id, type, reason, proposed_by, status,
+             created_at, resolved_at, ${resolvedByProjection}
+           FROM edge_proposals`,
+          `DROP TABLE edge_proposals`,
+          `ALTER TABLE edge_proposals_v5 RENAME TO edge_proposals`,
+        );
+      } else {
+        addColumnIfMissing(
+          statements,
+          edgeProposals,
+          "edge_proposals",
+          "resolved_by",
+          "TEXT",
+        );
+      }
+
+      statements.push(
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_edge_proposals_pending_unique
+           ON edge_proposals(source_id, target_id, type)
+           WHERE status = 'pending'`,
+        `CREATE INDEX IF NOT EXISTS idx_edge_proposals_status_created
+           ON edge_proposals(status, created_at DESC)`,
+        `CREATE INDEX IF NOT EXISTS idx_edge_proposals_source_target
+           ON edge_proposals(source_id, target_id)`,
+      );
+
+      return statements;
+    },
+  },
+  {
+    version: 6,
+    name: "operator_governance",
+    statements: async (db) => {
+      const runs = await tableColumns(db, "agent_runs");
+      const events = await tableColumns(db, "agent_events");
+      const statements: string[] = [];
+
+      addColumnIfMissing(statements, runs, "agent_runs", "actor_kind", "TEXT NOT NULL DEFAULT 'human'");
+      addColumnIfMissing(statements, runs, "agent_runs", "actor_id", "TEXT NOT NULL DEFAULT ''");
+      addColumnIfMissing(statements, runs, "agent_runs", "service_identity_id", "TEXT");
+      addColumnIfMissing(statements, runs, "agent_runs", "credential_id", "TEXT");
+      addColumnIfMissing(statements, runs, "agent_runs", "auth_method", "TEXT NOT NULL DEFAULT 'legacy'");
+      addColumnIfMissing(statements, runs, "agent_runs", "autonomy_profile", "TEXT NOT NULL DEFAULT 'legacy'");
+      addColumnIfMissing(statements, runs, "agent_runs", "policy_version", "TEXT NOT NULL DEFAULT 'legacy'");
+      addColumnIfMissing(statements, runs, "agent_runs", "correlation_id", "TEXT");
+      addColumnIfMissing(statements, runs, "agent_runs", "status", "TEXT NOT NULL DEFAULT 'legacy'");
+      addColumnIfMissing(statements, runs, "agent_runs", "policy_decision", "TEXT");
+      addColumnIfMissing(statements, runs, "agent_runs", "requested_scopes", "TEXT NOT NULL DEFAULT '[]'");
+      addColumnIfMissing(statements, runs, "agent_runs", "granted_scopes", "TEXT NOT NULL DEFAULT '[]'");
+      addColumnIfMissing(statements, runs, "agent_runs", "decision_reason", "TEXT");
+      addColumnIfMissing(statements, runs, "agent_runs", "proposal_id", "TEXT");
+      addColumnIfMissing(statements, runs, "agent_runs", "target_ids", "TEXT NOT NULL DEFAULT '[]'");
+      addColumnIfMissing(statements, runs, "agent_runs", "redacted_request_summary", "TEXT");
+      addColumnIfMissing(statements, runs, "agent_runs", "request_hash", "TEXT");
+      addColumnIfMissing(statements, runs, "agent_runs", "redacted_result_summary", "TEXT");
+      addColumnIfMissing(statements, runs, "agent_runs", "result_hash", "TEXT");
+      addColumnIfMissing(statements, runs, "agent_runs", "error_code", "TEXT");
+      addColumnIfMissing(statements, runs, "agent_runs", "requested_at", "INTEGER");
+      addColumnIfMissing(statements, runs, "agent_runs", "succeeded_at", "INTEGER");
+      addColumnIfMissing(statements, runs, "agent_runs", "failed_at", "INTEGER");
+
+      addColumnIfMissing(statements, events, "agent_events", "sequence", "INTEGER NOT NULL DEFAULT 0");
+      addColumnIfMissing(statements, events, "agent_events", "event_type", "TEXT NOT NULL DEFAULT 'legacy'");
+      addColumnIfMissing(statements, events, "agent_events", "actor_kind", "TEXT NOT NULL DEFAULT 'human'");
+      addColumnIfMissing(statements, events, "agent_events", "actor_id", "TEXT NOT NULL DEFAULT ''");
+      addColumnIfMissing(statements, events, "agent_events", "service_identity_id", "TEXT");
+      addColumnIfMissing(statements, events, "agent_events", "credential_id", "TEXT");
+      addColumnIfMissing(statements, events, "agent_events", "auth_method", "TEXT NOT NULL DEFAULT 'legacy'");
+      addColumnIfMissing(statements, events, "agent_events", "autonomy_profile", "TEXT NOT NULL DEFAULT 'legacy'");
+      addColumnIfMissing(statements, events, "agent_events", "policy_version", "TEXT NOT NULL DEFAULT 'legacy'");
+      addColumnIfMissing(statements, events, "agent_events", "correlation_id", "TEXT");
+      addColumnIfMissing(statements, events, "agent_events", "status", "TEXT NOT NULL DEFAULT 'legacy'");
+      addColumnIfMissing(statements, events, "agent_events", "policy_decision", "TEXT");
+      addColumnIfMissing(statements, events, "agent_events", "requested_scopes", "TEXT NOT NULL DEFAULT '[]'");
+      addColumnIfMissing(statements, events, "agent_events", "granted_scopes", "TEXT NOT NULL DEFAULT '[]'");
+      addColumnIfMissing(statements, events, "agent_events", "decision_reason", "TEXT");
+      addColumnIfMissing(statements, events, "agent_events", "proposal_id", "TEXT");
+      addColumnIfMissing(statements, events, "agent_events", "target_ids", "TEXT NOT NULL DEFAULT '[]'");
+      addColumnIfMissing(statements, events, "agent_events", "redacted_input_summary", "TEXT");
+      addColumnIfMissing(statements, events, "agent_events", "redacted_output_summary", "TEXT");
+      addColumnIfMissing(statements, events, "agent_events", "input_hash", "TEXT");
+      addColumnIfMissing(statements, events, "agent_events", "output_hash", "TEXT");
+      addColumnIfMissing(statements, events, "agent_events", "error_code", "TEXT");
+
+      statements.push(
+        `UPDATE agent_runs
+         SET actor_id = user_id
+         WHERE actor_id = ''`,
+        `UPDATE agent_runs
+         SET requested_at = started_at
+         WHERE requested_at IS NULL`,
+        `UPDATE agent_runs
+         SET status = CASE
+           WHEN completed_at IS NULL THEN 'started'
+           ELSE 'succeeded'
+         END
+         WHERE status = 'legacy'`,
+        `UPDATE agent_runs
+         SET succeeded_at = completed_at
+         WHERE succeeded_at IS NULL
+           AND completed_at IS NOT NULL
+           AND status = 'succeeded'`,
+        // Assign deterministic per-run ordering to legacy rows. New governed
+        // writers provide an explicit sequence; the old audit writer remains
+        // compatible via the zero default during the transition.
+        `UPDATE agent_events AS current
+         SET sequence = (
+           SELECT COUNT(*) FROM agent_events AS prior
+           WHERE prior.run_id = current.run_id
+             AND (
+               prior.created_at < current.created_at
+               OR (prior.created_at = current.created_at AND prior.id <= current.id)
+             )
+         )
+         WHERE sequence = 0`,
+        `UPDATE agent_events
+         SET event_type = CASE
+           WHEN error IS NULL THEN 'succeeded'
+           ELSE 'failed'
+         END,
+         status = CASE
+           WHEN error IS NULL THEN 'succeeded'
+           ELSE 'failed'
+         END
+         WHERE event_type = 'legacy' OR status = 'legacy'`,
+        `UPDATE agent_events
+         SET actor_kind = COALESCE(
+           (SELECT agent_runs.actor_kind FROM agent_runs WHERE agent_runs.id = agent_events.run_id),
+           'human'
+         ),
+         actor_id = COALESCE(
+           (SELECT agent_runs.actor_id FROM agent_runs WHERE agent_runs.id = agent_events.run_id),
+           ''
+         ),
+         auth_method = COALESCE(
+           (SELECT agent_runs.auth_method FROM agent_runs WHERE agent_runs.id = agent_events.run_id),
+           'legacy'
+         ),
+         autonomy_profile = COALESCE(
+           (SELECT agent_runs.autonomy_profile FROM agent_runs WHERE agent_runs.id = agent_events.run_id),
+           'legacy'
+         ),
+         policy_version = COALESCE(
+           (SELECT agent_runs.policy_version FROM agent_runs WHERE agent_runs.id = agent_events.run_id),
+           'legacy'
+         )
+         WHERE actor_id = ''`,
+        `CREATE TABLE IF NOT EXISTS service_identities (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL UNIQUE,
+          description TEXT,
+          owner_user_id TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'active',
+          default_autonomy_profile TEXT NOT NULL DEFAULT 'observe',
+          created_by_user_id TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          revoked_at INTEGER
+        )`,
+        `CREATE INDEX IF NOT EXISTS idx_service_identities_owner_status
+           ON service_identities(owner_user_id, status)`,
+        `CREATE INDEX IF NOT EXISTS idx_service_identities_status_updated
+           ON service_identities(status, updated_at)`,
+        `CREATE TABLE IF NOT EXISTS service_credentials (
+          id TEXT PRIMARY KEY,
+          service_identity_id TEXT NOT NULL,
+          credential_hash TEXT NOT NULL UNIQUE,
+          credential_prefix TEXT NOT NULL,
+          scopes TEXT NOT NULL DEFAULT '[]',
+          status TEXT NOT NULL DEFAULT 'active',
+          expires_at INTEGER,
+          last_used_at INTEGER,
+          use_count INTEGER NOT NULL DEFAULT 0,
+          last_used_metadata TEXT,
+          rotated_from_credential_id TEXT,
+          created_by_user_id TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          revoked_at INTEGER,
+          revoked_by_user_id TEXT
+        )`,
+        `CREATE INDEX IF NOT EXISTS idx_service_credentials_service_status
+           ON service_credentials(service_identity_id, status)`,
+        `CREATE INDEX IF NOT EXISTS idx_service_credentials_prefix
+           ON service_credentials(credential_prefix)`,
+        `CREATE INDEX IF NOT EXISTS idx_service_credentials_expiry
+           ON service_credentials(status, expires_at)`,
+        `CREATE TABLE IF NOT EXISTS security_events (
+          id TEXT PRIMARY KEY,
+          event_type TEXT NOT NULL,
+          actor_kind TEXT,
+          actor_id TEXT,
+          service_identity_id TEXT,
+          credential_id TEXT,
+          auth_method TEXT,
+          correlation_id TEXT,
+          source_ip_hash TEXT,
+          user_agent_hash TEXT,
+          reason TEXT NOT NULL,
+          error_code TEXT,
+          redacted_summary TEXT,
+          summary_hash TEXT,
+          metadata TEXT NOT NULL DEFAULT '{}',
+          created_at INTEGER NOT NULL
+        )`,
+        `CREATE INDEX IF NOT EXISTS idx_security_events_created
+           ON security_events(created_at DESC)`,
+        `CREATE INDEX IF NOT EXISTS idx_security_events_actor
+           ON security_events(actor_kind, actor_id, created_at DESC)`,
+        `CREATE INDEX IF NOT EXISTS idx_security_events_correlation
+           ON security_events(correlation_id)`,
+        `CREATE TABLE IF NOT EXISTS action_proposals (
+          id TEXT PRIMARY KEY,
+          action_type TEXT NOT NULL,
+          proposer_kind TEXT NOT NULL,
+          proposer_id TEXT NOT NULL,
+          visibility_scope TEXT NOT NULL DEFAULT 'private',
+          payload_json TEXT NOT NULL,
+          payload_hash TEXT,
+          target_ids TEXT NOT NULL DEFAULT '[]',
+          expected_preconditions TEXT NOT NULL DEFAULT '{}',
+          expected_revision INTEGER,
+          status TEXT NOT NULL DEFAULT 'pending'
+            CHECK (status IN ('pending', 'executing', 'executed', 'rejected', 'failed', 'stale', 'expired')),
+          risk_level TEXT NOT NULL DEFAULT 'medium',
+          reason TEXT NOT NULL,
+          evidence_json TEXT NOT NULL DEFAULT '[]',
+          autonomy_profile TEXT NOT NULL,
+          policy_version TEXT NOT NULL,
+          idempotency_key TEXT NOT NULL,
+          expires_at INTEGER,
+          reviewer_kind TEXT,
+          reviewer_id TEXT,
+          review_reason TEXT,
+          reviewed_at INTEGER,
+          executor_kind TEXT,
+          executor_id TEXT,
+          execution_started_at INTEGER,
+          executed_at INTEGER,
+          rejected_at INTEGER,
+          failed_at INTEGER,
+          stale_at INTEGER,
+          expired_at INTEGER,
+          result_json TEXT,
+          result_hash TEXT,
+          error_code TEXT,
+          error_message TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        )`,
+        `CREATE INDEX IF NOT EXISTS idx_action_proposals_status_created
+           ON action_proposals(status, created_at DESC)`,
+        `CREATE INDEX IF NOT EXISTS idx_action_proposals_proposer
+           ON action_proposals(proposer_kind, proposer_id, created_at DESC)`,
+        `CREATE INDEX IF NOT EXISTS idx_action_proposals_action_status
+           ON action_proposals(action_type, status, updated_at)`,
+        `CREATE INDEX IF NOT EXISTS idx_action_proposals_expiry
+           ON action_proposals(status, expires_at)`,
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_action_proposals_idempotency
+           ON action_proposals(idempotency_key)`,
+        `CREATE TABLE IF NOT EXISTS proposal_events (
+          id TEXT PRIMARY KEY,
+          proposal_id TEXT NOT NULL,
+          sequence INTEGER NOT NULL,
+          event_type TEXT NOT NULL,
+          actor_kind TEXT NOT NULL,
+          actor_id TEXT NOT NULL,
+          data_json TEXT NOT NULL DEFAULT '{}',
+          data_hash TEXT,
+          created_at INTEGER NOT NULL
+        )`,
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_proposal_events_sequence
+           ON proposal_events(proposal_id, sequence)`,
+        `CREATE INDEX IF NOT EXISTS idx_proposal_events_proposal_created
+           ON proposal_events(proposal_id, created_at)`,
+        `CREATE INDEX IF NOT EXISTS idx_proposal_events_type_created
+           ON proposal_events(event_type, created_at DESC)`,
+        // Legacy edge proposals remain authoritative for old REST/MCP handlers.
+        // The generic proposal uses a namespaced deterministic identity and a
+        // null payload hash to make clear that pre-v6 payloads were not hashed.
+        `INSERT OR IGNORE INTO action_proposals (
+           id, action_type, proposer_kind, proposer_id, visibility_scope,
+           payload_json, payload_hash, target_ids, expected_preconditions,
+           expected_revision, status, risk_level, reason, evidence_json,
+           autonomy_profile, policy_version, idempotency_key, expires_at,
+           reviewer_kind, reviewer_id, reviewed_at, executed_at, rejected_at,
+           failed_at, created_at, updated_at
+         )
+         SELECT
+           'legacy-edge:' || ep.id,
+           'edge.publish',
+           CASE
+             WHEN ep.proposed_by = '' OR substr(ep.proposed_by, 1, 1) = '_' THEN 'system'
+             ELSE 'human'
+           END,
+           CASE WHEN ep.proposed_by = '' THEN '_legacy_unknown' ELSE ep.proposed_by END,
+           CASE
+             WHEN source.visibility = 'public' AND target.visibility = 'public' THEN 'team'
+             ELSE 'private'
+           END,
+           json_object(
+             'edge_type', ep.type,
+             'source_id', ep.source_id,
+             'target_id', ep.target_id,
+             'reason', ep.reason
+           ),
+           NULL,
+           json_array(ep.source_id, ep.target_id),
+           json_object('legacy_edge_proposal_id', ep.id, 'legacy_status', ep.status),
+           NULL,
+           CASE ep.status
+             WHEN 'pending' THEN 'pending'
+             WHEN 'approved' THEN 'executed'
+             WHEN 'rejected' THEN 'rejected'
+             ELSE 'failed'
+           END,
+           'medium',
+           CASE WHEN ep.reason = '' THEN 'Migrated legacy edge proposal' ELSE ep.reason END,
+           json_array(json_object('kind', 'legacy_edge_proposal', 'id', ep.id)),
+           'legacy',
+           'legacy-v5',
+           'legacy-edge-proposal:' || ep.id,
+           NULL,
+           CASE WHEN ep.resolved_by IS NULL THEN NULL ELSE 'human' END,
+           ep.resolved_by,
+           ep.resolved_at,
+           CASE WHEN ep.status = 'approved' THEN ep.resolved_at ELSE NULL END,
+           CASE WHEN ep.status = 'rejected' THEN ep.resolved_at ELSE NULL END,
+           CASE WHEN ep.status NOT IN ('pending', 'approved', 'rejected') THEN ep.resolved_at ELSE NULL END,
+           ep.created_at,
+           COALESCE(ep.resolved_at, ep.created_at)
+         FROM edge_proposals AS ep
+         LEFT JOIN entries AS source ON source.id = ep.source_id
+         LEFT JOIN entries AS target ON target.id = ep.target_id`,
+        `INSERT OR IGNORE INTO proposal_events (
+           id, proposal_id, sequence, event_type, actor_kind, actor_id,
+           data_json, data_hash, created_at
+         )
+         SELECT
+           'legacy-edge-event-created:' || ep.id,
+           'legacy-edge:' || ep.id,
+           1,
+           'migrated',
+           'system',
+           '_migration_v6',
+           json_object('legacy_status', ep.status),
+           NULL,
+           ep.created_at
+         FROM edge_proposals AS ep`,
+        `INSERT OR IGNORE INTO proposal_events (
+           id, proposal_id, sequence, event_type, actor_kind, actor_id,
+           data_json, data_hash, created_at
+         )
+         SELECT
+           'legacy-edge-event-resolved:' || ep.id,
+           'legacy-edge:' || ep.id,
+           2,
+           CASE ep.status
+             WHEN 'approved' THEN 'executed'
+             WHEN 'rejected' THEN 'rejected'
+             ELSE 'failed'
+           END,
+           CASE WHEN ep.resolved_by IS NULL THEN 'system' ELSE 'human' END,
+           COALESCE(ep.resolved_by, '_legacy_unknown'),
+           json_object('legacy_status', ep.status),
+           NULL,
+           COALESCE(ep.resolved_at, ep.created_at)
+         FROM edge_proposals AS ep
+         WHERE ep.status <> 'pending'`,
+        `CREATE TRIGGER IF NOT EXISTS proposal_events_no_update
+           BEFORE UPDATE ON proposal_events
+           BEGIN
+             SELECT RAISE(ABORT, 'proposal_events are append-only');
+           END`,
+        `CREATE TRIGGER IF NOT EXISTS proposal_events_no_delete
+           BEFORE DELETE ON proposal_events
+           BEGIN
+             SELECT RAISE(ABORT, 'proposal_events are append-only');
+           END`,
+        `CREATE INDEX IF NOT EXISTS idx_agent_runs_actor_started
+           ON agent_runs(actor_kind, actor_id, started_at DESC)`,
+        `CREATE INDEX IF NOT EXISTS idx_agent_runs_service_started
+           ON agent_runs(service_identity_id, started_at DESC)`,
+        `CREATE INDEX IF NOT EXISTS idx_agent_runs_status_started
+           ON agent_runs(status, started_at DESC)`,
+        `CREATE INDEX IF NOT EXISTS idx_agent_runs_correlation
+           ON agent_runs(correlation_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_agent_events_run_sequence
+           ON agent_events(run_id, sequence, created_at)`,
+        `CREATE INDEX IF NOT EXISTS idx_agent_events_actor_created
+           ON agent_events(actor_kind, actor_id, created_at DESC)`,
+        `CREATE INDEX IF NOT EXISTS idx_agent_events_event_created
+           ON agent_events(event_type, created_at DESC)`,
+        `CREATE INDEX IF NOT EXISTS idx_agent_events_proposal
+           ON agent_events(proposal_id)`,
+      );
+
+      return statements;
+    },
+  },
 ] as const;
 
 async function ensureMigrationTable(db: D1Database): Promise<void> {
@@ -408,11 +927,12 @@ async function validateCurrentSchema(db: D1Database): Promise<void> {
       recall_count, importance_score, contradiction_wins,
       contradiction_losses, owner_user_id, retention_score,
       last_recalled_at, valid_from, valid_to, recorded_at,
-      epistemic_status, current_episode_id, revision FROM entries LIMIT 0`,
+      epistemic_status, current_episode_id, revision, created_by_user_id,
+      visibility, vector_sync_pending, updated_at FROM entries LIMIT 0`,
     `SELECT id, source_id, target_id, type, weight, provenance, metadata,
       confidence, created_at, updated_at FROM edges LIMIT 0`,
     `SELECT id, username, normalized_username, auth_key_hash, auth_key_prefix,
-      status, created_at, last_used_at FROM users LIMIT 0`,
+      status, created_at, last_used_at, role FROM users LIMIT 0`,
     `SELECT id, entry_id, content, content_type, source, created_at,
       materialized_content, content_hash, mutation_id, mutation_kind,
       parent_episode_id, restored_from_snapshot_id, owner_user_id, source_url
@@ -429,10 +949,46 @@ async function validateCurrentSchema(db: D1Database): Promise<void> {
       created_at, page_start, page_end, start_offset, end_offset
       FROM document_sections LIMIT 0`,
     `SELECT id, source_id, target_id, type, reason, proposed_by, status,
-      created_at, resolved_at FROM edge_proposals LIMIT 0`,
-    `SELECT id, user_id, started_at, completed_at, tool_count FROM agent_runs LIMIT 0`,
+      created_at, resolved_at, resolved_by FROM edge_proposals LIMIT 0`,
+    `SELECT id, user_id, requested_by_user_id, transfer_to_user_id,
+      transfer_cursor, processed_entries, status, last_error, requested_at,
+      started_at, updated_at, completed_at FROM user_deactivations LIMIT 0`,
+    `SELECT id, user_id, started_at, completed_at, tool_count, actor_kind,
+      actor_id, service_identity_id, credential_id, auth_method,
+      autonomy_profile, policy_version, correlation_id, status,
+      policy_decision, requested_scopes, granted_scopes, decision_reason,
+      proposal_id, target_ids, redacted_request_summary, request_hash,
+      redacted_result_summary, result_hash, error_code, requested_at,
+      succeeded_at, failed_at
+      FROM agent_runs LIMIT 0`,
     `SELECT id, run_id, tool_name, input_summary, output_summary, duration_ms,
-      error, created_at FROM agent_events LIMIT 0`,
+      error, created_at, sequence, event_type, actor_kind, actor_id,
+      service_identity_id, credential_id, auth_method, autonomy_profile,
+      policy_version, correlation_id, status, policy_decision,
+      requested_scopes, granted_scopes, decision_reason, proposal_id,
+      target_ids, redacted_input_summary, redacted_output_summary, input_hash,
+      output_hash, error_code FROM agent_events LIMIT 0`,
+    `SELECT id, name, description, owner_user_id, status,
+      default_autonomy_profile, created_by_user_id, created_at, updated_at,
+      revoked_at FROM service_identities LIMIT 0`,
+    `SELECT id, service_identity_id, credential_hash, credential_prefix,
+      scopes, status, expires_at, last_used_at, use_count, last_used_metadata,
+      rotated_from_credential_id, created_by_user_id, created_at, revoked_at,
+      revoked_by_user_id FROM service_credentials LIMIT 0`,
+    `SELECT id, event_type, actor_kind, actor_id, service_identity_id,
+      credential_id, auth_method, correlation_id, source_ip_hash,
+      user_agent_hash, reason, error_code, redacted_summary, summary_hash,
+      metadata, created_at FROM security_events LIMIT 0`,
+    `SELECT id, action_type, proposer_kind, proposer_id, visibility_scope,
+      payload_json, payload_hash, target_ids, expected_preconditions,
+      expected_revision, status, risk_level, reason, evidence_json,
+      autonomy_profile, policy_version, idempotency_key, expires_at,
+      reviewer_kind, reviewer_id, review_reason, reviewed_at, executor_kind,
+      executor_id, execution_started_at, executed_at, rejected_at, failed_at,
+      stale_at, expired_at, result_json, result_hash, error_code,
+      error_message, created_at, updated_at FROM action_proposals LIMIT 0`,
+    `SELECT id, proposal_id, sequence, event_type, actor_kind, actor_id,
+      data_json, data_hash, created_at FROM proposal_events LIMIT 0`,
     `SELECT id, vector_ids, reason, attempts, last_error, created_at, updated_at
       FROM vector_cleanup_queue LIMIT 0`,
   ];
@@ -472,9 +1028,38 @@ async function bootstrapSystemOwner(env: Env): Promise<void> {
   }
 
   await env.DB.prepare(
-    `UPDATE entries SET owner_user_id = ? WHERE owner_user_id = ''`,
-  ).bind(systemRow.id).run();
+    `UPDATE entries
+     SET owner_user_id = ?,
+       created_by_user_id = CASE
+         WHEN created_by_user_id = '' THEN ?
+         ELSE created_by_user_id
+       END
+     WHERE owner_user_id = ''`,
+  ).bind(systemRow.id, systemRow.id).run();
   cachedSystemUserId = systemRow.id;
+}
+
+async function bootstrapTeamAdmin(env: Env): Promise<void> {
+  // This remains safe on every cold start: an existing active administrator
+  // prevents mutation, and otherwise exactly the earliest active non-system
+  // account is promoted. The deterministic id tie-break handles old imports
+  // whose timestamps have only second-level precision.
+  await env.DB.prepare(
+    `UPDATE users
+     SET role = 'admin'
+     WHERE id = (
+       SELECT id FROM users
+       WHERE status = 'active' AND normalized_username <> '_system'
+       ORDER BY created_at ASC, id ASC
+       LIMIT 1
+     )
+     AND NOT EXISTS (
+       SELECT 1 FROM users
+       WHERE status = 'active'
+         AND normalized_username <> '_system'
+         AND role = 'admin'
+     )`,
+  ).run();
 }
 
 async function runInitialization(env: Env): Promise<void> {
@@ -489,6 +1074,7 @@ async function runInitialization(env: Env): Promise<void> {
 
   await validateCurrentSchema(env.DB);
   await bootstrapSystemOwner(env);
+  await bootstrapTeamAdmin(env);
 }
 
 // ─── Public database API ─────────────────────────────────────────────────────

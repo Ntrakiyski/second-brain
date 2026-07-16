@@ -174,3 +174,304 @@ export interface VectorCleanupQueueItem {
   createdAt: number;
   updatedAt: number;
 }
+
+// ─── Shared Knowledge Base: tenancy and lifecycle ───────────────────────────
+
+export const USER_ROLES = ["member", "admin"] as const;
+export type UserRole = (typeof USER_ROLES)[number];
+
+export const ENTRY_VISIBILITIES = ["private", "public"] as const;
+export type EntryVisibility = (typeof ENTRY_VISIBILITIES)[number];
+
+export const USER_DEACTIVATION_STATUSES = [
+  "pending",
+  "running",
+  "completed",
+  "failed",
+] as const;
+export type UserDeactivationStatus = (typeof USER_DEACTIVATION_STATUSES)[number];
+
+export interface UserDeactivation {
+  id: string;
+  userId: string;
+  requestedByUserId: string;
+  transferToUserId: string | null;
+  transferCursor: string | null;
+  processedEntries: number;
+  status: UserDeactivationStatus;
+  lastError: string | null;
+  requestedAt: number;
+  startedAt: number | null;
+  updatedAt: number;
+  completedAt: number | null;
+}
+
+// ─── Operator governance: identity, policy, proposals, and audit ────────────
+
+export const ACTOR_KINDS = ["human", "service", "system"] as const;
+export type ActorKind = (typeof ACTOR_KINDS)[number];
+
+export const SERVICE_SCOPES = [
+  "memory:read",
+  "memory:draft",
+  "memory:propose",
+  "memory:execute-approved",
+  "proposal:read",
+  "proposal:create",
+  "proposal:execute-approved",
+  "audit:write",
+  "run:write",
+] as const;
+export type ServiceScope = (typeof SERVICE_SCOPES)[number];
+
+interface ActorContextBase {
+  actorId: string;
+  authMethod: string;
+  scopes: ReadonlySet<ServiceScope>;
+}
+
+export interface HumanActorContext extends ActorContextBase {
+  kind: "human";
+  userId: string;
+  role: UserRole;
+}
+
+export interface ServiceActorContext extends ActorContextBase {
+  kind: "service";
+  serviceIdentityId: string;
+  credentialId: string;
+}
+
+export interface SystemActorContext extends ActorContextBase {
+  kind: "system";
+  systemId: string;
+}
+
+export type ActorContext =
+  | HumanActorContext
+  | ServiceActorContext
+  | SystemActorContext;
+
+export const SERVICE_IDENTITY_STATUSES = ["active", "suspended", "revoked"] as const;
+export type ServiceIdentityStatus = (typeof SERVICE_IDENTITY_STATUSES)[number];
+
+export const SERVICE_CREDENTIAL_STATUSES = ["active", "rotated", "revoked", "expired"] as const;
+export type ServiceCredentialStatus = (typeof SERVICE_CREDENTIAL_STATUSES)[number];
+
+export interface ServiceIdentity {
+  id: string;
+  name: string;
+  description: string | null;
+  ownerUserId: string;
+  status: ServiceIdentityStatus;
+  defaultAutonomyProfile: string;
+  createdByUserId: string;
+  createdAt: number;
+  updatedAt: number;
+  revokedAt: number | null;
+}
+
+export interface ServiceCredential {
+  id: string;
+  serviceIdentityId: string;
+  credentialHash: string;
+  credentialPrefix: string;
+  scopes: readonly ServiceScope[];
+  status: ServiceCredentialStatus;
+  expiresAt: number | null;
+  lastUsedAt: number | null;
+  useCount: number;
+  lastUsedMetadata: string | null;
+  rotatedFromCredentialId: string | null;
+  createdByUserId: string;
+  createdAt: number;
+  revokedAt: number | null;
+  revokedByUserId: string | null;
+}
+
+export const POLICY_DECISION_EFFECTS = ["allow", "deny", "proposal_required"] as const;
+export type PolicyDecisionEffect = (typeof POLICY_DECISION_EFFECTS)[number];
+
+export interface PolicyDecision {
+  effect: PolicyDecisionEffect;
+  actionType: ActionType;
+  autonomyLevel: "automatic" | "gated" | "never";
+  requestedScopes: readonly ServiceScope[];
+  grantedScopes: readonly ServiceScope[];
+  reasonCode: string;
+  reason: string;
+  autonomyProfile: string;
+  policyVersion: string;
+  proposalId?: string;
+}
+
+// This is the application whitelist. Persisted proposals retain action_type as
+// text so future additions require an explicit policy/code change, not a table
+// rebuild. Destructive hard-delete is intentionally absent.
+export const ACTION_TYPES = [
+  "entry.create",
+  "entry.append",
+  "entry.update",
+  "entry.merge",
+  "entry.restore",
+  "entry.status.set",
+  "entry.epistemic-status.set",
+  "edge.publish",
+  "edge.remove",
+] as const;
+export type ActionType = (typeof ACTION_TYPES)[number];
+
+export const ACTION_PROPOSAL_STATUSES = [
+  "pending",
+  "executing",
+  "executed",
+  "rejected",
+  "failed",
+  "stale",
+  "expired",
+] as const;
+export type ActionProposalStatus = (typeof ACTION_PROPOSAL_STATUSES)[number];
+
+export const PROPOSAL_RISK_LEVELS = ["low", "medium", "high", "critical"] as const;
+export type ProposalRiskLevel = (typeof PROPOSAL_RISK_LEVELS)[number];
+
+export interface ActionProposal {
+  id: string;
+  actionType: ActionType;
+  proposerKind: ActorKind;
+  proposerId: string;
+  visibilityScope: string;
+  payloadJson: string;
+  payloadHash: string | null;
+  targetIds: readonly string[];
+  expectedPreconditions: string;
+  expectedRevision: number | null;
+  status: ActionProposalStatus;
+  riskLevel: ProposalRiskLevel;
+  reason: string;
+  evidenceJson: string;
+  autonomyProfile: string;
+  policyVersion: string;
+  idempotencyKey: string;
+  expiresAt: number | null;
+  reviewerKind: ActorKind | null;
+  reviewerId: string | null;
+  reviewReason: string | null;
+  reviewedAt: number | null;
+  executorKind: ActorKind | null;
+  executorId: string | null;
+  executionStartedAt: number | null;
+  executedAt: number | null;
+  rejectedAt: number | null;
+  failedAt: number | null;
+  staleAt: number | null;
+  expiredAt: number | null;
+  resultJson: string | null;
+  resultHash: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ProposalEvent {
+  id: string;
+  proposalId: string;
+  sequence: number;
+  eventType: string;
+  actorKind: ActorKind;
+  actorId: string;
+  dataJson: string;
+  dataHash: string | null;
+  createdAt: number;
+}
+
+export const AGENT_EVENT_TYPES = [
+  "requested",
+  "policy",
+  "started",
+  "succeeded",
+  "failed",
+] as const;
+export type AgentEventType = (typeof AGENT_EVENT_TYPES)[number];
+
+export interface AgentRunAudit {
+  id: string;
+  userId: string;
+  actorKind: ActorKind;
+  actorId: string;
+  serviceIdentityId: string | null;
+  credentialId: string | null;
+  authMethod: string;
+  autonomyProfile: string;
+  policyVersion: string;
+  correlationId: string | null;
+  status: string;
+  policyDecision: PolicyDecisionEffect | null;
+  requestedScopes: readonly ServiceScope[];
+  grantedScopes: readonly ServiceScope[];
+  decisionReason: string | null;
+  proposalId: string | null;
+  targetIds: readonly string[];
+  redactedRequestSummary: string | null;
+  requestHash: string | null;
+  redactedResultSummary: string | null;
+  resultHash: string | null;
+  errorCode: string | null;
+  requestedAt: number | null;
+  startedAt: number;
+  succeededAt: number | null;
+  failedAt: number | null;
+  completedAt: number | null;
+  toolCount: number;
+}
+
+export interface AgentEventAudit {
+  id: string;
+  runId: string;
+  sequence: number;
+  eventType: AgentEventType;
+  toolName: string;
+  actorKind: ActorKind;
+  actorId: string;
+  serviceIdentityId: string | null;
+  credentialId: string | null;
+  authMethod: string;
+  autonomyProfile: string;
+  policyVersion: string;
+  correlationId: string | null;
+  status: string;
+  policyDecision: PolicyDecisionEffect | null;
+  requestedScopes: readonly ServiceScope[];
+  grantedScopes: readonly ServiceScope[];
+  decisionReason: string | null;
+  proposalId: string | null;
+  targetIds: readonly string[];
+  redactedInputSummary: string | null;
+  inputHash: string | null;
+  redactedOutputSummary: string | null;
+  outputHash: string | null;
+  durationMs: number | null;
+  error: string | null;
+  errorCode: string | null;
+  createdAt: number;
+}
+
+export interface SecurityEvent {
+  id: string;
+  eventType: string;
+  actorKind: ActorKind | null;
+  actorId: string | null;
+  serviceIdentityId: string | null;
+  credentialId: string | null;
+  authMethod: string | null;
+  correlationId: string | null;
+  sourceIpHash: string | null;
+  userAgentHash: string | null;
+  reason: string;
+  errorCode: string | null;
+  redactedSummary: string | null;
+  summaryHash: string | null;
+  metadata: string;
+  createdAt: number;
+}
