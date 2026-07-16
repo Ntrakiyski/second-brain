@@ -149,7 +149,7 @@ describe("ordered database migrations", () => {
     await initializeDatabase(makeEnv(db));
 
     expect(getDbReady()).toBe(true);
-    expect(db.versions()).toEqual([1, 2, 3]);
+    expect(db.versions()).toEqual([1, 2, 3, 4]);
     expect(db.columns("entries")).toEqual(expect.arrayContaining([
       "owner_user_id",
       "retention_score",
@@ -158,6 +158,8 @@ describe("ordered database migrations", () => {
       "valid_to",
       "recorded_at",
       "epistemic_status",
+      "current_episode_id",
+      "revision",
     ]));
     expect(db.columns("edges")).toContain("confidence");
 
@@ -183,6 +185,7 @@ describe("ordered database migrations", () => {
       "edge_proposals",
       "agent_runs",
       "agent_events",
+      "vector_cleanup_queue",
     ]));
   });
 
@@ -192,7 +195,7 @@ describe("ordered database migrations", () => {
     expect(db.versions()).toEqual([]);
     await initializeDatabase(makeEnv(db));
 
-    expect(db.versions()).toEqual([1, 2, 3]);
+    expect(db.versions()).toEqual([1, 2, 3, 4]);
     expect(db.sqlite.prepare(
       `SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_entries_owner'`,
     ).get()).toMatchObject({ name: "idx_entries_owner" });
@@ -260,11 +263,11 @@ describe("ordered database migrations", () => {
     });
     expect(system.status).toBe("inactive");
     expect(db.columns("edges")).toContain("confidence");
-    expect(db.versions()).toEqual([1, 2, 3]);
+    expect(db.versions()).toEqual([1, 2, 3, 4]);
 
     _resetDbReady();
     await initializeDatabase(makeEnv(db));
-    expect(db.versions()).toEqual([1, 2, 3]);
+    expect(db.versions()).toEqual([1, 2, 3, 4]);
     expect(db.sqlite.prepare(
       `SELECT COUNT(*) AS count FROM users WHERE username = '_system'`,
     ).get()).toMatchObject({ count: 1 });
@@ -285,7 +288,7 @@ describe("ordered database migrations", () => {
     await initializeDatabase(makeEnv(db));
 
     expect(getDbReady()).toBe(true);
-    expect(db.versions()).toEqual([1, 2, 3]);
+    expect(db.versions()).toEqual([1, 2, 3, 4]);
     expect(db.columns("entries")).toContain("owner_user_id");
   });
 
@@ -315,6 +318,7 @@ describe("ordered database migrations", () => {
       INSERT INTO schema_migrations VALUES (1, 'core_tables', 1);
       INSERT INTO schema_migrations VALUES (2, 'entry_and_edge_features', 1);
       INSERT INTO schema_migrations VALUES (3, 'memory_and_operator_tables', 1);
+      INSERT INTO schema_migrations VALUES (4, 'provenance_integrity', 1);
       CREATE TABLE entries (id TEXT PRIMARY KEY, content TEXT NOT NULL);
     `);
 
@@ -322,5 +326,69 @@ describe("ordered database migrations", () => {
       "Database schema validation failed",
     );
     expect(getDbReady()).toBe(false);
+  });
+
+  it("rolls back provenance migration columns and version together, then retries", async () => {
+    db.failOn = /CREATE INDEX IF NOT EXISTS idx_entries_current_episode/;
+
+    await expect(initializeDatabase(makeEnv(db))).rejects.toThrow(
+      "Database migration 4 (provenance_integrity) failed",
+    );
+
+    expect(getDbReady()).toBe(false);
+    expect(db.versions()).toEqual([1, 2, 3]);
+    expect(db.columns("entries")).not.toContain("current_episode_id");
+    expect(db.columns("episodes")).not.toContain("materialized_content");
+    expect(db.sqlite.prepare(
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'vector_cleanup_queue'`,
+    ).get()).toBeUndefined();
+
+    db.failOn = null;
+    await initializeDatabase(makeEnv(db));
+
+    expect(getDbReady()).toBe(true);
+    expect(db.versions()).toEqual([1, 2, 3, 4]);
+    expect(db.columns("entries")).toContain("current_episode_id");
+    expect(db.columns("episodes")).toContain("materialized_content");
+  });
+
+  it("backfills only provable legacy episode values and leaves current lineage unknown", async () => {
+    db.failOn = /ALTER TABLE entries ADD COLUMN current_episode_id/;
+    await expect(initializeDatabase(makeEnv(db))).rejects.toThrow(
+      "Database migration 4 (provenance_integrity) failed",
+    );
+    expect(db.versions()).toEqual([1, 2, 3]);
+
+    db.sqlite.exec(`
+      INSERT INTO entries (
+        id, content, tags, source, created_at, vector_ids, owner_user_id
+      ) VALUES (
+        'legacy-entry', 'current projection', '[]', 'api', 1000, '[]', 'owner-1'
+      );
+      INSERT INTO episodes (
+        id, entry_id, content, content_type, source, created_at
+      ) VALUES (
+        'legacy-episode', 'legacy-entry', 'verbatim source', 'text', 'api', 1000
+      );
+    `);
+
+    db.failOn = null;
+    await initializeDatabase(makeEnv(db));
+
+    const episode = db.sqlite.prepare(`
+      SELECT materialized_content, mutation_kind, owner_user_id
+      FROM episodes WHERE id = 'legacy-episode'
+    `).get() as Record<string, unknown>;
+    const entry = db.sqlite.prepare(`
+      SELECT current_episode_id, revision
+      FROM entries WHERE id = 'legacy-entry'
+    `).get() as Record<string, unknown>;
+
+    expect(episode).toEqual({
+      materialized_content: "verbatim source",
+      mutation_kind: "legacy",
+      owner_user_id: "owner-1",
+    });
+    expect(entry).toEqual({ current_episode_id: null, revision: 0 });
   });
 });

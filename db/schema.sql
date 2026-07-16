@@ -26,13 +26,17 @@ CREATE TABLE IF NOT EXISTS entries (
   valid_from             INTEGER,
   valid_to               INTEGER,
   recorded_at            INTEGER,
-  epistemic_status       TEXT NOT NULL DEFAULT 'canonical'
+  epistemic_status       TEXT NOT NULL DEFAULT 'canonical',
+  current_episode_id     TEXT,
+  revision               INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_entries_created_at ON entries(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_entries_source ON entries(source);
 -- idx_entries_owner and idx_entries_temporal are created by runtime migration 2
 -- after it has verified that legacy entries tables contain the required columns.
+-- Indexes over provenance-integrity columns are likewise created by runtime
+-- migration 4 so this file remains safe when legacy tables already exist.
 
 CREATE TABLE IF NOT EXISTS users (
   id                  TEXT PRIMARY KEY,
@@ -70,7 +74,15 @@ CREATE TABLE IF NOT EXISTS episodes (
   content      TEXT NOT NULL,
   content_type TEXT NOT NULL DEFAULT 'text',
   source       TEXT NOT NULL DEFAULT 'api',
-  created_at   INTEGER NOT NULL
+  created_at   INTEGER NOT NULL,
+  materialized_content      TEXT NOT NULL DEFAULT '',
+  content_hash              TEXT,
+  mutation_id               TEXT,
+  mutation_kind             TEXT NOT NULL DEFAULT 'legacy',
+  parent_episode_id         TEXT,
+  restored_from_snapshot_id TEXT,
+  owner_user_id             TEXT NOT NULL DEFAULT '',
+  source_url                TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_episodes_entry_id ON episodes(entry_id);
@@ -81,7 +93,15 @@ CREATE TABLE IF NOT EXISTS entry_snapshots (
   content    TEXT NOT NULL,
   tags       TEXT NOT NULL DEFAULT '[]',
   source     TEXT NOT NULL DEFAULT 'api',
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  episode_id       TEXT,
+  mutation_id      TEXT,
+  mutation_kind    TEXT NOT NULL DEFAULT 'legacy',
+  recorded_at      INTEGER,
+  valid_from       INTEGER,
+  valid_to         INTEGER,
+  epistemic_status TEXT,
+  revision         INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_snapshots_entry_id ON entry_snapshots(entry_id);
@@ -90,9 +110,12 @@ CREATE TABLE IF NOT EXISTS passages (
   id           TEXT PRIMARY KEY,
   entry_id     TEXT NOT NULL,
   episode_id   TEXT,
+  document_id  TEXT,
+  section_id   TEXT,
   content      TEXT NOT NULL,
   section      TEXT,
   page         INTEGER,
+  page_end     INTEGER,
   start_offset INTEGER,
   end_offset   INTEGER,
   vector_ids   TEXT NOT NULL DEFAULT '[]',
@@ -107,7 +130,11 @@ CREATE TABLE IF NOT EXISTS documents (
   title        TEXT NOT NULL,
   source_url   TEXT,
   content_type TEXT NOT NULL DEFAULT 'research',
-  created_at   INTEGER NOT NULL
+  created_at   INTEGER NOT NULL,
+  episode_id   TEXT,
+  owner_user_id TEXT NOT NULL DEFAULT '',
+  content_hash TEXT,
+  version      TEXT
 );
 
 CREATE TABLE IF NOT EXISTS document_sections (
@@ -117,7 +144,11 @@ CREATE TABLE IF NOT EXISTS document_sections (
   title             TEXT NOT NULL,
   level             INTEGER NOT NULL DEFAULT 0,
   order_index       INTEGER NOT NULL DEFAULT 0,
-  created_at        INTEGER NOT NULL
+  created_at        INTEGER NOT NULL,
+  page_start        INTEGER,
+  page_end          INTEGER,
+  start_offset      INTEGER,
+  end_offset        INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_sections_document_id ON document_sections(document_id);
@@ -161,6 +192,16 @@ CREATE TABLE IF NOT EXISTS agent_events (
 CREATE INDEX IF NOT EXISTS idx_agent_events_run_id ON agent_events(run_id);
 CREATE INDEX IF NOT EXISTS idx_agent_events_tool_name ON agent_events(tool_name);
 CREATE INDEX IF NOT EXISTS idx_agent_events_created_at ON agent_events(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS vector_cleanup_queue (
+  id         TEXT PRIMARY KEY,
+  vector_ids TEXT NOT NULL,
+  reason     TEXT NOT NULL,
+  attempts   INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
 
 -- Do not insert schema_migrations rows here. CREATE TABLE IF NOT EXISTS cannot
 -- prove that an existing legacy table has the current columns. src/db.ts records

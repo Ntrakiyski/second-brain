@@ -253,6 +253,97 @@ const MIGRATIONS: readonly Migration[] = [
       `CREATE INDEX IF NOT EXISTS idx_agent_events_created_at ON agent_events(created_at DESC)`,
     ),
   },
+  {
+    version: 4,
+    name: "provenance_integrity",
+    statements: async (db) => {
+      const entries = await tableColumns(db, "entries");
+      const episodes = await tableColumns(db, "episodes");
+      const snapshots = await tableColumns(db, "entry_snapshots");
+      const passages = await tableColumns(db, "passages");
+      const documents = await tableColumns(db, "documents");
+      const sections = await tableColumns(db, "document_sections");
+      const statements: string[] = [];
+
+      addColumnIfMissing(statements, entries, "entries", "current_episode_id", "TEXT");
+      addColumnIfMissing(statements, entries, "entries", "revision", "INTEGER NOT NULL DEFAULT 0");
+
+      addColumnIfMissing(statements, episodes, "episodes", "materialized_content", "TEXT NOT NULL DEFAULT ''");
+      addColumnIfMissing(statements, episodes, "episodes", "content_hash", "TEXT");
+      addColumnIfMissing(statements, episodes, "episodes", "mutation_id", "TEXT");
+      addColumnIfMissing(statements, episodes, "episodes", "mutation_kind", "TEXT NOT NULL DEFAULT 'legacy'");
+      addColumnIfMissing(statements, episodes, "episodes", "parent_episode_id", "TEXT");
+      addColumnIfMissing(statements, episodes, "episodes", "restored_from_snapshot_id", "TEXT");
+      addColumnIfMissing(statements, episodes, "episodes", "owner_user_id", "TEXT NOT NULL DEFAULT ''");
+      addColumnIfMissing(statements, episodes, "episodes", "source_url", "TEXT");
+
+      addColumnIfMissing(statements, snapshots, "entry_snapshots", "episode_id", "TEXT");
+      addColumnIfMissing(statements, snapshots, "entry_snapshots", "mutation_id", "TEXT");
+      addColumnIfMissing(statements, snapshots, "entry_snapshots", "mutation_kind", "TEXT NOT NULL DEFAULT 'legacy'");
+      addColumnIfMissing(statements, snapshots, "entry_snapshots", "recorded_at", "INTEGER");
+      addColumnIfMissing(statements, snapshots, "entry_snapshots", "valid_from", "INTEGER");
+      addColumnIfMissing(statements, snapshots, "entry_snapshots", "valid_to", "INTEGER");
+      addColumnIfMissing(statements, snapshots, "entry_snapshots", "epistemic_status", "TEXT");
+      addColumnIfMissing(statements, snapshots, "entry_snapshots", "revision", "INTEGER");
+
+      addColumnIfMissing(statements, documents, "documents", "episode_id", "TEXT");
+      addColumnIfMissing(statements, documents, "documents", "owner_user_id", "TEXT NOT NULL DEFAULT ''");
+      addColumnIfMissing(statements, documents, "documents", "content_hash", "TEXT");
+      addColumnIfMissing(statements, documents, "documents", "version", "TEXT");
+
+      addColumnIfMissing(statements, sections, "document_sections", "page_start", "INTEGER");
+      addColumnIfMissing(statements, sections, "document_sections", "page_end", "INTEGER");
+      addColumnIfMissing(statements, sections, "document_sections", "start_offset", "INTEGER");
+      addColumnIfMissing(statements, sections, "document_sections", "end_offset", "INTEGER");
+
+      addColumnIfMissing(statements, passages, "passages", "document_id", "TEXT");
+      addColumnIfMissing(statements, passages, "passages", "section_id", "TEXT");
+      addColumnIfMissing(statements, passages, "passages", "page_end", "INTEGER");
+
+      // Existing episode content is the only safe materialized state available.
+      // Legacy current_episode_id and semantic lineage remain NULL because the old
+      // merge path cannot prove which episode represents the current entry.
+      statements.push(
+        `UPDATE episodes
+         SET materialized_content = content
+         WHERE materialized_content = ''`,
+        `UPDATE episodes
+         SET owner_user_id = COALESCE(
+           (SELECT entries.owner_user_id FROM entries WHERE entries.id = episodes.entry_id),
+           ''
+         )
+         WHERE owner_user_id = ''`,
+        `CREATE INDEX IF NOT EXISTS idx_entries_current_episode ON entries(current_episode_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_episodes_parent ON episodes(parent_episode_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_episodes_owner ON episodes(owner_user_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_episodes_content_hash ON episodes(content_hash)`,
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_episodes_entry_mutation
+           ON episodes(entry_id, mutation_id) WHERE mutation_id IS NOT NULL`,
+        `CREATE INDEX IF NOT EXISTS idx_snapshots_episode ON entry_snapshots(episode_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_snapshots_transaction_time
+           ON entry_snapshots(entry_id, recorded_at, created_at)`,
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_snapshots_entry_mutation
+           ON entry_snapshots(entry_id, mutation_id) WHERE mutation_id IS NOT NULL`,
+        `CREATE INDEX IF NOT EXISTS idx_documents_episode ON documents(episode_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_documents_owner ON documents(owner_user_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_documents_content_hash ON documents(content_hash)`,
+        `CREATE INDEX IF NOT EXISTS idx_passages_document ON passages(document_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_passages_section ON passages(section_id)`,
+        `CREATE TABLE IF NOT EXISTS vector_cleanup_queue (
+          id TEXT PRIMARY KEY,
+          vector_ids TEXT NOT NULL,
+          reason TEXT NOT NULL,
+          attempts INTEGER NOT NULL DEFAULT 0,
+          last_error TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        )`,
+        `CREATE INDEX IF NOT EXISTS idx_vector_cleanup_retry
+           ON vector_cleanup_queue(attempts, updated_at)`,
+      );
+      return statements;
+    },
+  },
 ] as const;
 
 async function ensureMigrationTable(db: D1Database): Promise<void> {
@@ -317,23 +408,33 @@ async function validateCurrentSchema(db: D1Database): Promise<void> {
       recall_count, importance_score, contradiction_wins,
       contradiction_losses, owner_user_id, retention_score,
       last_recalled_at, valid_from, valid_to, recorded_at,
-      epistemic_status FROM entries LIMIT 0`,
+      epistemic_status, current_episode_id, revision FROM entries LIMIT 0`,
     `SELECT id, source_id, target_id, type, weight, provenance, metadata,
       confidence, created_at, updated_at FROM edges LIMIT 0`,
     `SELECT id, username, normalized_username, auth_key_hash, auth_key_prefix,
       status, created_at, last_used_at FROM users LIMIT 0`,
-    `SELECT id, entry_id, content, content_type, source, created_at FROM episodes LIMIT 0`,
-    `SELECT id, entry_id, content, tags, source, created_at FROM entry_snapshots LIMIT 0`,
-    `SELECT id, entry_id, episode_id, content, section, page, start_offset,
-      end_offset, vector_ids, created_at FROM passages LIMIT 0`,
-    `SELECT id, title, source_url, content_type, created_at FROM documents LIMIT 0`,
+    `SELECT id, entry_id, content, content_type, source, created_at,
+      materialized_content, content_hash, mutation_id, mutation_kind,
+      parent_episode_id, restored_from_snapshot_id, owner_user_id, source_url
+      FROM episodes LIMIT 0`,
+    `SELECT id, entry_id, content, tags, source, created_at, episode_id,
+      mutation_id, mutation_kind, recorded_at, valid_from, valid_to,
+      epistemic_status, revision FROM entry_snapshots LIMIT 0`,
+    `SELECT id, entry_id, episode_id, document_id, section_id, content,
+      section, page, page_end, start_offset, end_offset, vector_ids, created_at
+      FROM passages LIMIT 0`,
+    `SELECT id, title, source_url, content_type, created_at, episode_id,
+      owner_user_id, content_hash, version FROM documents LIMIT 0`,
     `SELECT id, document_id, parent_section_id, title, level, order_index,
-      created_at FROM document_sections LIMIT 0`,
+      created_at, page_start, page_end, start_offset, end_offset
+      FROM document_sections LIMIT 0`,
     `SELECT id, source_id, target_id, type, reason, proposed_by, status,
       created_at, resolved_at FROM edge_proposals LIMIT 0`,
     `SELECT id, user_id, started_at, completed_at, tool_count FROM agent_runs LIMIT 0`,
     `SELECT id, run_id, tool_name, input_summary, output_summary, duration_ms,
       error, created_at FROM agent_events LIMIT 0`,
+    `SELECT id, vector_ids, reason, attempts, last_error, created_at, updated_at
+      FROM vector_cleanup_queue LIMIT 0`,
   ];
 
   try {

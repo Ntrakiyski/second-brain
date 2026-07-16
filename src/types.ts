@@ -75,6 +75,20 @@ export type CaptureResult =
 
 // ─── Memory Pillar: Episodes, Snapshots, Passages ────────────────────────────
 
+export const ENTRY_MUTATION_KINDS = [
+  "legacy",
+  "capture",
+  "update",
+  "append",
+  "merge",
+  "replace",
+  "restore",
+  "compress",
+  "status",
+  "validity",
+] as const;
+export type EntryMutationKind = (typeof ENTRY_MUTATION_KINDS)[number];
+
 export interface Episode {
   id: string;
   entryId: string;
@@ -82,6 +96,14 @@ export interface Episode {
   contentType: string;
   source: string;
   createdAt: number;
+  materializedContent: string;
+  contentHash: string | null;
+  mutationId: string | null;
+  mutationKind: EntryMutationKind;
+  parentEpisodeId: string | null;
+  restoredFromSnapshotId: string | null;
+  ownerUserId: string;
+  sourceUrl: string | null;
 }
 
 export interface EntrySnapshot {
@@ -91,15 +113,26 @@ export interface EntrySnapshot {
   tags: string;
   source: string;
   createdAt: number;
+  episodeId: string | null;
+  mutationId: string | null;
+  mutationKind: EntryMutationKind;
+  recordedAt: number | null;
+  validFrom: number | null;
+  validTo: number | null;
+  epistemicStatus: EpistemicStatus | null;
+  revision: number | null;
 }
 
 export interface Passage {
   id: string;
   entryId: string;
   episodeId: string | null;
+  documentId: string | null;
+  sectionId: string | null;
   content: string;
   section: string | null;
   page: number | null;
+  pageEnd: number | null;
   startOffset: number | null;
   endOffset: number | null;
   vectorIds: string;
@@ -112,6 +145,10 @@ export interface Document {
   sourceUrl: string | null;
   contentType: string;
   createdAt: number;
+  episodeId: string | null;
+  ownerUserId: string;
+  contentHash: string | null;
+  version: string | null;
 }
 
 export interface DocumentSection {
@@ -122,4 +159,18 @@ export interface DocumentSection {
   level: number;
   orderIndex: number;
   createdAt: number;
+  pageStart: number | null;
+  pageEnd: number | null;
+  startOffset: number | null;
+  endOffset: number | null;
+}
+
+export interface VectorCleanupQueueItem {
+  id: string;
+  vectorIds: string;
+  reason: string;
+  attempts: number;
+  lastError: string | null;
+  createdAt: number;
+  updatedAt: number;
 }
