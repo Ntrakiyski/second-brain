@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { applyStatus } from "../../src/index";
-import worker from "../../src/index";
+import { applyStatus } from "../../src/testing";
+import worker from "../../src/testing";
 import { makeTestEnv, makeTestDb, makeVectorizeMock } from "../helpers/make-env";
 import { req } from "../helpers/make-request";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/testing";
 import { D1Mock } from "../helpers/d1-mock";
+import { TEST_USER_ID } from "../helpers/test-principal";
 
 const ctx = { waitUntil: (_: Promise<any>) => {} } as any;
 
@@ -27,6 +28,7 @@ describe("applyStatus()", () => {
       source: "api",
       created_at: Date.now(),
       vector_ids: JSON.stringify(["v1"]),
+      owner_user_id: TEST_USER_ID,
     });
   });
 
@@ -94,6 +96,7 @@ describe("POST /status", () => {
       source: "api",
       created_at: Date.now(),
       vector_ids: JSON.stringify(["v1"]),
+      owner_user_id: TEST_USER_ID,
     });
   });
 

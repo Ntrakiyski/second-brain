@@ -5,8 +5,8 @@
  *          sanitize tools/list responses so strict clients (e.g. OpenAI Codex)
  *          don't reject unknown fields like `execution`.
  *
- * Input:   Env bindings, optional ExecutionContext, optional userId for
- *          per-user scoping.
+ * Input:   Env bindings, ExecutionContext, and a verified userId for mandatory
+ *          per-actor scoping.
  *
  * Output:  McpServer instance with all tools registered; helper functions to
  *          detect and strip `execution` metadata from tools/list responses.
@@ -33,10 +33,65 @@ import { isManagedMirror, mirrorEditError } from "./integrations-mirror";
 import { MEMORY_KIND_VALUES, KIND_VALUES, type MemoryKind, type MemoryStatus, STATUS_VALUES } from "./types";
 import { VECTORIZE_FIX_HINT, TOOL_AUTONOMY } from "./config";
 import { startRun, endRun, logToolCall } from "./audit";
+import { isValidMcpActorId } from "./auth";
 
 // ─── MCP Server ───────────────────────────────────────────────────────────────
 
-export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string): McpServer {
+interface McpEntryAccessRow {
+  id: string;
+  tags: string;
+  owner_user_id: string;
+}
+
+function parseMcpAccessTags(row: McpEntryAccessRow): string[] | null {
+  try {
+    const tags = JSON.parse(row.tags ?? "[]");
+    return Array.isArray(tags) && tags.every((tag) => typeof tag === "string") ? tags : null;
+  } catch {
+    return null;
+  }
+}
+
+function isMcpEntryVisible(row: McpEntryAccessRow, userId: string): boolean {
+  if (row.owner_user_id === userId) return true;
+  const tags = parseMcpAccessTags(row);
+  return tags !== null && !tags.includes("private");
+}
+
+async function getMcpEntryAccessRow(id: string, env: Env): Promise<McpEntryAccessRow | null> {
+  return await env.DB.prepare(
+    `SELECT id, tags, owner_user_id FROM entries WHERE id = ?`,
+  ).bind(id).first() as McpEntryAccessRow | null;
+}
+
+async function getVisibleMcpEntry(
+  id: string,
+  userId: string,
+  env: Env,
+): Promise<McpEntryAccessRow | null> {
+  const row = await getMcpEntryAccessRow(id, env);
+  return row && isMcpEntryVisible(row, userId) ? row : null;
+}
+
+async function getOwnedMcpEntry(
+  id: string,
+  userId: string,
+  env: Env,
+): Promise<McpEntryAccessRow | null> {
+  const row = await getMcpEntryAccessRow(id, env);
+  return row?.owner_user_id === userId ? row : null;
+}
+
+function hasMcpPrivateVisibility(row: McpEntryAccessRow): boolean | null {
+  const tags = parseMcpAccessTags(row);
+  return tags ? tags.includes("private") : null;
+}
+
+export function buildMcpServer(env: Env, ctx: ExecutionContext, userId: string): McpServer {
+  if (!isValidMcpActorId(userId)) {
+    throw new Error("A verified, scoped MCP actor is required");
+  }
+
   const server = new McpServer({ name: "second-brain", version: "1.0.0" });
 
   // Audit state: one run per MCP session, lazily created on first tool call.
@@ -52,7 +107,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
     handler: (input: I, extra: any) => any,
   ): (input: I, extra: any) => any {
     return async (input: I, extra: any) => {
-      if (!runId) runId = await startRun(env, userId ?? "anonymous");
+      if (!runId) runId = await startRun(env, userId);
       toolCount++;
       const t0 = Date.now();
       let error: string | undefined;
@@ -387,18 +442,21 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
       },
     },
     audited("link", async ({ source_id, target_id, type }) => {
-      if (userId) {
-        const ids = [source_id, target_id];
-        const rows = await env.DB.prepare(`SELECT id, tags, owner_user_id FROM entries WHERE id IN (?, ?)`).bind(...ids).all() as { results: { id: string; tags: string; owner_user_id: string }[] };
-        for (const row of rows.results) {
-          const isPrivate = JSON.parse(row.tags ?? "[]").includes("private");
-          if (isPrivate && row.owner_user_id !== userId && row.owner_user_id !== "") {
-            return { content: [{ type: "text", text: "Cannot link to an entry you don't have access to." }] };
-          }
+      const endpointRows: McpEntryAccessRow[] = [];
+      for (const id of [source_id, target_id]) {
+        const row = await getVisibleMcpEntry(id, userId, env);
+        if (!row) {
+          return { content: [{ type: "text", text: `Entry not found: ${id}` }] };
         }
+        endpointRows.push(row);
+      }
+      const sourcePrivate = hasMcpPrivateVisibility(endpointRows[0]);
+      const targetPrivate = hasMcpPrivateVisibility(endpointRows[1]);
+      if (sourcePrivate === null || targetPrivate === null || sourcePrivate !== targetPrivate) {
+        return { content: [{ type: "text", text: "Cannot link entries across private and public visibility." }] };
       }
       const edge = await createEdge(source_id, target_id, type, { provenance: "explicit", weight: 1.0 }, env);
-      if (!edge) return { content: [{ type: "text", text: "Cannot link an entry to itself." }] };
+      if (!edge) return { content: [{ type: "text", text: "Unable to create a link between those entries." }] };
       return { content: [{ type: "text", text: `Linked ${edge.source_id} → ${edge.target_id} (${edgeLabel(edge.type)}).` }] };
     })
   );
@@ -415,14 +473,9 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
       },
     },
     audited("unlink", async ({ source_id, target_id, type }) => {
-      if (userId) {
-        const ids = [source_id, target_id];
-        const rows = await env.DB.prepare(`SELECT id, tags, owner_user_id FROM entries WHERE id IN (?, ?)`).bind(...ids).all() as { results: { id: string; tags: string; owner_user_id: string }[] };
-        for (const row of rows.results) {
-          const isPrivate = JSON.parse(row.tags ?? "[]").includes("private");
-          if (isPrivate && row.owner_user_id !== userId && row.owner_user_id !== "") {
-            return { content: [{ type: "text", text: "Cannot modify links for an entry you don't own." }] };
-          }
+      for (const id of [source_id, target_id]) {
+        if (!await getVisibleMcpEntry(id, userId, env)) {
+          return { content: [{ type: "text", text: `Entry not found: ${id}` }] };
         }
       }
       const deleted = await deleteEdge(source_id, target_id, type, env);
@@ -442,6 +495,9 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
       },
     },
     audited("connections", async ({ id, type }) => {
+      if (!await getVisibleMcpEntry(id, userId, env)) {
+        return { content: [{ type: "text", text: `No connections found for ${id}.` }] };
+      }
       const connections = await getConnections(id, type, env, userId);
       if (!connections.length) {
         return { content: [{ type: "text", text: `No connections found for ${id}.` }] };
@@ -463,6 +519,9 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
       },
     },
     audited("passages", async ({ entry_id }) => {
+      if (!await getVisibleMcpEntry(entry_id, userId, env)) {
+        return { content: [{ type: "text", text: `No passages found for entry ${entry_id}.` }] };
+      }
       const { results } = await env.DB.prepare(
         `SELECT id, content, section, start_offset, end_offset, created_at FROM passages WHERE entry_id = ? ORDER BY created_at DESC LIMIT 10`
       ).bind(entry_id).all() as { results: { id: string; content: string; section: string | null; start_offset: number | null; end_offset: number | null; created_at: number }[] };
@@ -487,6 +546,11 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
       },
     },
     audited("restore", async ({ entry_id, snapshot_id }) => {
+      // Restoring reveals historical content, which may be more sensitive than
+      // the current public entry. Only the owning actor may read/use snapshots.
+      if (!await getOwnedMcpEntry(entry_id, userId, env)) {
+        return { content: [{ type: "text", text: `No snapshot found for entry ${entry_id}.` }] };
+      }
       let snapshot;
       if (snapshot_id) {
         snapshot = await env.DB.prepare(
@@ -536,6 +600,18 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
       const trimmedTarget = target_id.trim();
       if (!trimmedSource || !trimmedTarget) return { content: [{ type: "text", text: "source_id and target_id are required." }] };
 
+      const endpointRows: McpEntryAccessRow[] = [];
+      for (const id of [trimmedSource, trimmedTarget]) {
+        const row = await getVisibleMcpEntry(id, userId, env);
+        if (!row) return { content: [{ type: "text", text: `Entry not found: ${id}` }] };
+        endpointRows.push(row);
+      }
+      const sourcePrivate = hasMcpPrivateVisibility(endpointRows[0]);
+      const targetPrivate = hasMcpPrivateVisibility(endpointRows[1]);
+      if (sourcePrivate === null || targetPrivate === null || sourcePrivate !== targetPrivate) {
+        return { content: [{ type: "text", text: "Cannot propose a link across private and public visibility." }] };
+      }
+
       // Dedup check
       const existing = await env.DB.prepare(
         `SELECT id, source_id, target_id, type, reason, proposed_by, status, created_at FROM edge_proposals WHERE source_id = ? AND target_id = ? AND type = ? AND status = 'pending'`
@@ -547,7 +623,7 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
       const now = Date.now();
       await env.DB.prepare(
         `INSERT INTO edge_proposals (id, source_id, target_id, type, reason, proposed_by, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`
-      ).bind(proposalId, trimmedSource, trimmedTarget, type, reason ?? "", userId ?? "", now).run();
+      ).bind(proposalId, trimmedSource, trimmedTarget, type, reason ?? "", userId, now).run();
 
       return { content: [{ type: "text", text: `Proposal ${proposalId} created: ${trimmedSource} —[${type}]→ ${trimmedTarget}. Reason: ${reason ?? "(none)"}. Awaiting human approval.` }] };
     })
@@ -599,10 +675,25 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
       ).bind(proposal_id).first() as Record<string, any> | null;
 
       if (!proposal) return { content: [{ type: "text", text: `Proposal not found: ${proposal_id}` }] };
+      const endpointRows: McpEntryAccessRow[] = [];
+      for (const id of [proposal.source_id as string, proposal.target_id as string]) {
+        const row = await getVisibleMcpEntry(id, userId, env);
+        if (!row) return { content: [{ type: "text", text: `Proposal not found: ${proposal_id}` }] };
+        endpointRows.push(row);
+      }
       if (proposal.status !== "pending") return { content: [{ type: "text", text: `Proposal is already ${proposal.status}.` }] };
 
+      const sourcePrivate = hasMcpPrivateVisibility(endpointRows[0]);
+      const targetPrivate = hasMcpPrivateVisibility(endpointRows[1]);
+      if (sourcePrivate === null || targetPrivate === null || sourcePrivate !== targetPrivate) {
+        return { content: [{ type: "text", text: `Proposal could not be approved: ${proposal_id}` }] };
+      }
+
       const now = Date.now();
-      await createEdge(proposal.source_id, proposal.target_id, proposal.type, { provenance: "system", confidence: 1.0 }, env);
+      const edge = await createEdge(proposal.source_id, proposal.target_id, proposal.type, { provenance: "system", confidence: 1.0 }, env);
+      if (!edge) {
+        return { content: [{ type: "text", text: `Proposal could not be approved: ${proposal_id}` }] };
+      }
       await env.DB.prepare(
         `UPDATE edge_proposals SET status = 'approved', resolved_at = ? WHERE id = ?`
       ).bind(now, proposal_id).run();
@@ -626,6 +717,11 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, userId?: string)
       ).bind(proposal_id).first() as Record<string, any> | null;
 
       if (!proposal) return { content: [{ type: "text", text: `Proposal not found: ${proposal_id}` }] };
+      for (const id of [proposal.source_id as string, proposal.target_id as string]) {
+        if (!await getVisibleMcpEntry(id, userId, env)) {
+          return { content: [{ type: "text", text: `Proposal not found: ${proposal_id}` }] };
+        }
+      }
       if (proposal.status !== "pending") return { content: [{ type: "text", text: `Proposal is already ${proposal.status}.` }] };
 
       const now = Date.now();

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import worker, { runGraphPass } from "../../src/index";
+import worker, { runGraphPass } from "../../src/testing";
 import { makeTestDb, makeTestEnv, makeVectorizeMock } from "../helpers/make-env";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/testing";
 import { D1Mock } from "../helpers/d1-mock";
 
 function makeCtx() {
@@ -26,12 +26,13 @@ describe("runGraphPass", () => {
       { id: "lonely", content: "Unlinked memory", tags: "[]", source: "api", created_at: 2, vector_ids: "[]" },
       { id: "neighbor", content: "Similar memory", tags: "[]", source: "api", created_at: 1, vector_ids: "[]" },
     );
+    const query = vi.fn().mockResolvedValue({ matches: [
+      { id: "lonely", score: 1.0, metadata: { parentId: "lonely" } },
+      { id: "neighbor", score: 0.8, metadata: { parentId: "neighbor" } },
+    ] });
     const env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({
-        query: vi.fn().mockResolvedValue({ matches: [
-          { id: "lonely", score: 1.0, metadata: { parentId: "lonely" } },
-          { id: "neighbor", score: 0.8, metadata: { parentId: "neighbor" } },
-        ] }),
+        query,
       }),
     });
     const { ctx } = makeCtx();
@@ -42,6 +43,11 @@ describe("runGraphPass", () => {
     expect(e).toBeTruthy();
     expect([e.source_id, e.target_id].sort()).toEqual(["lonely", "neighbor"]);
     expect(e.provenance).toBe("inferred");
+    expect(query).toHaveBeenCalled();
+    for (const [, options] of query.mock.calls) {
+      expect(options).toMatchObject({ filter: { is_private: { $eq: false } } });
+      expect(options).not.toHaveProperty("metadataFilter");
+    }
   });
 
   it("does not re-link entries that already have an edge", async () => {
@@ -119,6 +125,59 @@ describe("runGraphPass", () => {
     await runGraphPass(env, ctx);
 
     // No edge should be created because the only neighbor is another user's private entry
+    expect(db.edges).toHaveLength(0);
+  });
+
+  it("links a private source only to same-owner private entries", async () => {
+    db.entries.push(
+      { id: "source-private", content: "Private source", tags: '["private"]', source: "api", created_at: 10, vector_ids: "[]", owner_user_id: "u1" },
+      { id: "own-private", content: "Own private", tags: '["private"]', source: "api", created_at: 9, vector_ids: "[]", owner_user_id: "u1" },
+      { id: "own-public", content: "Own public", tags: "[]", source: "api", created_at: 8, vector_ids: "[]", owner_user_id: "u1" },
+      { id: "other-private", content: "Other private", tags: '["private"]', source: "api", created_at: 7, vector_ids: "[]", owner_user_id: "u2" },
+      { id: "other-public", content: "Other public", tags: "[]", source: "api", created_at: 6, vector_ids: "[]", owner_user_id: "u2" },
+    );
+    // Keep every candidate out of the source backfill batch so this assertion
+    // isolates the partition applied to source-private.
+    for (const id of ["own-private", "own-public", "other-private", "other-public"]) {
+      db.edges.push({ id: `existing-${id}`, source_id: id, target_id: `sentinel-${id}`, type: "relates_to", weight: 1, provenance: "explicit", metadata: "{}", created_at: 1, updated_at: 1 });
+    }
+    const query = vi.fn().mockResolvedValue({ matches: [
+      { id: "source-private", score: 1, metadata: { parentId: "source-private", is_private: false } },
+      { id: "own-private", score: 0.95, metadata: { parentId: "own-private", owner_user_id: "attacker" } },
+      { id: "own-public", score: 0.94, metadata: { parentId: "own-public", is_private: true } },
+      { id: "other-private", score: 0.93, metadata: { parentId: "other-private", is_private: false } },
+      { id: "other-public", score: 0.92, metadata: { parentId: "other-public", owner_user_id: "u1" } },
+    ] });
+    const env = makeTestEnv(db, { VECTORIZE: makeVectorizeMock({ query }) });
+
+    await runGraphPass(env, makeCtx().ctx);
+
+    const sourceEdges = db.edges.filter(edge =>
+      edge.source_id === "source-private" || edge.target_id === "source-private"
+    );
+    expect(sourceEdges).toHaveLength(1);
+    expect([sourceEdges[0].source_id, sourceEdges[0].target_id].sort())
+      .toEqual(["own-private", "source-private"]);
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(query.mock.calls[0][1]).toMatchObject({
+      filter: { owner_user_id: { $eq: "u1" } },
+    });
+    expect(query.mock.calls[1][1]).toMatchObject({
+      filter: { is_private: { $eq: false } },
+    });
+  });
+
+  it("fails closed without embedding a source whose tags are not an array", async () => {
+    db.entries.push({
+      id: "malformed", content: "Do not inspect", tags: JSON.stringify("private"),
+      source: "api", created_at: 1, vector_ids: "[]", owner_user_id: "u1",
+    });
+    const query = vi.fn().mockResolvedValue({ matches: [] });
+    const env = makeTestEnv(db, { VECTORIZE: makeVectorizeMock({ query }) });
+
+    await runGraphPass(env, makeCtx().ctx);
+
+    expect(query).not.toHaveBeenCalled();
     expect(db.edges).toHaveLength(0);
   });
 });

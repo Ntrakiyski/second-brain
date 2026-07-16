@@ -1,6 +1,6 @@
 import { vi } from "vitest";
 import { D1Mock } from "./d1-mock";
-import type { Env } from "../../src/index";
+import { _resetDbReady, type Env } from "../../src/testing";
 
 export function makeVectorizeMock(overrides: Partial<VectorizeIndex> = {}): VectorizeIndex {
   return {
@@ -60,6 +60,10 @@ export function makeMemoryKV(): KVNamespace {
 }
 
 export function makeTestEnv(db?: D1Mock, overrides: Partial<Env> = {}): Env {
+  // Production has one binding per Worker isolate; tests create many fresh D1
+  // bindings in one process. Reset module readiness so each mock receives the
+  // same migrations and owner bootstrap a fresh isolate would run.
+  _resetDbReady();
   return {
     DB: (db ?? new D1Mock()) as unknown as D1Database,
     VECTORIZE: makeVectorizeMock(),

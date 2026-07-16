@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import worker from "../../src/index";
+import worker, { _resetDbReady } from "../../src/testing";
 import { makeTestEnv, makeTestDb, makeVectorizeMock } from "../helpers/make-env";
 import { req } from "../helpers/make-request";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/testing";
 import { D1Mock } from "../helpers/d1-mock";
+import { TEST_USER_ID } from "../helpers/test-principal";
 
 function makeCtx() {
   const pending: Promise<any>[] = [];
@@ -18,6 +19,7 @@ describe("POST /capture", () => {
   let db: D1Mock;
 
   beforeEach(() => {
+    _resetDbReady();
     db = makeTestDb();
     env = makeTestEnv(db);
   });
@@ -57,6 +59,7 @@ describe("POST /capture", () => {
   });
 
   it("blocks a near-exact duplicate (score ≥ 0.95)", async () => {
+    db.entries.push({ id: "existing", content: "Duplicate note", tags: "[]", source: "api", created_at: 1, vector_ids: '["existing"]', owner_user_id: TEST_USER_ID });
     const vectorize = makeVectorizeMock({
       query: vi.fn().mockResolvedValue({
         matches: [{ id: "existing", score: 0.97, metadata: { parentId: "existing" } }],
@@ -70,7 +73,7 @@ describe("POST /capture", () => {
     expect(data.ok).toBe(false);
     expect(data.duplicate).toBe(true);
     expect(data.matchId).toBe("existing");
-    expect(db.entries).toHaveLength(0);
+    expect(db.entries).toHaveLength(1);
   });
 
   it("extracts hashtags from content and stores clean content with tags", async () => {
@@ -119,6 +122,7 @@ describe("POST /capture", () => {
   });
 
   it("stores flagged duplicate (score 0.85–0.94) with duplicate-candidate tag", async () => {
+    db.entries.push({ id: "near", content: "Similar existing note", tags: "[]", source: "api", created_at: 1, vector_ids: '["near"]', owner_user_id: TEST_USER_ID });
     const vectorize = makeVectorizeMock({
       query: vi.fn().mockResolvedValue({
         matches: [{ id: "near", score: 0.88, metadata: { parentId: "near" } }],
@@ -131,8 +135,8 @@ describe("POST /capture", () => {
     const data = await res.json() as any;
     expect(data.ok).toBe(true);
     expect(data.warning).toBe("similar");
-    expect(db.entries).toHaveLength(1);
-    const tags = JSON.parse(db.entries[0].tags);
+    expect(db.entries).toHaveLength(2);
+    const tags = JSON.parse(db.entries[1].tags);
     expect(tags).toContain("duplicate-candidate");
   });
 });

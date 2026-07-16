@@ -15,12 +15,12 @@
  */
 
 import { type Env } from "./types";
-import { loginHtml, hmacKey, generateApiKey, AUTH_PEPPER, requireAuthAsync, isAuthorized, json } from "./auth";
+import { loginHtml, hmacKey, generateApiKey, AUTH_PEPPER, requireAuthAsync, resolveUserByApiKey, isAuthorized, json } from "./auth";
 import { CORS_HEADERS, graceMs, LLM_MODEL, COMPRESSION_MIN_AGE_MS, compressionEligibilitySql, VECTORIZE_FIX_HINT } from "./config";
-import { initializeDatabase, checkVectorizeHealth, getDbReady, setDbReady } from "./db";
+import { initializeDatabase, checkVectorizeHealth } from "./db";
 import { buildVisibilityClause, buildEntryFilterQuery, getStatus, withStatus, withKind } from "./tags";
 import { EDGE_TYPES, isValidEdgeType, createEdge, deleteEdge, getConnections, buildGraph } from "./graph";
-import { captureEntry, storeEntry, appendToEntry, deleteStaleVectors, reindexAllVectors, createSnapshot } from "./ingest";
+import { captureEntry, storeEntry, stageEntryVectors, appendToEntry, deleteStaleVectors, reindexAllVectors, createSnapshot } from "./ingest";
 import { recallEntries } from "./recall";
 import { forgetEntry, deprecateEntry, applyStatus, compressTag } from "./lifecycle";
 import { classifyEntry, extractHashtags } from "./classification";
@@ -31,6 +31,69 @@ import { makeMirrorStore, isManagedMirror, mirrorEditError } from "./integration
 import { KIND_VALUES, STATUS_VALUES, EPISTEMIC_STATUS_VALUES, type MemoryKind, type MemoryStatus, type EpistemicStatus, isValidTransition, VALID_EPISTEMIC_TRANSITIONS } from "./types";
 
 // ─── Default handler — all non-MCP routes ────────────────────────────────────
+
+interface EntryAccessRow {
+  id: string;
+  tags: string;
+  owner_user_id: string;
+}
+
+function parseAccessTags(row: EntryAccessRow): string[] | null {
+  try {
+    const tags = JSON.parse(row.tags ?? "[]");
+    return Array.isArray(tags) && tags.every((tag) => typeof tag === "string") ? tags : null;
+  } catch {
+    return null;
+  }
+}
+
+function isVisibleEntry(row: EntryAccessRow, userId: string | undefined): boolean {
+  if (!userId) return false;
+  if (row.owner_user_id === userId) return true;
+  const tags = parseAccessTags(row);
+  return tags !== null && !tags.includes("private");
+}
+
+async function getEntryAccessRow(id: string, env: Env): Promise<EntryAccessRow | null> {
+  return await env.DB.prepare(
+    `SELECT id, tags, owner_user_id FROM entries WHERE id = ?`,
+  ).bind(id).first() as EntryAccessRow | null;
+}
+
+async function getVisibleEntry(
+  id: string,
+  userId: string | undefined,
+  env: Env,
+): Promise<EntryAccessRow | null> {
+  const row = await getEntryAccessRow(id, env);
+  return row && isVisibleEntry(row, userId) ? row : null;
+}
+
+async function getOwnedEntry(
+  id: string,
+  userId: string | undefined,
+  env: Env,
+): Promise<EntryAccessRow | null> {
+  if (!userId) return null;
+  const row = await getEntryAccessRow(id, env);
+  return row?.owner_user_id === userId ? row : null;
+}
+
+function hasPrivateVisibility(row: EntryAccessRow): boolean | null {
+  const tags = parseAccessTags(row);
+  return tags ? tags.includes("private") : null;
+}
+
+function storageUnavailableResponse(): Response {
+  return new Response(JSON.stringify({ ok: false, error: "Second Brain storage is unavailable" }), {
+    status: 503,
+    headers: {
+      "Cache-Control": "no-store",
+      "Content-Type": "application/json",
+      ...CORS_HEADERS,
+    },
+  });
+}
 
 export const defaultHandler = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -51,30 +114,40 @@ export const defaultHandler = {
       }
       if (request.method === "POST") {
         const form = await request.formData();
-        if (form.get("password") !== env.AUTH_TOKEN) {
-          return new Response(loginHtml("Invalid token"), {
+        try {
+          await initializeDatabase(env);
+        } catch (error) {
+          console.error("Database initialization failed:", error);
+          return storageUnavailableResponse();
+        }
+        const principal = await resolveUserByApiKey(String(form.get("password") ?? ""), env);
+        if (!principal) {
+          return new Response(loginHtml("Invalid personal API key"), {
             status: 401, headers: { "Content-Type": "text/html" },
           });
         }
         const { redirectTo } = await (env as any).OAUTH_PROVIDER.completeAuthorization({
           request: oauthReq,
-          userId: "owner",
+          userId: principal.user_id,
           scope: oauthReq.scope,
-          props: { userId: "owner" },
+          props: { userId: principal.user_id },
         });
         return Response.redirect(redirectTo, 302);
       }
       return new Response(loginHtml(), { headers: { "Content-Type": "text/html" } });
     }
 
-    if (!getDbReady()) {
-      ctx.waitUntil(
-        initializeDatabase(env).then(() => { setDbReady(true); })
-      );
-    }
-
+    // CORS preflight is transport metadata only and must remain available even
+    // while storage is unavailable.
     if (request.method === "OPTIONS") {
       return new Response(null, { headers: CORS_HEADERS });
+    }
+
+    try {
+      await initializeDatabase(env);
+    } catch (error) {
+      console.error("Database initialization failed:", error);
+      return storageUnavailableResponse();
     }
 
     // POST /api/users — create a new user (requires deployment token)
@@ -326,17 +399,24 @@ export const defaultHandler = {
       // Snapshot: backup before destructive update — fire-and-forget (non-fatal)
       ctx.waitUntil(createSnapshot(env, id).catch(e => console.error("Snapshot creation failed (non-fatal):", e)));
 
-      await env.DB.prepare(`UPDATE entries SET content = ?, tags = ? WHERE id = ?`)
-        .bind(finalContent, JSON.stringify(mergedTags), id).run();
-
-      let newVectorIds: string[] = [];
+      // Stage the replacement vectors before committing the new D1 content.
+      // If embedding/storage fails, staging has not changed D1 and
+      // the old content and vectors remain the authoritative version.
+      let newVectorIds: string[];
       try {
-        newVectorIds = await storeEntry(env, id, finalContent, mergedTags, source, Date.now(), existingOwnerId || user_id, mergedTags.includes("private"));
+        newVectorIds = await stageEntryVectors(env, id, finalContent, mergedTags, source, Date.now(), existingOwnerId || user_id, mergedTags.includes("private"));
       } catch (e) {
-        console.error("Vectorize re-embed failed (non-fatal):", e);
+        console.error("Vectorize re-embed failed; update aborted:", e);
+        return json({ ok: false, error: "Update failed: vector storage is unavailable" }, 503);
       }
+
+      await env.DB.prepare(`UPDATE entries SET content = ?, tags = ?, vector_ids = ? WHERE id = ?`)
+        .bind(finalContent, JSON.stringify(mergedTags), JSON.stringify(newVectorIds), id).run();
+
       const newVectorCount = newVectorIds.length;
 
+      // Only a successful replacement may retire old vector ids. Cleanup
+      // remains non-fatal because the new searchable version is already live.
       try {
         await deleteStaleVectors(env, oldVectorIds, newVectorIds);
       } catch (e) {
@@ -508,6 +588,18 @@ export const defaultHandler = {
       const targetId = body.target_id.trim();
       const reason = body.reason?.trim() || "";
 
+      const endpointRows: EntryAccessRow[] = [];
+      for (const id of [sourceId, targetId]) {
+        const row = await getVisibleEntry(id, user_id, env);
+        if (!row) return json({ ok: false, error: `Entry not found: ${id}` }, 404);
+        endpointRows.push(row);
+      }
+      const sourcePrivate = hasPrivateVisibility(endpointRows[0]);
+      const targetPrivate = hasPrivateVisibility(endpointRows[1]);
+      if (sourcePrivate === null || targetPrivate === null || sourcePrivate !== targetPrivate) {
+        return json({ ok: false, error: "Cannot propose a link across private and public visibility" }, 400);
+      }
+
       // Dedup: check for existing pending proposal for same (source_id, target_id, type)
       const existing = await env.DB.prepare(
         `SELECT id, source_id, target_id, type, reason, proposed_by, status, created_at FROM edge_proposals WHERE source_id = ? AND target_id = ? AND type = ? AND status = 'pending'`
@@ -565,12 +657,25 @@ export const defaultHandler = {
         ).bind(proposalId).first() as Record<string, any> | null;
 
         if (!proposal) return json({ ok: false, error: "Proposal not found" }, 404);
+
+        const endpointRows: EntryAccessRow[] = [];
+        for (const id of [proposal.source_id as string, proposal.target_id as string]) {
+          const row = await getVisibleEntry(id, user_id, env);
+          if (!row) return json({ ok: false, error: "Proposal not found" }, 404);
+          endpointRows.push(row);
+        }
         if (proposal.status !== "pending") return json({ ok: false, error: `Proposal is already ${proposal.status}` }, 400);
 
         const now = Date.now();
         if (action === "approve") {
+          const sourcePrivate = hasPrivateVisibility(endpointRows[0]);
+          const targetPrivate = hasPrivateVisibility(endpointRows[1]);
+          if (sourcePrivate === null || targetPrivate === null || sourcePrivate !== targetPrivate) {
+            return json({ ok: false, error: "Proposal could not be approved" }, 400);
+          }
           // Create the actual edge
-          await createEdge(proposal.source_id, proposal.target_id, proposal.type, { provenance: "system", confidence: 1.0 }, env);
+          const edge = await createEdge(proposal.source_id, proposal.target_id, proposal.type, { provenance: "system", confidence: 1.0 }, env);
+          if (!edge) return json({ ok: false, error: "Proposal could not be approved" }, 400);
           await env.DB.prepare(
             `UPDATE edge_proposals SET status = 'approved', resolved_at = ? WHERE id = ?`
           ).bind(now, proposalId).run();
@@ -713,7 +818,7 @@ export const defaultHandler = {
       if (authErr) return authErr;
       const entryId = url.pathname.split("/")[2];
 
-      const entry = await env.DB.prepare(`SELECT id FROM entries WHERE id = ?`).bind(entryId).first() as { id: string } | null;
+      const entry = await getVisibleEntry(entryId, user_id, env);
       if (!entry) return json({ ok: false, error: "Entry not found" }, 404);
 
       // Find the episode linked to this entry
@@ -785,6 +890,12 @@ export const defaultHandler = {
       const entryId = body.entry_id.trim();
       const snapshotId = body.snapshot_id?.trim();
 
+      // Snapshot history can contain content that is no longer public. Treat a
+      // non-owned parent exactly like a missing one before reading snapshots.
+      if (!await getOwnedEntry(entryId, user_id, env)) {
+        return json({ ok: false, error: `No snapshot found for entry ${entryId}` }, 404);
+      }
+
       // Fetch snapshot
       let snapshot;
       if (snapshotId) {
@@ -830,22 +941,20 @@ export const defaultHandler = {
         return json({ ok: false, error: `type must be one of: ${Object.keys(EDGE_TYPES).join(", ")}` }, 400);
       }
 
-      // Visibility check: both endpoints must be visible to the requesting user
-      if (user_id) {
-        for (const eid of [sourceId, targetId]) {
-          const row = await env.DB.prepare(
-            `SELECT id, owner_user_id, tags FROM entries WHERE id = ?`
-          ).bind(eid).first() as Record<string, any> | null;
-          if (!row) continue; // entry doesn't exist — let createEdge handle it
-          const tags: string[] = JSON.parse(row.tags ?? "[]");
-          if (tags.includes("private") && row.owner_user_id !== user_id) {
-            return json({ ok: false, error: `Entry not found: ${eid}` }, 404);
-          }
-        }
+      const endpointRows: EntryAccessRow[] = [];
+      for (const id of [sourceId, targetId]) {
+        const row = await getVisibleEntry(id, user_id, env);
+        if (!row) return json({ ok: false, error: `Entry not found: ${id}` }, 404);
+        endpointRows.push(row);
+      }
+      const sourcePrivate = hasPrivateVisibility(endpointRows[0]);
+      const targetPrivate = hasPrivateVisibility(endpointRows[1]);
+      if (sourcePrivate === null || targetPrivate === null || sourcePrivate !== targetPrivate) {
+        return json({ ok: false, error: "Cannot link entries across private and public visibility" }, 400);
       }
 
       const edge = await createEdge(sourceId, targetId, type, { provenance: "explicit", weight: 1.0 }, env);
-      if (!edge) return json({ ok: false, error: "Cannot link an entry to itself" }, 400);
+      if (!edge) return json({ ok: false, error: "Unable to create a link between those entries" }, 400);
       return json({ ok: true, source_id: edge.source_id, target_id: edge.target_id, type: edge.type });
     }
 
@@ -866,17 +975,9 @@ export const defaultHandler = {
         return json({ ok: false, error: `type must be one of: ${Object.keys(EDGE_TYPES).join(", ")}` }, 400);
       }
 
-      // Visibility check: both endpoints must be visible to the requesting user
-      if (user_id) {
-        for (const eid of [sourceId, targetId]) {
-          const row = await env.DB.prepare(
-            `SELECT id, owner_user_id, tags FROM entries WHERE id = ?`
-          ).bind(eid).first() as Record<string, any> | null;
-          if (!row) continue; // entry doesn't exist — let deleteEdge handle it
-          const tags: string[] = JSON.parse(row.tags ?? "[]");
-          if (tags.includes("private") && row.owner_user_id !== user_id) {
-            return json({ ok: false, error: `Entry not found: ${eid}` }, 404);
-          }
+      for (const id of [sourceId, targetId]) {
+        if (!await getVisibleEntry(id, user_id, env)) {
+          return json({ ok: false, error: `Entry not found: ${id}` }, 404);
         }
       }
 
@@ -892,6 +993,10 @@ export const defaultHandler = {
       const id = url.searchParams.get("id")?.trim();
       if (!id) return json({ ok: false, error: "id is required" }, 400);
       const type = url.searchParams.get("type")?.trim() || undefined;
+
+      if (!await getVisibleEntry(id, user_id, env)) {
+        return json({ ok: true, id, connections: [] });
+      }
 
       const connections = await getConnections(id, type, env, user_id);
       return json({ ok: true, id, connections });
@@ -948,6 +1053,10 @@ export const defaultHandler = {
       const seed = url.searchParams.get("seed")?.trim() || undefined;
       const limitParam = url.searchParams.get("limit");
       const limit = limitParam ? parseInt(limitParam, 10) : undefined;
+
+      if (seed && !await getVisibleEntry(seed, user_id, env)) {
+        return json({ ok: true, nodes: [], edges: [] });
+      }
 
       const { nodes, edges } = await buildGraph({ seed, limit, userId: user_id }, env);
       return json({ ok: true, nodes, edges });

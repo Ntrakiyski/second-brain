@@ -6,13 +6,13 @@
  *   gate used by all route handlers.
  * Input: HTTP requests with credential headers/bearer tokens, the DB, and env secrets.
  * Output: Auth results (user ID + username), API keys, login HTML, or error responses.
- * Logic: HMAC-SHA-256 hashing, constant-time comparison, D1 user lookups,
- *   and legacy bearer-only mode with system user fallback.
+ * Logic: HMAC-SHA-256 hashing, constant-time comparison, and D1 user lookups.
+ *   The deployment bearer token is an administrative/transport gate only;
+ *   user-scoped requests always resolve an active row from `users`.
  */
 
 import { type Env } from "./types";
 import { CORS_HEADERS } from "./config";
-import { getSystemUserId } from "./db";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -46,40 +46,215 @@ function parseUserCredentials(request: Request): { username: string | null; key:
   };
 }
 
-export async function resolveUser(
-  request: Request, env: Env
-): Promise<{ user_id: string; username: string } | null> {
-  const { username, key } = parseUserCredentials(request);
-  if (!username || !key) return null;
+function bearerToken(request: Request): string | null {
+  const authorization = request.headers.get("Authorization");
+  const match = authorization?.match(/^Bearer\s+(.+)$/i);
+  return match?.[1]?.trim() || null;
+}
 
-  // Extract the secret part from "sbu_<publicId>.<secret>" format
-  const dotIndex = key.lastIndexOf(".");
-  const rawSecret = dotIndex > -1 ? key.slice(dotIndex + 1) : key;
+interface ActiveUserRow {
+  id: string;
+  username: string;
+  auth_key_hash: string;
+}
 
-  const normalized = username.toLowerCase().trim();
-  const row = await (env.DB as any).prepare(
-    "SELECT id, auth_key_hash FROM users WHERE normalized_username = ? AND status = 'active'"
-  ).bind(normalized).first();
-  if (!row) return null;
+export interface UserPrincipal {
+  user_id: string;
+  username: string;
+}
 
+function parseApiKey(apiKey: string): { publicId: string; secret: string } | null {
+  const match = apiKey.match(/^sbu_([A-Za-z0-9][A-Za-z0-9_-]{0,127})\.([^\s.]+)$/);
+  if (!match) return null;
+  return { publicId: match[1], secret: match[2] };
+}
+
+function isReservedActorId(value: string): boolean {
+  return value === "anonymous" || value === "_system" || value === "owner";
+}
+
+async function activeUserById(userId: string, env: Env): Promise<ActiveUserRow | null> {
+  if (!isValidMcpActorId(userId)) return null;
+  return await (env.DB as any).prepare(
+    "SELECT id, username, auth_key_hash FROM users WHERE id = ? AND status = 'active'"
+  ).bind(userId).first() as ActiveUserRow | null;
+}
+
+async function hashesMatch(rawSecret: string, storedHash: string): Promise<boolean> {
+  if (typeof storedHash !== "string") return false;
   const keyHash = await hmacKey(rawSecret, AUTH_PEPPER);
+  if (keyHash.length !== storedHash.length) return false;
 
-  // Constant-time comparison to prevent timing side-channel attacks
-  const storedHash = row.auth_key_hash as string;
-  if (keyHash.length !== storedHash.length) return null;
   const encoder = new TextEncoder();
   const a = encoder.encode(keyHash);
   const b = encoder.encode(storedHash);
   let diff = 0;
   for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
-  if (diff !== 0) return null;
+  return diff === 0;
+}
 
-  return { user_id: row.id, username };
+/** Resolve a personal API key to the active, non-system user that owns it. */
+export async function resolveUserByApiKey(
+  apiKey: string,
+  env: Env,
+): Promise<UserPrincipal | null> {
+  const parsed = parseApiKey(apiKey);
+  if (!parsed) return null;
+
+  const row = await activeUserById(parsed.publicId, env);
+  if (!row || !await hashesMatch(parsed.secret, row.auth_key_hash)) return null;
+  return { user_id: row.id, username: row.username };
+}
+
+/** Revalidate an OAuth token's stored subject against the live users table. */
+export async function resolveActiveUserPrincipal(
+  userId: string,
+  env: Env,
+): Promise<UserPrincipal | null> {
+  const row = await activeUserById(userId, env);
+  return row ? { user_id: row.id, username: row.username } : null;
+}
+
+// MCP requests are authenticated by OAuthProvider before apiHandler runs. The
+// provider places the authenticated principal in ExecutionContext.props. A
+// complete pair of legacy per-user headers may still select a narrower actor,
+// but only after the API key is verified; malformed/partial credentials never
+// fall back to a broader OAuth principal.
+export type McpActorSource = "oauth_props" | "user_credentials";
+
+export interface McpActor {
+  user_id: string;
+  username?: string;
+  source: McpActorSource;
+}
+
+export type McpActorResolution =
+  | { ok: true; actor: McpActor }
+  | {
+      ok: false;
+      reason:
+        | "missing_actor"
+        | "invalid_oauth_actor"
+        | "incomplete_user_credentials"
+        | "invalid_user_credentials"
+        | "legacy_transport_unauthorized";
+    };
+
+/**
+ * Validate an actor ID before it is allowed to scope MCP tools. Empty,
+ * anonymous, and system-reserved identities would re-open unscoped or
+ * privileged legacy behavior and are therefore rejected.
+ */
+export function isValidMcpActorId(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  if (isReservedActorId(value)) return false;
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value);
+}
+
+function oauthActorId(props: unknown): string | null {
+  if (!props || typeof props !== "object" || Array.isArray(props)) return null;
+  const userId = (props as Record<string, unknown>).userId;
+  return isValidMcpActorId(userId) ? userId : null;
+}
+
+export async function resolveUser(
+  request: Request, env: Env
+): Promise<{ user_id: string; username: string } | null> {
+  const { username, key } = parseUserCredentials(request);
+  if (!username || !key) return null;
+  const parsed = parseApiKey(key);
+  if (!parsed) return null;
+
+  const normalized = username.toLowerCase().trim();
+  const row = await (env.DB as any).prepare(
+    "SELECT id, username, auth_key_hash FROM users WHERE normalized_username = ? AND status = 'active'"
+  ).bind(normalized).first();
+  if (!row || parsed.publicId !== row.id || !isValidMcpActorId(row.id)) return null;
+  if (!await hashesMatch(parsed.secret, row.auth_key_hash as string)) return null;
+
+  return { user_id: row.id, username: row.username };
+}
+
+/**
+ * Resolve the effective MCP actor without ever returning an unscoped identity.
+ *
+ * Resolution order:
+ * 1. If either legacy user header is present, require both and verify them.
+ *    This preserves the current two-factor deployment-token + user-key flow.
+ * 2. Otherwise use the OAuthProvider principal from ctx.props.userId.
+ * 3. If neither path yields a valid actor, fail closed.
+ *
+ * A legacy header actor requires either a valid OAuth principal (normal
+ * provider-wrapped requests) or the explicit deployment token (safe direct
+ * legacy calls/tests). This prevents user headers alone from bypassing OAuth.
+ */
+export async function resolveMcpActor(
+  request: Request,
+  env: Env,
+  oauthProps: unknown,
+): Promise<McpActorResolution> {
+  const { username, key } = parseUserCredentials(request);
+  const hasUsername = username !== null;
+  const hasKey = key !== null;
+  const suppliedOauthUserId = oauthActorId(oauthProps);
+  const oauthPrincipal = suppliedOauthUserId
+    ? await resolveActiveUserPrincipal(suppliedOauthUserId, env)
+    : null;
+
+  if (hasUsername || hasKey) {
+    if (!username || !key) {
+      return { ok: false, reason: "incomplete_user_credentials" };
+    }
+
+    const resolved = await resolveUser(request, env);
+    if (!resolved) {
+      return { ok: false, reason: "invalid_user_credentials" };
+    }
+
+    if (!oauthPrincipal && !isAuthorized(request, env)) {
+      return { ok: false, reason: "legacy_transport_unauthorized" };
+    }
+
+    if (!isValidMcpActorId(resolved.user_id)) {
+      return { ok: false, reason: "invalid_user_credentials" };
+    }
+
+    return {
+      ok: true,
+      actor: {
+        user_id: resolved.user_id,
+        username: resolved.username,
+        source: "user_credentials",
+      },
+    };
+  }
+
+  if (oauthPrincipal) {
+    return {
+      ok: true,
+      actor: {
+        user_id: oauthPrincipal.user_id,
+        username: oauthPrincipal.username,
+        source: "oauth_props",
+      },
+    };
+  }
+
+  const suppliedUserId =
+    oauthProps && typeof oauthProps === "object" && !Array.isArray(oauthProps)
+      ? (oauthProps as Record<string, unknown>).userId
+      : undefined;
+
+  return {
+    ok: false,
+    reason: suppliedUserId === undefined ? "missing_actor" : "invalid_oauth_actor",
+  };
 }
 
 export function isAuthorized(request: Request, env: Env): boolean {
-  if (request.headers.get("Authorization") === `Bearer ${env.AUTH_TOKEN}`) return true;
-  return new URL(request.url).searchParams.get("token") === env.AUTH_TOKEN;
+  // Credentials in URLs leak into access logs, browser history, analytics, and
+  // referrer headers. Accept the deployment secret only in Authorization.
+  return request.headers.get("Authorization") === `Bearer ${env.AUTH_TOKEN}`;
 }
 
 export function json(data: unknown, status = 200): Response {
@@ -91,25 +266,42 @@ export function json(data: unknown, status = 200): Response {
 
 // ─── Combined auth gate ────────────────────────────────────────────────────────
 
-// Async auth: returns `{ error, user_id, username }`. All route handlers should
-// use this. Legacy bearer-only → system user ID. Bearer + user headers → resolved user.
+// Async auth: returns `{ error, user_id, username }`. All user-scoped route
+// handlers should use this. Accepted forms are either a personal API key as
+// Bearer token, or the deployment transport token plus verified user headers.
+// The deployment token alone deliberately has no user principal.
 export async function requireAuthAsync(
   request: Request, env: Env
 ): Promise<{ error: Response | null; user_id?: string; username?: string }> {
-  if (!isAuthorized(request, env)) {
-    return { error: json({ ok: false, error: "Unauthorized" }, 401) };
-  }
   const { username, key } = parseUserCredentials(request);
-  if (username && key) {
+  const hasUsername = username !== null;
+  const hasKey = key !== null;
+  if (hasUsername || hasKey) {
+    // A partial actor selection must never fall back to the deployment-wide
+    // system actor. Treat malformed/partial credential attempts as failures.
+    if (!username || !key) {
+      return { error: json({ ok: false, error: "Unauthorized" }, 401) };
+    }
+    if (!isAuthorized(request, env)) {
+      return { error: json({ ok: false, error: "Unauthorized" }, 401) };
+    }
     const resolved = await resolveUser(request, env);
     if (!resolved) {
       return { error: json({ ok: false, error: "Unauthorized" }, 401) };
     }
     return { error: null, user_id: resolved.user_id, username: resolved.username };
   }
-  // Legacy mode: bearer token only → system user
-  const systemUserId = await getSystemUserId(env);
-  return { error: null, user_id: systemUserId };
+
+  const token = bearerToken(request);
+  if (!token || token === env.AUTH_TOKEN) {
+    return { error: json({ ok: false, error: "Unauthorized" }, 401) };
+  }
+
+  const resolved = await resolveUserByApiKey(token, env);
+  if (!resolved) {
+    return { error: json({ ok: false, error: "Unauthorized" }, 401) };
+  }
+  return { error: null, user_id: resolved.user_id, username: resolved.username };
 }
 
 // Sync version for backward compat (doesn't verify user key — use requireAuthAsync in routes)
@@ -163,9 +355,9 @@ export function loginHtml(error?: string): string {
   <div class="auth-card">
     <div class="brain-logo"><i class="ti ti-brain"></i></div>
     <h1>Second Brain</h1>
-    <p>Enter your Bearer token to connect to your personal memory layer.</p>
+    <p>Enter your personal Second Brain API key to connect to your memory layer.</p>
     <form method="POST">
-      <input type="password" name="password" placeholder="Bearer token" autofocus autocomplete="current-password" />
+      <input type="password" name="password" placeholder="Personal API key" autofocus autocomplete="current-password" />
       <button type="submit">Connect</button>
     </form>
     <div class="auth-error">${error ? error : ""}</div>

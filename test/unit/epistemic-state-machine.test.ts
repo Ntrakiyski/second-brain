@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isValidTransition, VALID_EPISTEMIC_TRANSITIONS, EPISTEMIC_STATUS_VALUES } from "../../src/index";
+import { isValidTransition, VALID_EPISTEMIC_TRANSITIONS, EPISTEMIC_STATUS_VALUES } from "../../src/testing";
 
 describe("Epistemic state machine (Ticket 10)", () => {
   describe("isValidTransition()", () => {

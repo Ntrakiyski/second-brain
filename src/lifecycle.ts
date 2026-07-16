@@ -27,7 +27,8 @@ import { STATUS_PREFIX, KIND_PREFIX, type MemoryStatus } from "./types";
 import { withStatus } from "./tags";
 import { initializeDatabase } from "./db";
 import { captureEntry, createSnapshot } from "./ingest";
-import { filterVisibleIds, inferEdgesOnWrite } from "./graph";
+import { inferEdgesOnWrite } from "./graph";
+import { queryVisibleVectors, vectorMatchParentId } from "./vector-access";
 
 // ─── Synthesize insight from retrieved memories ───────────────────────────────
 
@@ -160,6 +161,66 @@ State of "${tag}":`;
   return digest.trim();
 }
 
+type CompressionSource = {
+  id: string;
+  content: string;
+  tags: string[];
+  ownerUserId: string;
+};
+
+function parseEntryTags(raw: unknown): string[] | null {
+  try {
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (!Array.isArray(parsed) || !parsed.every(tag => typeof tag === "string")) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+async function authorizeCompressionSources(
+  rawEntries: Record<string, unknown>[],
+  tag: string,
+  env: Env,
+  userId?: string,
+): Promise<CompressionSource[]> {
+  const sources: CompressionSource[] = [];
+
+  for (const rawEntry of rawEntries) {
+    const id = typeof rawEntry.id === "string" ? rawEntry.id : "";
+    const content = typeof rawEntry.content === "string" ? rawEntry.content : "";
+    if (!id || !content) continue;
+
+    // Re-authorize each row immediately before synthesis/mutation. Besides
+    // defending against stale or imperfect query filters, this makes malformed
+    // tag metadata fail closed instead of being treated as public.
+    const metadata = await env.DB.prepare(
+      `SELECT tags, owner_user_id FROM entries WHERE id = ?`
+    ).bind(id).first<{ tags: string; owner_user_id: string }>();
+    if (!metadata) continue;
+
+    const tags = parseEntryTags(metadata.tags);
+    if (!tags) continue;
+    if (!tags.includes(tag)) continue;
+    if (tags.some(candidate =>
+      candidate === "synthesized" ||
+      candidate === "auto-pattern" ||
+      candidate === "rolled-up"
+    )) continue;
+
+    const ownerUserId = typeof metadata.owner_user_id === "string"
+      ? metadata.owner_user_id
+      : "";
+    if (userId && ownerUserId !== userId) continue;
+
+    sources.push({ id, content, tags, ownerUserId });
+  }
+
+  return sources;
+}
+
 export async function compressTag(
   tag: string,
   env: Env,
@@ -174,13 +235,18 @@ export async function compressTag(
     return { synthesizedId: null, entriesUsed: 0, text: "" };
   }
 
-  const recentSynth = await env.DB.prepare(`
+  const recentSynthSql = `
     SELECT id FROM entries
-    WHERE tags LIKE '%"synthesized"%'
+    WHERE ${userId ? "owner_user_id = ? AND" : ""} tags LIKE '%"synthesized"%'
       AND tags LIKE ?
       AND created_at > ?
     LIMIT 1
-  `).bind(`%"${escapeLikePattern(tag)}"%`, Date.now() - 86400000).first();
+  `;
+  const recentSynthBindings = userId
+    ? [userId, `%"${escapeLikePattern(tag)}"%`, Date.now() - 86400000]
+    : [`%"${escapeLikePattern(tag)}"%`, Date.now() - 86400000];
+  const recentSynth = await env.DB.prepare(recentSynthSql)
+    .bind(...recentSynthBindings).first();
 
   if (recentSynth) {
     return { synthesizedId: null, entriesUsed: 0, text: "" };
@@ -202,28 +268,38 @@ export async function compressTag(
     LIMIT 50
   `).bind(...bindValues).all();
 
-  if (rawEntries.length < 10) {
+  const rows = await authorizeCompressionSources(
+    rawEntries as Record<string, unknown>[], tag, env, userId,
+  );
+  if (rows.length < 10) {
     return { synthesizedId: null, entriesUsed: 0, text: "" };
   }
 
-  const rows = rawEntries.map((r: any) => ({ id: r.id as string, content: r.content as string }));
   const text = await synthesizeDigest(tag, rows, env);
   if (!text) return { synthesizedId: null, entriesUsed: 0, text: "" };
 
   const content = `[Synthesized from ${rows.length} entries tagged "${tag}"]\n\n${text}`;
-  const result = await captureEntry(content, ["synthesized", tag], "system", env, ctx);
+  // A digest that incorporates any private source must itself remain private.
+  // Public-only source sets remain public, matching their source visibility.
+  const digestTags = [
+    "synthesized",
+    tag,
+    ...(rows.some(row => row.tags.includes("private")) ? ["private"] : []),
+  ];
+  const result = await captureEntry(content, digestTags, "system", env, ctx, userId);
 
   if (result.status !== "stored") {
     return { synthesizedId: null, entriesUsed: 0, text };
   }
 
-  for (const id of rows.map((r: any) => r.id)) {
+  for (const id of rows.map(row => row.id)) {
     // Snapshot: backup before compression — fire-and-forget (non-fatal)
     createSnapshot(env, id).catch(e => console.error(`Snapshot creation failed for ${id} (non-fatal):`, e));
     try {
+      const ownerGuard = userId ? " AND owner_user_id = ?" : "";
       await env.DB.prepare(
-        `UPDATE entries SET tags = json_insert(tags, '$[#]', 'rolled-up'), content = content || ? WHERE id = ?`
-      ).bind(`\n\n[Digest: ${result.id}]`, id).run();
+        `UPDATE entries SET tags = json_insert(tags, '$[#]', 'rolled-up'), content = content || ? WHERE id = ?${ownerGuard}`
+      ).bind(`\n\n[Digest: ${result.id}]`, id, ...(userId ? [userId] : [])).run();
     } catch (e) {
       console.error(`Failed to update source entry ${id} (non-fatal):`, e);
     }
@@ -353,25 +429,41 @@ export async function runGraphPass(env: Env, ctx: ExecutionContext): Promise<voi
 
   for (const entry of unlinked) {
     try {
-      const values = await embed(entry.content, env);
-      const { matches } = await env.VECTORIZE.query(values, { topK: 5, returnMetadata: "all" });
-      const scores = new Map<string, number>();
-      for (const m of matches) {
-        const pid = (m.metadata as any)?.parentId ?? m.id;
-        scores.set(pid, Math.max(scores.get(pid) ?? 0, m.score));
-      }
-      let neighbors = [...scores.entries()].map(([id, score]) => ({ id, score }));
+      const entryTags = parseEntryTags(entry.tags);
+      if (!entryTags) continue;
 
-      // Visibility filter: only link to entries mutually visible with this entry's owner.
-      // Private entries link only to same-owner entries; public entries link to public only.
-      const entryTags: string[] = JSON.parse(entry.tags ?? "[]");
-      const entryOwner = entry.owner_user_id;
-      if (entryOwner || entryTags.includes("private")) {
-        const neighborIds = neighbors.map(n => n.id);
-        const visibleIds = await filterVisibleIds(neighborIds, entryOwner || "__no_owner__", env);
-        const visibleSet = new Set(visibleIds);
-        neighbors = neighbors.filter(n => visibleSet.has(n.id));
+      const isPrivate = entryTags.includes("private");
+      const entryOwner = typeof entry.owner_user_id === "string"
+        ? entry.owner_user_id
+        : "";
+      // A private entry without an authoritative owner cannot be partitioned
+      // safely, so it must not participate in automatic graph inference.
+      if (isPrivate && !entryOwner) continue;
+
+      const values = await embed(entry.content, env);
+      const { matches, entriesById } = await queryVisibleVectors(values, env, {
+        topK: 5,
+        ...(isPrivate ? { userId: entryOwner } : {}),
+      });
+      const scores = new Map<string, number>();
+      for (const match of matches) {
+        const parentId = vectorMatchParentId(match);
+        if (parentId === entry.id) continue;
+
+        // Enforce the graph partition from authoritative D1 metadata, never
+        // from Vectorize payloads: private↔same-owner-private; public↔public.
+        const candidate = entriesById.get(parentId);
+        if (!candidate) continue;
+        const candidateIsPrivate = candidate.tags.includes("private");
+        if (isPrivate) {
+          if (!candidateIsPrivate || candidate.ownerUserId !== entryOwner) continue;
+        } else if (candidateIsPrivate) {
+          continue;
+        }
+
+        scores.set(parentId, Math.max(scores.get(parentId) ?? 0, match.score));
       }
+      const neighbors = [...scores.entries()].map(([id, score]) => ({ id, score }));
 
       await inferEdgesOnWrite(entry.id, neighbors, env);
     } catch (e) {
@@ -388,6 +480,26 @@ export type ForgetResult =
   | { status: "not_found" }
   | { status: "deleted"; vectorCount: number };
 
+function parseTrackedVectorIds(raw: unknown, scope: string): string[] {
+  if (raw == null) return [];
+
+  let parsed: unknown;
+  try {
+    parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+  } catch {
+    throw new Error(`Cannot forget entry: malformed vector_ids for ${scope}`);
+  }
+
+  if (
+    !Array.isArray(parsed) ||
+    !parsed.every((vectorId) => typeof vectorId === "string" && vectorId.length > 0)
+  ) {
+    throw new Error(`Cannot forget entry: malformed vector_ids for ${scope}`);
+  }
+
+  return parsed;
+}
+
 export async function forgetEntry(id: string, env: Env): Promise<ForgetResult> {
   const row = await env.DB.prepare(
     `SELECT vector_ids FROM entries WHERE id = ?`
@@ -395,27 +507,39 @@ export async function forgetEntry(id: string, env: Env): Promise<ForgetResult> {
 
   if (!row) return { status: "not_found" };
 
-  const vectorIds: string[] = JSON.parse(row.vector_ids ?? "[]");
+  const { results: passages } = await env.DB.prepare(
+    `SELECT id, vector_ids FROM passages WHERE entry_id = ?`
+  ).bind(id).all<{ id: string; vector_ids: string }>();
 
-  await env.DB.prepare(`DELETE FROM entries WHERE id = ?`).bind(id).run();
+  // Validate every tracking record before mutating either store. Continuing with
+  // malformed metadata could orphan vectors whose IDs can no longer be recovered.
+  const vectorIds = [...new Set([
+    ...parseTrackedVectorIds(row.vector_ids, `entry ${id}`),
+    ...passages.flatMap((passage) =>
+      parseTrackedVectorIds(passage.vector_ids, `passage ${passage.id}`)
+    ),
+  ])];
 
-  // Cascade: drop any edges touching this node (as source or target) so the graph
-  // never holds links pointing at a deleted entry. Non-fatal — a failed cleanup
-  // must not abort the delete.
-  try {
-    await env.DB.prepare(`DELETE FROM edges WHERE source_id = ? OR target_id = ?`).bind(id, id).run();
-  } catch (e) {
-    console.error("Edge cascade-delete failed (non-fatal):", e);
-  }
+  // Vectorize has no shared transaction with D1. Delete vectors first and fail
+  // closed so a Vectorize outage never leaves searchable data after D1 is gone.
+  // A later retry is safe because deleting the same Vectorize IDs is idempotent.
+  if (vectorIds.length) await env.VECTORIZE.deleteByIds(vectorIds);
 
-  try {
-    if (vectorIds.length) {
-      // Delete exact IDs — no guessing, no leaks
-      await env.VECTORIZE.deleteByIds(vectorIds);
-    }
-  } catch (e) {
-    console.error("Vectorize delete failed (non-fatal):", e);
-  }
+  // D1 batch execution is transactional. Delete every entry-owned artifact in a
+  // single batch so no dangling graph, provenance, passage, episode, or snapshot
+  // records survive a successful permanent forget.
+  await env.DB.batch([
+    env.DB.prepare(
+      `DELETE FROM edge_proposals WHERE source_id = ? OR target_id = ?`
+    ).bind(id, id),
+    env.DB.prepare(
+      `DELETE FROM edges WHERE source_id = ? OR target_id = ?`
+    ).bind(id, id),
+    env.DB.prepare(`DELETE FROM passages WHERE entry_id = ?`).bind(id),
+    env.DB.prepare(`DELETE FROM episodes WHERE entry_id = ?`).bind(id),
+    env.DB.prepare(`DELETE FROM entry_snapshots WHERE entry_id = ?`).bind(id),
+    env.DB.prepare(`DELETE FROM entries WHERE id = ?`).bind(id),
+  ]);
 
   return { status: "deleted", vectorCount: vectorIds.length };
 }
@@ -470,23 +594,31 @@ export async function detectCrossUserContradictions(env: Env): Promise<{ scanned
   let proposals = 0;
 
   for (const entry of recentEntries) {
-    scanned++;
     try {
+      // The SQL predicate is a candidate reduction only. Re-authorize the
+      // source against D1 so malformed tags never become implicitly public.
+      const sourceMetadata = await env.DB.prepare(
+        `SELECT tags, owner_user_id FROM entries WHERE id = ?`
+      ).bind(entry.id).first<{ tags: string; owner_user_id: string }>();
+      const sourceTags = parseEntryTags(sourceMetadata?.tags);
+      if (!sourceMetadata || !sourceTags || sourceTags.includes("private")) continue;
+      const sourceOwnerId = typeof sourceMetadata.owner_user_id === "string"
+        ? sourceMetadata.owner_user_id
+        : "";
+      if (!sourceOwnerId) continue;
+
+      scanned++;
       const entryVec = await embed(entry.content, env);
-      // Query Vectorize for similar entries owned by OTHER users
-      const scanOpts: Record<string, any> = { topK: 5, returnMetadata: "all" };
-      scanOpts.metadataFilter = {
-        OR: [
-          { owner_user_id: { $neq: entry.owner_user_id } },
-          { is_private: { $eq: false } },
-        ],
-      };
-      const { matches } = await env.VECTORIZE.query(entryVec, scanOpts);
+      // Public-only query. The helper uses Vectorize's supported `filter`
+      // option and then authorizes every parent entry against D1.
+      const { matches, entriesById } = await queryVisibleVectors(entryVec, env, { topK: 5 });
 
       for (const match of matches) {
-        const matchOwnerId = (match.metadata as any)?.owner_user_id;
-        const matchEntryId = (match.metadata as any)?.parentId ?? match.id;
-        if (!matchOwnerId || matchOwnerId === entry.owner_user_id) continue;
+        const matchEntryId = vectorMatchParentId(match);
+        const matchScope = entriesById.get(matchEntryId);
+        if (!matchScope || matchScope.tags.includes("private")) continue;
+        const matchOwnerId = matchScope.ownerUserId;
+        if (!matchOwnerId || matchOwnerId === sourceOwnerId) continue;
         if (matchEntryId === entry.id) continue;
         if ((match.score ?? 0) < CONTRADICTION_THRESHOLD) continue;
 

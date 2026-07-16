@@ -3,7 +3,7 @@ import {
   isMcpToolsListRequest,
   removeToolExecutionMetadata,
   sanitizeToolsListResponse,
-} from "../../src/index";
+} from "../../src/testing";
 
 const toolsListPayload = (tools: unknown[]) => ({
   jsonrpc: "2.0",

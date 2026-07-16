@@ -23,7 +23,12 @@ vi.mock("@cloudflare/workers-oauth-provider", () => ({
             status: 401, headers: { "Content-Type": "application/json" },
           });
         }
-        return this.options.apiHandler.fetch(request, env, ctx);
+        // The real provider exposes authenticated application props on the
+        // ExecutionContext passed to the protected API handler.
+        return this.options.apiHandler.fetch(request, env, {
+          ...ctx,
+          props: grant.props,
+        });
       }
       return this.options.defaultHandler.fetch(request, env, ctx);
     }

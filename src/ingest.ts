@@ -20,12 +20,16 @@ import { classifyEntry, extractHashtags } from "./classification";
 import { checkDuplicateAndContradiction } from "./duplicates";
 import { getStatus, withKind, withStatus } from "./tags";
 import { createEdge, inferEdgesOnWrite, neighborsFromVectorQuery } from "./graph";
-import { deprecateEntry } from "./index";
+import { deprecateEntry } from "./lifecycle";
 
 // ─── Store entry (full embed + chunk) ────────────────────────────────────────
 // Returns the list of vector IDs inserted so forget() can clean up exactly.
 
-export async function storeEntry(
+// Build and upsert an entry's complete vector set without changing D1. Update
+// paths use this staging primitive so a failed embed/write cannot destroy the
+// last known-good content/vector references. Upsert is required because stable
+// entry/chunk ids must replace prior vectors during edits and re-indexing.
+export async function stageEntryVectors(
   env: Env,
   id: string,
   content: string,
@@ -63,9 +67,23 @@ export async function storeEntry(
     })
   );
 
-  await env.VECTORIZE.insert(vectors);
+  await env.VECTORIZE.upsert(vectors);
+  return vectors.map(v => v.id);
+}
 
-  const vectorIds = vectors.map(v => v.id);
+export async function storeEntry(
+  env: Env,
+  id: string,
+  content: string,
+  tags: string[],
+  source: string,
+  now: number,
+  ownerUserId?: string,
+  isPrivate?: boolean
+): Promise<string[]> {
+  const vectorIds = await stageEntryVectors(
+    env, id, content, tags, source, now, ownerUserId, isPrivate,
+  );
 
   // Persist exact vector IDs so forget() can clean up without guessing
   await env.DB.prepare(
@@ -103,15 +121,13 @@ export async function reindexAllVectors(env: Env): Promise<{ processed: number; 
     const isPrivate = tags.includes("private");
 
     try {
-      // Delete old vectors
-      if (oldVectorIds.length) {
-        await env.VECTORIZE.deleteByIds(oldVectorIds);
-      }
-      // Re-embed with ownership metadata
+      // Upsert first so a failed re-embed leaves the last known-good vectors
+      // intact. Delete only ids that the new chunk layout no longer references.
       const newVectorIds = await storeEntry(
         env, id, entry.content as string, tags, entry.source as string,
         entry.created_at as number, ownerUserId || undefined, isPrivate
       );
+      await deleteStaleVectors(env, oldVectorIds, newVectorIds);
       processed++;
     } catch (e) {
       console.error(`Re-index failed for entry ${id} (non-fatal):`, e);
@@ -175,19 +191,16 @@ export async function appendToEntry(
     // Combined content is too large for a single vector — re-chunk everything.
     // Same safe ordering as update/merge/replace: insert new → delete old.
 
-    // Step 1: Persist full combined content to D1
-    await env.DB.prepare(`UPDATE entries SET content = ? WHERE id = ?`)
-      .bind(newContent, id).run();
+    // Step 1: Stage the new vector set. Failure leaves D1 and old vectors intact.
+    const newVectorIds = await stageEntryVectors(
+      env, id, newContent, tags, source, Date.now(), ownerUserId, tags.includes("private"),
+    );
 
-    // Step 2: Re-chunk + re-embed full content (also updates vector_ids in D1)
-    let newVectorIds: string[] = [];
-    try {
-      newVectorIds = await storeEntry(env, id, newContent, tags, source, Date.now(), ownerUserId, tags.includes("private"));
-    } catch (e) {
-      console.error("Vectorize re-embed failed (non-fatal):", e);
-    }
+    // Step 2: Commit content + exact vector references together in D1.
+    await env.DB.prepare(`UPDATE entries SET content = ?, vector_ids = ? WHERE id = ?`)
+      .bind(newContent, JSON.stringify(newVectorIds), id).run();
 
-    // Step 3: Delete only stale vectors — ids reused by the re-embed must survive
+    // Step 3: Delete only stale vectors — ids reused by the upsert must survive.
     try {
       await deleteStaleVectors(env, existingVectorIds, newVectorIds);
     } catch (e) {
@@ -196,7 +209,7 @@ export async function appendToEntry(
 
     // Auto-link the updated entry to similar neighbors (#16) — same inference as on capture.
     try {
-      await inferEdgesOnWrite(id, await neighborsFromVectorQuery(await embed(addition, env), env), env);
+      await inferEdgesOnWrite(id, await neighborsFromVectorQuery(await embed(addition, env), env, ownerUserId), env);
     } catch (e) {
       console.error("Append auto-link failed (non-fatal):", e);
     }
@@ -217,6 +230,8 @@ export async function appendToEntry(
     tags,
     source,
     created_at: Date.now(),
+    owner_user_id: ownerUserId ?? "",
+    is_private: tags.includes("private"),
   };
 
   tags.forEach(t => {
@@ -236,7 +251,7 @@ export async function appendToEntry(
 
   // Auto-link the updated entry to similar neighbors (#16) — reuse the addition embedding.
   try {
-    await inferEdgesOnWrite(id, await neighborsFromVectorQuery(values, env), env);
+    await inferEdgesOnWrite(id, await neighborsFromVectorQuery(values, env, ownerUserId), env);
   } catch (e) {
     console.error("Append auto-link failed (non-fatal):", e);
   }
@@ -346,14 +361,16 @@ export async function captureEntry(
         );
       }
 
-      // Step 1: Update D1 content
-      await env.DB.prepare(`UPDATE entries SET content = ? WHERE id = ?`).bind(newContent, targetId).run();
+      // Step 1: Stage new vectors. Failure leaves the target untouched.
+      const targetOwnerId = targetRow.owner_user_id as string;
+      const newVectorIds = await stageEntryVectors(
+        env, targetId, newContent, existingTags, existingSource, Date.now(),
+        targetOwnerId || undefined, existingTags.includes("private"),
+      );
 
-      // Step 2: Re-embed new content — inserts new vectors, updates vector_ids in D1
-      let newVectorIds: string[] = [];
-      try {
-        newVectorIds = await storeEntry(env, targetId, newContent, existingTags, existingSource, Date.now(), userId, existingTags.includes("private"));
-      } catch (e) { console.error("Vectorize re-embed failed (non-fatal):", e); }
+      // Step 2: Commit content and vector references together.
+      await env.DB.prepare(`UPDATE entries SET content = ?, vector_ids = ? WHERE id = ?`)
+        .bind(newContent, JSON.stringify(newVectorIds), targetId).run();
 
       // Step 3: Delete only stale vectors — ids reused by the re-embed must survive
       try {

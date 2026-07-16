@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import worker from "../../src/index";
+import worker from "../../src/testing";
 import { makeTestEnv, makeTestDb, makeVectorizeMock } from "../helpers/make-env";
 import { req } from "../helpers/make-request";
 import { D1Mock } from "../helpers/d1-mock";
@@ -25,7 +25,7 @@ describe("GET /health", () => {
     const data = await res.json() as any;
     expect(data.ok).toBe(true);
     expect(data.vectorize.ok).toBe(true);
-    expect(data.vectorize.indexName).toBe("second-brain-vectors");
+    expect(data.vectorize.indexName).toBe("second-brain-vectors_v2");
   });
 
   it("reports vectorize not-ok when the index is missing", async () => {

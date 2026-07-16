@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getKind, withKind, KIND_VALUES } from "../../src/index";
+import { getKind, withKind, KIND_VALUES } from "../../src/testing";
 
 describe("kind tags", () => {
   describe("getKind", () => {

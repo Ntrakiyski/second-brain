@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import worker, { captureEntry } from "../../src/index";
+import worker, { captureEntry } from "../../src/testing";
 import { makeTestEnv, makeTestDb, makeVectorizeMock } from "../helpers/make-env";
 import { req } from "../helpers/make-request";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/testing";
 import { D1Mock } from "../helpers/d1-mock";
+import { TEST_USER_ID } from "../helpers/test-principal";
 
 // Returns an AI mock that always resolves a contradiction verdict (for captureEntry).
 function makeContradictionAI(response: string): Ai {
@@ -113,7 +114,7 @@ describe("GET /recall", () => {
 
   it("surfaces tagged entries via getByIds even when a global query would miss them", async () => {
     db.entries.push(
-      { id: "entry-1", content: "Work memory", tags: '["work"]', source: "api", created_at: 1000, vector_ids: '["entry-1"]', recall_count: 0, importance_score: 0 },
+      { id: "entry-1", content: "Work memory", tags: '["work"]', source: "api", created_at: 1000, vector_ids: '["entry-1"]', owner_user_id: TEST_USER_ID, recall_count: 0, importance_score: 0 },
       { id: "entry-2", content: "Idea memory", tags: '["idea"]', source: "api", created_at: 2000, vector_ids: '["entry-2"]', recall_count: 0, importance_score: 0 },
     );
     // Global semantic query returns nothing — the old path would lose this entry entirely
@@ -130,6 +131,26 @@ describe("GET /recall", () => {
     // Only the tag's own vectors are fetched; the global query is never used
     expect(getByIdsMock).toHaveBeenCalledWith(["entry-1"]);
     expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("tag recall includes the caller's private entry and excludes another user's private entry", async () => {
+    db.entries.push(
+      { id: "own-private", content: "Own private work", tags: '["work","private"]', source: "api", created_at: 1000, vector_ids: '["own-vector"]', owner_user_id: TEST_USER_ID, recall_count: 0, importance_score: 0 },
+      { id: "other-private", content: "Other private work", tags: '["work","private"]', source: "api", created_at: 2000, vector_ids: '["other-vector"]', owner_user_id: "other-user", recall_count: 0, importance_score: 0 },
+    );
+    const getByIdsMock = vi.fn().mockResolvedValue([
+      { id: "own-vector", values: SIMILAR_VEC, metadata: { parentId: "own-private", isUpdate: false } },
+      // A hostile index response must not make this visible; its ID was never requested.
+      { id: "other-vector", values: SIMILAR_VEC, metadata: { parentId: "other-private", isUpdate: false } },
+    ]);
+    env = makeTestEnv(db, { VECTORIZE: makeVectorizeMock({ getByIds: getByIdsMock }) });
+
+    const res = await worker.fetch(req("GET", "/recall?query=work&tag=work"), env, ctx);
+    const data = await res.json() as any;
+
+    expect(res.status).toBe(200);
+    expect(data.results.map((entry: any) => entry.id)).toEqual(["own-private"]);
+    expect(getByIdsMock).toHaveBeenCalledWith(["own-vector"]);
   });
 
   it("returns empty results immediately when the tag has no matching entries", async () => {
@@ -294,7 +315,7 @@ describe("GET /recall", () => {
     expect(data.ok).toBe(true);
     expect(data.results).toHaveLength(5); // default topK
     // D1 allows max 100 bound parameters per query — 150 candidates must be chunked into 2 calls
-    const scoringCalls = prepareSpy.mock.calls.filter(([sql]) => sql.includes("recall_count, importance_score"));
+    const scoringCalls = prepareSpy.mock.calls.filter(([sql]) => sql.includes("recall_count, importance_score") && sql.includes("WHERE id IN"));
     expect(scoringCalls).toHaveLength(2);
   });
 
@@ -614,17 +635,19 @@ describe("GET /recall — missing Vectorize index", () => {
     const db = makeTestDb();
     db.entries.push({
       id: "w1", content: "widen path content", tags: "[]", source: "api",
-      created_at: Date.now(), vector_ids: '["w1"]', recall_count: 0, importance_score: 0,
+      created_at: Date.now(), vector_ids: '["w1"]', owner_user_id: TEST_USER_ID, recall_count: 0, importance_score: 0,
     });
     const query = vi.fn()
       .mockResolvedValueOnce({ matches: [{ id: "w1", score: 0.1, metadata: { parentId: "w1", content: "widen path content", created_at: Date.now(), tags: [], source: "api" } }] })
-      .mockRejectedValueOnce(new Error("widen failed"));
+      .mockResolvedValueOnce({ matches: [] })
+      .mockRejectedValueOnce(new Error("widen failed"))
+      .mockResolvedValueOnce({ matches: [] });
     const env = makeTestEnv(db, { VECTORIZE: makeVectorizeMock({ query }) });
     const ctx = { waitUntil: (_: Promise<any>) => {} } as any;
     const res = await worker.fetch(req("GET", "/recall?query=widen"), env, ctx);
     expect(res.status).toBe(200);
     const data = await res.json() as any;
     expect(data.semantic_unavailable).toBe(false);
-    expect(query).toHaveBeenCalledTimes(2);
+    expect(query).toHaveBeenCalledTimes(4);
   });
 });

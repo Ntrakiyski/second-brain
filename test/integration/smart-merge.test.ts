@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import worker from "../../src/index";
+import worker, { _resetDbReady } from "../../src/testing";
 import { makeTestDb, makeTestEnv, makeVectorizeMock } from "../helpers/make-env";
 import { req } from "../helpers/make-request";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/testing";
 import { D1Mock } from "../helpers/d1-mock";
+import { TEST_USER_ID } from "../helpers/test-principal";
 
 const ctx = { waitUntil: (_: Promise<any>) => {} } as any;
 
@@ -74,6 +75,7 @@ function seedEntry(db: D1Mock, id = "existing-id", content = "I use VSCode", vec
     vector_ids: vectorIds,
     recall_count: 0,
     importance_score: 3,
+    owner_user_id: TEST_USER_ID,
   });
 }
 
@@ -82,6 +84,7 @@ describe("POST /capture — smart merge (flagged band 0.85–0.95)", () => {
   let env: Env;
 
   beforeEach(() => {
+    _resetDbReady();
     db = makeTestDb();
   });
 
@@ -117,12 +120,14 @@ describe("POST /capture — smart merge (flagged band 0.85–0.95)", () => {
     seedEntry(db, "existing-id", "I use VSCode", '["existing-id","existing-id-chunk-1"]');
     const deleteByIdsMock = vi.fn().mockResolvedValue({ mutationId: "m" });
     const insertMock = vi.fn().mockResolvedValue({ mutationId: "m" });
+    const upsertMock = vi.fn().mockResolvedValue({ mutationId: "m" });
     env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({
         query: vi.fn().mockResolvedValue({
           matches: [{ id: "existing-id", score: 0.88, metadata: { parentId: "existing-id" } }],
         }),
         insert: insertMock,
+        upsert: upsertMock,
         deleteByIds: deleteByIdsMock,
       }),
       AI: makeMergeAI('{"action":"replace","target_id":"existing-id"}'),
@@ -133,7 +138,8 @@ describe("POST /capture — smart merge (flagged band 0.85–0.95)", () => {
       env, ctx
     );
 
-    expect(insertMock).toHaveBeenCalledTimes(2); // entry re-embed + passage vectorize
+    expect(upsertMock).toHaveBeenCalledOnce(); // entry vector replacement
+    expect(insertMock).toHaveBeenCalledOnce(); // immutable passage vector
     // Only the stale chunk is deleted; the reused "existing-id" vector survives.
     expect(deleteByIdsMock).toHaveBeenCalledWith(["existing-id-chunk-1"]);
   });
@@ -146,14 +152,14 @@ describe("POST /capture — smart merge (flagged band 0.85–0.95)", () => {
         query: vi.fn().mockResolvedValue({
           matches: [{ id: "existing-id", score: 0.88, metadata: { parentId: "existing-id" } }],
         }),
-        insert: vi.fn().mockImplementation(async () => { callOrder.push("insert"); return { mutationId: "m" }; }),
+        upsert: vi.fn().mockImplementation(async () => { callOrder.push("upsert"); return { mutationId: "m" }; }),
         deleteByIds: vi.fn().mockImplementation(async () => { callOrder.push("delete"); return { mutationId: "m" }; }),
       }),
       AI: makeMergeAI('{"action":"replace","target_id":"existing-id"}'),
     });
 
     await worker.fetch(req("POST", "/capture", { body: { content: "Cursor IDE" } }), env, ctx);
-    expect(callOrder.indexOf("insert")).toBeLessThan(callOrder.indexOf("delete"));
+    expect(callOrder.indexOf("upsert")).toBeLessThan(callOrder.indexOf("delete"));
   });
 
   // ── Merge ───────────────────────────────────────────────────────────────────
@@ -186,13 +192,13 @@ describe("POST /capture — smart merge (flagged band 0.85–0.95)", () => {
 
   it("merge: embeds merged_content (not the raw new content)", async () => {
     seedEntry(db, "existing-id", "I prefer dark mode");
-    const insertMock = vi.fn().mockResolvedValue({ mutationId: "m" });
+    const upsertMock = vi.fn().mockResolvedValue({ mutationId: "m" });
     env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({
         query: vi.fn().mockResolvedValue({
           matches: [{ id: "existing-id", score: 0.88, metadata: { parentId: "existing-id" } }],
         }),
-        insert: insertMock,
+        upsert: upsertMock,
       }),
       AI: makeMergeAI('{"action":"merge","target_id":"existing-id","merged_content":"THE MERGED RESULT"}'),
     });
@@ -202,8 +208,8 @@ describe("POST /capture — smart merge (flagged band 0.85–0.95)", () => {
       env, ctx
     );
 
-    const allInserts = insertMock.mock.calls.flatMap((c: any[]) => c[0]) as any[];
-    const entryVector = allInserts.find((v: any) => v.metadata?.source !== "passage" && !v.id?.startsWith("passage-"));
+    const allUpserts = upsertMock.mock.calls.flatMap((c: any[]) => c[0]) as any[];
+    const entryVector = allUpserts.find((v: any) => v.metadata?.source !== "passage" && !v.id?.startsWith("passage-"));
     expect(entryVector.metadata.content).toBe("THE MERGED RESULT");
   });
 
@@ -353,6 +359,7 @@ describe("POST /capture — smart merge (flagged band 0.85–0.95)", () => {
       vector_ids: '["canonical-id"]',
       recall_count: 0,
       importance_score: 2,
+      owner_user_id: TEST_USER_ID,
     });
     env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({
@@ -459,6 +466,7 @@ describe("POST /capture — smart merge (flagged band 0.85–0.95)", () => {
   // ── Existing functionality unaffected ─────────────────────────────────────────
 
   it("blocked (≥0.95): still blocked, no LLM call for merge", async () => {
+    seedEntry(db, "dup", "Duplicate");
     const aiRunMock = vi.fn().mockImplementation(async (model: string) => {
       if (model === "@cf/baai/bge-small-en-v1.5") return { data: [new Array(384).fill(0.1)] };
       throw new Error("LLM should not be called for blocked entries");

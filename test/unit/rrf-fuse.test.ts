@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { rrfFuse } from "../../src/index";
+import { rrfFuse } from "../../src/testing";
 
 describe("rrfFuse()", () => {
   it("ranks a dense-only list by position (earlier rank = higher score)", () => {

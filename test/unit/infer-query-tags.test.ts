@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { inferQueryTags } from "../../src/index";
+import { inferQueryTags } from "../../src/testing";
 import { makeTestEnv, makeTestDb } from "../helpers/make-env";
 
 function makeSseStream(response: string) {

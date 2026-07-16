@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import worker from "../../src/index";
+import worker from "../../src/testing";
 import { makeTestEnv, makeTestDb } from "../helpers/make-env";
 import { req } from "../helpers/make-request";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/testing";
 import { D1Mock } from "../helpers/d1-mock";
 
 const ctx = { waitUntil: (_: Promise<any>) => {} } as any;
@@ -161,6 +161,19 @@ describe("Edge Proposals", () => {
     it("requires auth", async () => {
       const res = await worker.fetch(req("POST", "/edge-proposals/p1/approve", { token: null }), env, ctx);
       expect(res.status).toBe(401);
+    });
+
+    it("does not mark a proposal approved when edge creation fails", async () => {
+      db.edgeProposals.push({
+        id: "self-proposal", source_id: "e1", target_id: "e1", type: "relates_to",
+        reason: "invalid self edge", proposed_by: "user-a", status: "pending", created_at: 1,
+      });
+
+      const res = await worker.fetch(req("POST", "/edge-proposals/self-proposal/approve"), env, ctx);
+
+      expect(res.status).toBe(400);
+      expect(db.edgeProposals.find((proposal: any) => proposal.id === "self-proposal")?.status).toBe("pending");
+      expect(db.edges).toHaveLength(0);
     });
   });
 

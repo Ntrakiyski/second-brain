@@ -1,14 +1,25 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import worker from "../../src/index";
+import worker from "../../src/testing";
 import { makeTestEnv, makeTestDb } from "../helpers/make-env";
 import { req } from "../helpers/make-request";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/testing";
 import { D1Mock } from "../helpers/d1-mock";
+import { AUTH_PEPPER, hmacKey } from "../../src/auth";
 
 const ctx = { waitUntil: (_: Promise<any>) => {} } as any;
 
 function seedEntry(db: D1Mock, id: string, content: string, tags: string[] = [], created_at = 1000) {
   db.entries.push({ id, content, tags: JSON.stringify(tags), source: "api", created_at, vector_ids: '["v1"]', recall_count: 0, importance_score: 0, contradiction_wins: 0, contradiction_losses: 0 });
+}
+
+async function seedExportActor(db: D1Mock) {
+  const secret = "export-secret";
+  db.users.push({
+    id: "export-owner", username: "export-owner", normalized_username: "export-owner",
+    auth_key_hash: await hmacKey(secret, AUTH_PEPPER), auth_key_prefix: "sbu_export",
+    status: "active", created_at: 1,
+  });
+  return { username: "export-owner", key: `sbu_export-owner.${secret}` };
 }
 
 describe("GET /export", () => {
@@ -101,13 +112,14 @@ describe("GET /export", () => {
   });
 
   it("mode=my_public returns only the user's public entries", async () => {
+    const userCredentials = await seedExportActor(db);
     db.entries.push(
-      { id: "pub1", content: "My public", tags: "[]", source: "api", created_at: 1000, vector_ids: "[]", owner_user_id: "_system" },
+      { id: "pub1", content: "My public", tags: "[]", source: "api", created_at: 1000, vector_ids: "[]", owner_user_id: "export-owner" },
       { id: "pub2", content: "Other public", tags: "[]", source: "api", created_at: 2000, vector_ids: "[]", owner_user_id: "other-user" },
-      { id: "priv1", content: "My private", tags: '["private"]', source: "api", created_at: 3000, vector_ids: "[]", owner_user_id: "_system" },
+      { id: "priv1", content: "My private", tags: '["private"]', source: "api", created_at: 3000, vector_ids: "[]", owner_user_id: "export-owner" },
     );
 
-    const res = await worker.fetch(req("GET", "/export?mode=my_public"), env, ctx);
+    const res = await worker.fetch(req("GET", "/export?mode=my_public", { userCredentials }), env, ctx);
     const data = await res.json() as any;
     expect(data.ok).toBe(true);
     expect(data.mode).toBe("my_public");
@@ -116,13 +128,14 @@ describe("GET /export", () => {
   });
 
   it("mode=my_private returns only the user's private entries", async () => {
+    const userCredentials = await seedExportActor(db);
     db.entries.push(
-      { id: "pub1", content: "My public", tags: "[]", source: "api", created_at: 1000, vector_ids: "[]", owner_user_id: "_system" },
-      { id: "priv1", content: "My private", tags: '["private"]', source: "api", created_at: 2000, vector_ids: "[]", owner_user_id: "_system" },
+      { id: "pub1", content: "My public", tags: "[]", source: "api", created_at: 1000, vector_ids: "[]", owner_user_id: "export-owner" },
+      { id: "priv1", content: "My private", tags: '["private"]', source: "api", created_at: 2000, vector_ids: "[]", owner_user_id: "export-owner" },
       { id: "priv2", content: "Other private", tags: '["private"]', source: "api", created_at: 3000, vector_ids: "[]", owner_user_id: "other-user" },
     );
 
-    const res = await worker.fetch(req("GET", "/export?mode=my_private"), env, ctx);
+    const res = await worker.fetch(req("GET", "/export?mode=my_private", { userCredentials }), env, ctx);
     const data = await res.json() as any;
     expect(data.ok).toBe(true);
     expect(data.mode).toBe("my_private");
@@ -131,9 +144,10 @@ describe("GET /export", () => {
   });
 
   it("edges are filtered to match exported entry set", async () => {
+    const userCredentials = await seedExportActor(db);
     db.entries.push(
-      { id: "pub1", content: "Public A", tags: "[]", source: "api", created_at: 1000, vector_ids: "[]", owner_user_id: "_system" },
-      { id: "priv1", content: "Private A", tags: '["private"]', source: "api", created_at: 2000, vector_ids: "[]", owner_user_id: "_system" },
+      { id: "pub1", content: "Public A", tags: "[]", source: "api", created_at: 1000, vector_ids: "[]", owner_user_id: "export-owner" },
+      { id: "priv1", content: "Private A", tags: '["private"]', source: "api", created_at: 2000, vector_ids: "[]", owner_user_id: "export-owner" },
     );
     db.edges.push(
       { id: "e1", source_id: "pub1", target_id: "priv1", type: "relates_to", weight: 0.8, provenance: "inferred", metadata: "{}", created_at: 1, updated_at: 1 },
@@ -141,7 +155,7 @@ describe("GET /export", () => {
     );
 
     // my_private only exports priv1, so only edges with both endpoints in {priv1} should be included
-    const res = await worker.fetch(req("GET", "/export?mode=my_private"), env, ctx);
+    const res = await worker.fetch(req("GET", "/export?mode=my_private", { userCredentials }), env, ctx);
     const data = await res.json() as any;
     expect(data.entries).toHaveLength(1);
     expect(data.entries[0].id).toBe("priv1");

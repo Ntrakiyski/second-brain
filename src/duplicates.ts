@@ -22,6 +22,7 @@ import {
   CONTRADICTION_MAX_TOKENS,
   LLM_MODEL,
 } from "./config";
+import { queryVisibleVectors, vectorMatchParentId } from "./vector-access";
 
 type DuplicateResult =
   | { status: "unique" }
@@ -69,23 +70,23 @@ export async function checkDuplicateAndContradiction(content: string, env: Env, 
 }> {
   const sample = getDuplicateCheckSample(content);
   const values = await embed(sample, env);
-  const vectorizeOpts: Record<string, any> = { topK: 5, returnMetadata: "all" };
-  if (userId) {
-    vectorizeOpts.metadataFilter = {
-      OR: [
-        { owner_user_id: { $eq: userId } },
-        { is_private: { $eq: false } }
-      ]
-    };
-  }
-  let { matches } = await env.VECTORIZE.query(values, vectorizeOpts);
+  const visible = await queryVisibleVectors(values, env, { topK: 5, userId });
+  const visibleMatches = visible.matches;
+
+  // Public memories from another user are visible for collaboration and graph
+  // suggestions, but they must never block or become an LLM-selected mutation
+  // target. Duplicate/contradiction decisions are scoped to caller-owned rows.
+  // Legacy system jobs without a caller keep public-only duplicate behaviour.
+  const matches = userId
+    ? visibleMatches.filter(match => visible.entriesById.get(vectorMatchParentId(match))?.ownerUserId === userId)
+    : visibleMatches;
 
   // Neighbors for graph auto-linking (issue #16): the topK matches collapsed to
   // parent ids (strongest score per parent). Exposed so captureEntry can create
   // relates_to edges without a second embed/query.
   const neighborScores = new Map<string, number>();
-  for (const m of matches) {
-    const pid = (m.metadata as any)?.parentId ?? m.id;
+  for (const m of visibleMatches) {
+    const pid = vectorMatchParentId(m);
     neighborScores.set(pid, Math.max(neighborScores.get(pid) ?? 0, m.score));
   }
   const neighbors = [...neighborScores.entries()].map(([id, score]) => ({ id, score }));
@@ -94,24 +95,28 @@ export async function checkDuplicateAndContradiction(content: string, env: Env, 
   let duplicate: DuplicateResult = { status: "unique" };
   if (matches.length) {
     const top = matches[0];
-    const matchId = (top.metadata as any)?.parentId ?? top.id;
+    const matchId = vectorMatchParentId(top);
     if (top.score >= DUPLICATE_BLOCK_THRESHOLD) duplicate = { status: "blocked", matchId, score: top.score };
     else if (top.score >= DUPLICATE_FLAG_THRESHOLD) duplicate = { status: "flagged", matchId, score: top.score };
   }
 
   // ── Cross-user mention: informational only, never blocks or flags ────────────
   let crossUserSimilar: { entryId: string; ownerUsername: string; score: number } | null = null;
-  if (userId && duplicate.status === "flagged" && matches.length) {
-    const top = matches[0];
-    const topMeta = top.metadata as any;
-    const topOwnerId = topMeta?.owner_user_id;
-    if (topOwnerId && topOwnerId !== userId) {
-      // Look up the username for the cross-user match
-      const ownerRow = await env.DB.prepare(
-        `SELECT username FROM users WHERE id = ?`
-      ).bind(topOwnerId).first() as { username: string } | null;
-      if (ownerRow?.username) {
-        crossUserSimilar = { entryId: (topMeta?.parentId ?? top.id) as string, ownerUsername: ownerRow.username, score: top.score };
+  if (userId) {
+    const top = visibleMatches.find(match => {
+      const scope = visible.entriesById.get(vectorMatchParentId(match));
+      return scope && scope.ownerUserId !== userId && match.score >= DUPLICATE_FLAG_THRESHOLD;
+    });
+    if (top) {
+      const topOwnerId = visible.entriesById.get(vectorMatchParentId(top))?.ownerUserId;
+      if (topOwnerId) {
+        // Look up the username for the cross-user match.
+        const ownerRow = await env.DB.prepare(
+          `SELECT username FROM users WHERE id = ?`
+        ).bind(topOwnerId).first() as { username: string } | null;
+        if (ownerRow?.username) {
+          crossUserSimilar = { entryId: vectorMatchParentId(top), ownerUsername: ownerRow.username, score: top.score };
+        }
       }
     }
   }
@@ -124,7 +129,7 @@ export async function checkDuplicateAndContradiction(content: string, env: Env, 
     const candidates = matches.filter(m => m.score >= CANDIDATE_SCORE_THRESHOLD);
     if (candidates.length) {
       const parentIds = [...new Set(
-        candidates.map(m => (m.metadata as any)?.parentId ?? m.id)
+        candidates.map(vectorMatchParentId)
       )] as string[];
 
       const placeholders = parentIds.map(() => "?").join(", ");

@@ -1,11 +1,15 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { createEdge, expandGraph, inferEdgesOnWrite, isValidEdgeType, isSymmetric } from "../../src/index";
+import { createEdge, expandGraph, inferEdgesOnWrite, isValidEdgeType, isSymmetric } from "../../src/testing";
 import { makeTestEnv, makeTestDb } from "../helpers/make-env";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/testing";
 import { D1Mock } from "../helpers/d1-mock";
 
 function edge(source_id: string, target_id: string, weight = 0.5, type = "relates_to") {
   return { id: `${source_id}-${target_id}`, source_id, target_id, type, weight, provenance: "inferred", metadata: "{}", created_at: 1, updated_at: 1 };
+}
+
+function publicEntry(id: string, owner_user_id = "u1") {
+  return { id, content: id, tags: "[]", source: "api", created_at: 1, vector_ids: "[]", owner_user_id };
 }
 
 describe("edge-type registry", () => {
@@ -27,6 +31,7 @@ describe("createEdge", () => {
 
   beforeEach(() => {
     db = makeTestDb();
+    db.entries.push(...["a", "b", "alpha", "zeta", "new", "old"].map(id => publicEntry(id)));
     env = makeTestEnv(db);
   });
 
@@ -38,6 +43,12 @@ describe("createEdge", () => {
 
   it("rejects an unknown edge type and writes nothing", async () => {
     const result = await createEdge("a", "b", "bogus", {}, env);
+    expect(result).toBeNull();
+    expect(db.edges).toHaveLength(0);
+  });
+
+  it("rejects a dangling edge when either endpoint does not exist", async () => {
+    const result = await createEdge("a", "missing", "relates_to", {}, env);
     expect(result).toBeNull();
     expect(db.edges).toHaveLength(0);
   });
@@ -76,6 +87,7 @@ describe("createEdge", () => {
     await createEdge("a", "b", "relates_to", { provenance: "explicit", metadata: { note: "hi" } }, env);
     expect(db.edges[0].provenance).toBe("explicit");
     expect(JSON.parse(db.edges[0].metadata)).toEqual({ note: "hi", confidence: 1.0 });
+    expect(db.edges[0].confidence).toBe(1.0);
   });
 
   it("defaults confidence to 1.0 for explicit provenance", async () => {
@@ -96,6 +108,15 @@ describe("createEdge", () => {
   it("uses explicit confidence when provided, overriding provenance default", async () => {
     await createEdge("a", "b", "relates_to", { provenance: "inferred", weight: 0.8, confidence: 0.3 }, env);
     expect(JSON.parse(db.edges[0].metadata).confidence).toBe(0.3);
+    expect(db.edges[0].confidence).toBe(0.3);
+  });
+
+  it("upgrades persisted confidence and provenance when an explicit link confirms an inferred one", async () => {
+    await createEdge("a", "b", "relates_to", { provenance: "inferred", weight: 0.8, confidence: 0.3 }, env);
+    await createEdge("a", "b", "relates_to", { provenance: "explicit", weight: 1.0 }, env);
+    expect(db.edges).toHaveLength(1);
+    expect(db.edges[0].confidence).toBe(1.0);
+    expect(db.edges[0].provenance).toBe("explicit");
   });
 });
 
@@ -166,6 +187,7 @@ describe("inferEdgesOnWrite", () => {
 
   beforeEach(() => {
     db = makeTestDb();
+    db.entries.push(...["new", "strong", "loose", "weak", "a", "b", "c", "d", "e"].map(id => publicEntry(id)));
     env = makeTestEnv(db);
   });
 
@@ -246,6 +268,16 @@ describe("createEdge visibility", () => {
     const result = await createEdge("a", "b", "relates_to", {}, env);
     expect(result).not.toBeNull();
     expect(db.edges).toHaveLength(1);
+  });
+
+  it("rejects an edge across the private/public boundary even for the same owner", async () => {
+    db.entries.push(
+      { id: "a", content: "A private", tags: '["private"]', source: "api", created_at: 1, vector_ids: "[]", owner_user_id: "u1" },
+      { id: "b", content: "B public", tags: "[]", source: "api", created_at: 1, vector_ids: "[]", owner_user_id: "u1" },
+    );
+    const result = await createEdge("a", "b", "relates_to", {}, env);
+    expect(result).toBeNull();
+    expect(db.edges).toHaveLength(0);
   });
 
   it("rejects edge from private to public of different owner", async () => {

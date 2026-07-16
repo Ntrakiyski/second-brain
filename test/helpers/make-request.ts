@@ -1,3 +1,5 @@
+import { TEST_USER_API_KEY } from "./test-principal";
+
 const BASE = "http://localhost";
 const TOKEN = "test-token";
 
@@ -6,7 +8,12 @@ export function req(
   path: string,
   opts: { body?: unknown; token?: string | null; userCredentials?: { username: string; key: string } } = {}
 ): Request {
-  const { body, token = TOKEN, userCredentials } = opts;
+  const { body, userCredentials } = opts;
+  const isAdminUserRoute = /^\/api\/users(?:\?|$)/.test(path);
+  const hasExplicitToken = Object.prototype.hasOwnProperty.call(opts, "token");
+  const token = hasExplicitToken
+    ? opts.token
+    : (userCredentials || isAdminUserRoute ? TOKEN : TEST_USER_API_KEY);
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (token !== null) headers["Authorization"] = `Bearer ${token}`;
   if (userCredentials) {

@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import worker from "../../src/index";
+import worker from "../../src/testing";
 import { makeTestEnv, makeTestDb } from "../helpers/make-env";
 import { req } from "../helpers/make-request";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/testing";
+import { TEST_USER_API_KEY } from "../helpers/test-principal";
 
 const ctx = { waitUntil: (_: Promise<any>) => {} } as any;
 
@@ -22,7 +23,7 @@ describe("POST /chat", () => {
     const res = await worker.fetch(
       new Request("http://localhost/chat", {
         method: "POST",
-        headers: { "Authorization": "Bearer test-token", "Content-Type": "application/json" },
+        headers: { "Authorization": `Bearer ${TEST_USER_API_KEY}`, "Content-Type": "application/json" },
         body: "not json",
       }),
       env, ctx

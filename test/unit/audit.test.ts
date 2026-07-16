@@ -11,7 +11,7 @@ import {
 } from "../../src/audit";
 import { D1Mock } from "../helpers/d1-mock";
 import { makeTestEnv } from "../helpers/make-env";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/testing";
 
 describe("audit.ts", () => {
   let env: Env;

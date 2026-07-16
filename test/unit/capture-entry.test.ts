@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { captureEntry } from "../../src/index";
+import { captureEntry } from "../../src/testing";
 import { makeTestDb, makeTestEnv, makeVectorizeMock } from "../helpers/make-env";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/testing";
 import { D1Mock } from "../helpers/d1-mock";
 
 function makeCtx() {
@@ -93,6 +93,7 @@ describe("captureEntry()", () => {
   // ── Duplicate: blocked ──────────────────────────────────────────────────────
 
   it("returns status=blocked and does not insert when similarity >= 0.95", async () => {
+    db.entries.push({ id: "existing", content: "Duplicate content", tags: "[]", source: "api", created_at: 1, vector_ids: '["existing"]' });
     env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({
         query: vi.fn().mockResolvedValue({
@@ -106,10 +107,11 @@ describe("captureEntry()", () => {
     if (result.status !== "blocked") return;
     expect(result.matchId).toBe("existing");
     expect(result.score).toBeCloseTo(0.97);
-    expect(db.entries).toHaveLength(0);
+    expect(db.entries).toHaveLength(1);
   });
 
   it("does not call ctx.waitUntil when blocked (no scoring needed)", async () => {
+    db.entries.push({ id: "existing", content: "Duplicate content", tags: "[]", source: "api", created_at: 1, vector_ids: '["existing"]' });
     env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({
         query: vi.fn().mockResolvedValue({
@@ -126,6 +128,7 @@ describe("captureEntry()", () => {
   // ── Duplicate: flagged ──────────────────────────────────────────────────────
 
   it("returns status=flagged, stores entry, and adds duplicate-candidate tag", async () => {
+    db.entries.push({ id: "near", content: "Similar existing note", tags: "[]", source: "api", created_at: 1, vector_ids: '["near"]' });
     env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({
         query: vi.fn().mockResolvedValue({
@@ -138,8 +141,8 @@ describe("captureEntry()", () => {
     expect(result.status).toBe("flagged");
     if (result.status !== "flagged") return;
     expect(result.matchId).toBe("near");
-    expect(db.entries).toHaveLength(1);
-    const tags: string[] = JSON.parse(db.entries[0].tags);
+    expect(db.entries).toHaveLength(2);
+    const tags: string[] = JSON.parse(db.entries[1].tags);
     expect(tags).toContain("duplicate-candidate");
   });
 
@@ -332,7 +335,7 @@ describe("captureEntry()", () => {
     const { ctx } = makeCtx();
     const result = await captureEntry("I switched to Cursor", [], "api", env, ctx);
     // Falls through → stores as a new entry
-    expect(result.status).toBe("flagged");
+    expect(result.status).toBe("stored");
     expect(db.entries).toHaveLength(1);
   });
 
@@ -365,13 +368,13 @@ describe("captureEntry()", () => {
       id: "existing", content: "I prefer dark mode", tags: "[]", source: "api",
       created_at: Date.now(), vector_ids: '["existing"]', recall_count: 0, importance_score: 0,
     });
-    const insertMock = vi.fn().mockResolvedValue({ mutationId: "m" });
+    const upsertMock = vi.fn().mockResolvedValue({ mutationId: "m" });
     env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({
         query: vi.fn().mockResolvedValue({
           matches: [{ id: "existing", score: 0.88, metadata: { parentId: "existing" } }],
         }),
-        insert: insertMock,
+        upsert: upsertMock,
       }),
       AI: makeContradictionAI('{"action":"merge","target_id":"existing","merged_content":"Combined merged memory"}'),
     });
@@ -379,8 +382,8 @@ describe("captureEntry()", () => {
     await captureEntry("I like dark mode at night", [], "api", env, ctx);
     // The inserted vector metadata should contain the merged content
     // (passage vectors come first, entry vector comes after)
-    const allInserts = insertMock.mock.calls.flatMap((c: any[]) => c[0]) as any[];
-    const entryVector = allInserts.find((v: any) => v.metadata?.source !== "passage" && !v.id?.startsWith("passage-"));
+    const allUpserts = upsertMock.mock.calls.flatMap((c: any[]) => c[0]) as any[];
+    const entryVector = allUpserts.find((v: any) => v.metadata?.source !== "passage" && !v.id?.startsWith("passage-"));
     expect(entryVector.metadata.content).toBe("Combined merged memory");
   });
 

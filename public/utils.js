@@ -15,12 +15,19 @@ function escHtml(s) {
     .replace(/'/g, '&#39;');
 }
 
-/* Escape text for safe insertion into a single-quoted HTML attribute / inline JS string. */
+/* Escape text for the legacy case of a single-quoted JavaScript string inside
+ * an HTML event-handler attribute. Character entities are not sufficient here:
+ * the HTML parser decodes them before the JavaScript handler is compiled, which
+ * can turn an apparent &apos; back into an executable quote. Prefer assigning an
+ * event listener with a closure; this helper is defense-in-depth only. */
 function escAttr(s) {
   return String(s == null ? '' : s)
     .replace(/\\/g, '\\\\')
-    .replace(/'/g, "\\'")
-    .replace(/"/g, '&quot;')
+    .replace(/&/g, '\\x26')
+    .replace(/</g, '\\x3c')
+    .replace(/>/g, '\\x3e')
+    .replace(/'/g, '\\x27')
+    .replace(/"/g, '\\x22')
     .replace(/\n/g, ' ')
     .replace(/\r/g, '');
 }
@@ -112,7 +119,7 @@ function normalizeEntry(e) {
  * fetch failure never raises a false alarm. */
 function vectorizeHealthBanner(health) {
   if (!health || !health.vectorize || health.vectorize.ok) return null;
-  const name = health.vectorize.indexName || 'second-brain-vectors';
+  const name = health.vectorize.indexName || 'second-brain-vectors_v2';
   return {
     title: 'Semantic search is disabled. The Vectorize index "' + name + '" was not found.',
     command: 'npx wrangler vectorize create ' + name + ' --dimensions=384 --metric=cosine',

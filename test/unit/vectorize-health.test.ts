@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { checkVectorizeHealth } from "../../src/index";
+import { checkVectorizeHealth } from "../../src/testing";
 import { makeTestEnv, makeTestDb, makeVectorizeMock } from "../helpers/make-env";
 
 describe("checkVectorizeHealth", () => {
@@ -11,7 +11,7 @@ describe("checkVectorizeHealth", () => {
     });
     const health = await checkVectorizeHealth(env);
     expect(health.ok).toBe(true);
-    expect(health.indexName).toBe("second-brain-vectors");
+    expect(health.indexName).toBe("second-brain-vectors_v2");
     expect(health.dimensions).toBe(384);
   });
 
@@ -34,7 +34,7 @@ describe("checkVectorizeHealth", () => {
     });
     const health = await checkVectorizeHealth(env);
     expect(health.ok).toBe(false);
-    expect(health.indexName).toBe("second-brain-vectors");
+    expect(health.indexName).toBe("second-brain-vectors_v2");
     expect(health.error).toContain("index not found");
   });
 });

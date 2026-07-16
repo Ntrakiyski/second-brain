@@ -234,7 +234,7 @@ describe("escHtml", () => {
 
 describe("escAttr", () => {
   it("escapes single quotes", () => {
-    expect(escAttr("it's")).toBe("it\\'s");
+    expect(escAttr("it's")).toBe("it\\x27s");
   });
 
   it("replaces newlines with spaces", () => {
@@ -247,6 +247,10 @@ describe("escAttr", () => {
 
   it("removes carriage returns", () => {
     expect(escAttr("line1\rline2")).toBe("line1line2");
+  });
+
+  it("neutralizes HTML entities and markup before handler compilation", () => {
+    expect(escAttr("&apos;</script>\"")).toBe("\\x26apos;\\x3c/script\\x3e\\x22");
   });
 
   it("returns empty string for null input", () => {

@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import worker from "../../src/index";
+import worker from "../../src/testing";
 import { makeTestEnv, makeTestDb } from "../helpers/make-env";
 import { req } from "../helpers/make-request";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/testing";
 import { D1Mock } from "../helpers/d1-mock";
 
 const ctx = { waitUntil: (_: Promise<any>) => {} } as any;
@@ -92,5 +92,18 @@ describe("GET /connections", () => {
     const data = await res.json() as any;
     expect(data.connections).toHaveLength(1);
     expect(data.connections[0].id).toBe("b");
+  });
+
+  it("does not reveal whether a private seed exists", async () => {
+    const missing = await worker.fetch(req("GET", "/connections?id=hidden"), env, ctx);
+    const missingBody = await missing.text();
+
+    seedEntry(db, "hidden", "Another user's private memory", ["private"], "another-user");
+    seedEntry(db, "public-neighbor", "Public neighbor");
+    pushEdge(db, "hidden", "public-neighbor", "relates_to");
+    const hidden = await worker.fetch(req("GET", "/connections?id=hidden"), env, ctx);
+
+    expect(hidden.status).toBe(missing.status);
+    expect(await hidden.text()).toBe(missingBody);
   });
 });

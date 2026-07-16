@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import worker, { _resetDbReady, reindexAllVectors } from "../../src/index";
+import worker, { _resetDbReady, reindexAllVectors } from "../../src/testing";
 import { makeTestEnv, makeTestDb, makeVectorizeMock } from "../helpers/make-env";
 import { req } from "../helpers/make-request";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/testing";
 import { D1Mock } from "../helpers/d1-mock";
 
 function makeCtx() {
@@ -27,6 +27,10 @@ describe("Vector Metadata & Filtering", () => {
     insertedVectors = [];
     const vectorize = makeVectorizeMock({
       insert: vi.fn().mockImplementation(async (vectors: any[]) => {
+        insertedVectors.push(...vectors);
+        return { mutationId: "m" };
+      }),
+      upsert: vi.fn().mockImplementation(async (vectors: any[]) => {
         insertedVectors.push(...vectors);
         return { mutationId: "m" };
       }),
@@ -95,7 +99,7 @@ describe("Vector Metadata & Filtering", () => {
     }
   });
 
-  it("Vectorize query with metadataFilter excludes other users' private vectors", async () => {
+  it("recall issues separate supported owner and public Vectorize filters", async () => {
     const queryFn = vi.fn().mockResolvedValue({ matches: [] });
     const vectorize = makeVectorizeMock({ query: queryFn });
     env = makeTestEnv(db, { VECTORIZE: vectorize });
@@ -114,18 +118,16 @@ describe("Vector Metadata & Filtering", () => {
     );
     await flush();
 
-    // Check that metadataFilter was passed to Vectorize query
-    expect(queryFn).toHaveBeenCalled();
-    const callArgs = queryFn.mock.calls[0];
-    const opts = callArgs[1];
-    expect(opts.metadataFilter).toBeDefined();
-    expect(opts.metadataFilter.OR).toEqual([
-      { owner_user_id: { $eq: expect.any(String) } },
-      { is_private: { $eq: false } }
-    ]);
+    expect(queryFn).toHaveBeenCalledTimes(2);
+    const ownerOpts = queryFn.mock.calls[0][1];
+    const publicOpts = queryFn.mock.calls[1][1];
+    expect(ownerOpts.filter).toEqual({ owner_user_id: { $eq: expect.any(String) } });
+    expect(publicOpts.filter).toEqual({ is_private: { $eq: false } });
+    expect(ownerOpts).not.toHaveProperty("metadataFilter");
+    expect(publicOpts).not.toHaveProperty("metadataFilter");
   });
 
-  it("Duplicate detection uses metadataFilter for scope", async () => {
+  it("Duplicate detection issues separate supported owner and public filters", async () => {
     const queryFn = vi.fn().mockResolvedValue({ matches: [] });
     const vectorize = makeVectorizeMock({ query: queryFn });
     env = makeTestEnv(db, { VECTORIZE: vectorize });
@@ -137,11 +139,13 @@ describe("Vector Metadata & Filtering", () => {
     );
     await flush();
 
-    // The duplicate check should use metadataFilter
-    expect(queryFn).toHaveBeenCalled();
-    const callArgs = queryFn.mock.calls[0];
-    const opts = callArgs[1];
-    expect(opts.metadataFilter).toBeDefined();
+    expect(queryFn).toHaveBeenCalledTimes(2);
+    const ownerOpts = queryFn.mock.calls[0][1];
+    const publicOpts = queryFn.mock.calls[1][1];
+    expect(ownerOpts.filter).toEqual({ owner_user_id: { $eq: expect.any(String) } });
+    expect(publicOpts.filter).toEqual({ is_private: { $eq: false } });
+    expect(ownerOpts).not.toHaveProperty("metadataFilter");
+    expect(publicOpts).not.toHaveProperty("metadataFilter");
   });
 
   it("Reindex adds ownership metadata to existing vectors", async () => {

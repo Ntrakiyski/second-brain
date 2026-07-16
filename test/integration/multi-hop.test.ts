@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { recallEntries } from "../../src/index";
+import { recallEntries } from "../../src/testing";
 import { makeTestEnv, makeTestDb, makeVectorizeMock } from "../helpers/make-env";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/testing";
 import { D1Mock } from "../helpers/d1-mock";
+import { TEST_USER_ID } from "../helpers/test-principal";
 
 function makeCtx() {
   const pending: Promise<any>[] = [];
@@ -13,7 +14,7 @@ function makeCtx() {
 }
 
 function seed(db: D1Mock, id: string, content: string, tags: string[] = []) {
-  db.entries.push({ id, content, tags: JSON.stringify(tags), source: "api", created_at: 1000, vector_ids: "[]", recall_count: 0, importance_score: 0 });
+  db.entries.push({ id, content, tags: JSON.stringify(tags), source: "api", created_at: 1000, vector_ids: "[]", recall_count: 0, importance_score: 0, owner_user_id: TEST_USER_ID });
 }
 
 function pushEdge(db: D1Mock, source_id: string, target_id: string, weight = 0.8) {
@@ -42,7 +43,7 @@ describe("multi-hop recall (issue #16)", () => {
     const env = denseEnv(db, [{ id: "seed", score: 0.9 }]);
     const { ctx } = makeCtx();
 
-    const res = await recallEntries({ query: "direct", topK: 5, hops: 0 }, env, ctx);
+    const res = await recallEntries({ query: "direct", topK: 5, hops: 0, userId: TEST_USER_ID }, env, ctx);
     expect(res.matches.map(m => m.id)).toEqual(["seed"]);
   });
 
@@ -53,7 +54,7 @@ describe("multi-hop recall (issue #16)", () => {
     const env = denseEnv(db, [{ id: "seed", score: 0.9 }]);
     const { ctx } = makeCtx();
 
-    const res = await recallEntries({ query: "direct", topK: 5, hops: 1 }, env, ctx);
+    const res = await recallEntries({ query: "direct", topK: 5, hops: 1, userId: TEST_USER_ID }, env, ctx);
     expect(res.matches.map(m => m.id)).toEqual(["seed", "neighbor"]);
     expect(res.matches[0].hop).toBe(0);
     expect(res.matches[1].hop).toBe(1);
@@ -66,7 +67,7 @@ describe("multi-hop recall (issue #16)", () => {
     const env = denseEnv(db, [{ id: "seed", score: 0.9 }]);
     const { ctx } = makeCtx();
 
-    const res = await recallEntries({ query: "direct", topK: 5, hops: 1 }, env, ctx);
+    const res = await recallEntries({ query: "direct", topK: 5, hops: 1, userId: TEST_USER_ID }, env, ctx);
     expect(res.matches.map(m => m.id)).toEqual(["seed"]);
   });
 
@@ -77,7 +78,7 @@ describe("multi-hop recall (issue #16)", () => {
     const env = denseEnv(db, [{ id: "seed", score: 0.9 }]);
     const { ctx, drain } = makeCtx();
 
-    await recallEntries({ query: "direct", topK: 5, hops: 1 }, env, ctx);
+    await recallEntries({ query: "direct", topK: 5, hops: 1, userId: TEST_USER_ID }, env, ctx);
     await drain();
 
     expect(db.entries.find((e: any) => e.id === "seed").recall_count).toBe(1);
@@ -91,7 +92,7 @@ describe("multi-hop recall (issue #16)", () => {
     const env = denseEnv(db, [0, 1, 2, 3, 4].map(i => ({ id: `d${i}`, score: 0.9 - i * 0.05 })));
     const { ctx } = makeCtx();
 
-    const res = await recallEntries({ query: "direct", topK: 5, hops: 1 }, env, ctx);
+    const res = await recallEntries({ query: "direct", topK: 5, hops: 1, userId: TEST_USER_ID }, env, ctx);
     expect(res.matches).toHaveLength(5);
     expect(res.matches.map(m => m.id)).not.toContain("neighbor"); // direct matches fill topK
   });

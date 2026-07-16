@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import worker from "../../src/index";
+import worker from "../../src/testing";
 import { makeTestEnv, makeTestDb, makeVectorizeMock } from "../helpers/make-env";
 import { req } from "../helpers/make-request";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/testing";
 import { D1Mock } from "../helpers/d1-mock";
+import { TEST_USER_ID } from "../helpers/test-principal";
 
 function makeCtx() {
   const pending: Promise<any>[] = [];
@@ -186,6 +187,7 @@ describe("Cross-user conflict detection", () => {
         source: "api",
         created_at: 1000,
         vector_ids: "[]",
+        owner_user_id: TEST_USER_ID,
         recall_count: 0,
         importance_score: 0,
       });
@@ -212,7 +214,7 @@ describe("Cross-user conflict detection", () => {
       // Vectorize returns both entries as matches
       const vectorize = makeVectorizeMock({
         query: makeVectorizeQueryFn([
-          { id: "my-entry", score: 0.95, metadata: { parentId: "my-entry", owner_user_id: "system", is_private: false } },
+          { id: "my-entry", score: 0.95, metadata: { parentId: "my-entry", owner_user_id: TEST_USER_ID, is_private: false } },
           { id: "other-public", score: 0.90, metadata: { parentId: "other-public", owner_user_id: "other-user", is_private: false } },
         ]),
       });
@@ -240,13 +242,14 @@ describe("Cross-user conflict detection", () => {
         source: "api",
         created_at: 1000,
         vector_ids: "[]",
+        owner_user_id: TEST_USER_ID,
         recall_count: 0,
         importance_score: 0,
       });
 
       const vectorize = makeVectorizeMock({
         query: makeVectorizeQueryFn([
-          { id: "my-entry", score: 0.95, metadata: { parentId: "my-entry", owner_user_id: "system", is_private: false } },
+          { id: "my-entry", score: 0.95, metadata: { parentId: "my-entry", owner_user_id: TEST_USER_ID, is_private: false } },
         ]),
       });
       env = makeTestEnv(db, { VECTORIZE: vectorize });

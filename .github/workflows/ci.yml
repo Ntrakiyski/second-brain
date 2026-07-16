@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Typecheck, test, and Workerd smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install exact dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Run full test suite
+        run: npm test
+
+      - name: Boot real Workerd and verify boundaries
+        run: npm run smoke:workerd
+        env:
+          WORKER_SMOKE_ARTIFACT_DIR: artifacts/workerd-smoke
+
+      - name: Upload Workerd failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: workerd-smoke-${{ github.run_id }}
+          path: artifacts/workerd-smoke
+          if-no-files-found: ignore
+          retention-days: 7

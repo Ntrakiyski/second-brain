@@ -26,6 +26,7 @@ import {
 } from "./config";
 import { embed } from "./helpers";
 import { getKind, getStatus } from "./tags";
+import { queryVisibleVectors, vectorMatchParentId } from "./vector-access";
 
 // ─── Relationship graph (issue #16) ─────────────────────────────────────────────
 // Edges live in a dedicated `edges` table — the one additive schema change. Edge
@@ -91,16 +92,27 @@ export async function createEdge(
   if (!isValidEdgeType(type)) return null;
   if (sourceId === targetId) return null;
 
-  // Visibility check: private entries can only connect to same-owner entries.
-  // A private entry must not link to any entry owned by a different user.
+  // Every edge must refer to two real entries. Private entries live in a separate
+  // graph partition: because edges do not carry their own ACL, allowing a private
+  // endpoint to connect to a public one could disclose the private entry id through
+  // an otherwise-public relationship query.
   const srcRow = await env.DB.prepare("SELECT tags, owner_user_id FROM entries WHERE id = ?").bind(sourceId).first() as { tags: string; owner_user_id: string } | null;
   const tgtRow = await env.DB.prepare("SELECT tags, owner_user_id FROM entries WHERE id = ?").bind(targetId).first() as { tags: string; owner_user_id: string } | null;
-  if (srcRow && tgtRow) {
-    const srcPrivate = JSON.parse(srcRow.tags ?? "[]").includes("private");
-    const tgtPrivate = JSON.parse(tgtRow.tags ?? "[]").includes("private");
-    if (srcPrivate && srcRow.owner_user_id !== tgtRow.owner_user_id) return null;
-    if (tgtPrivate && tgtRow.owner_user_id !== srcRow.owner_user_id) return null;
-  }
+  if (!srcRow || !tgtRow) return null;
+
+  const privateFlag = (tags: string): boolean | null => {
+    try {
+      const parsed = JSON.parse(tags ?? "[]");
+      return Array.isArray(parsed) ? parsed.includes("private") : null;
+    } catch {
+      return null;
+    }
+  };
+  const srcPrivate = privateFlag(srcRow.tags);
+  const tgtPrivate = privateFlag(tgtRow.tags);
+  if (srcPrivate === null || tgtPrivate === null) return null;
+  if (srcPrivate !== tgtPrivate) return null;
+  if (srcPrivate && srcRow.owner_user_id !== tgtRow.owner_user_id) return null;
 
   let source = sourceId;
   let target = targetId;
@@ -115,10 +127,15 @@ export async function createEdge(
   const now = Date.now();
 
   await env.DB.prepare(
-    `INSERT INTO edges (id, source_id, target_id, type, weight, provenance, metadata, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(source_id, target_id, type) DO UPDATE SET weight = max(weight, excluded.weight), updated_at = excluded.updated_at`
-  ).bind(crypto.randomUUID(), source, target, type, weight, provenance, metadata, now, now).run();
+    `INSERT INTO edges (id, source_id, target_id, type, weight, provenance, metadata, confidence, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(source_id, target_id, type) DO UPDATE SET
+       weight = max(edges.weight, excluded.weight),
+       confidence = max(edges.confidence, excluded.confidence),
+       provenance = CASE WHEN excluded.confidence >= edges.confidence THEN excluded.provenance ELSE edges.provenance END,
+       metadata = CASE WHEN excluded.confidence >= edges.confidence THEN excluded.metadata ELSE edges.metadata END,
+       updated_at = excluded.updated_at`
+  ).bind(crypto.randomUUID(), source, target, type, weight, provenance, metadata, confidence, now, now).run();
 
   return { source_id: source, target_id: target, type };
 }
@@ -455,19 +472,10 @@ export async function inferEdgesOnWrite(
 // collapsed to parent ids (strongest score per parent). Lets the append path reuse the
 // same inference as on capture without re-deriving the dedupe logic.
 export async function neighborsFromVectorQuery(values: number[], env: Env, userId?: string): Promise<{ id: string; score: number }[]> {
-  const vectorizeOpts: Record<string, any> = { topK: 5, returnMetadata: "all" };
-  if (userId) {
-    vectorizeOpts.metadataFilter = {
-      OR: [
-        { owner_user_id: { $eq: userId } },
-        { is_private: { $eq: false } }
-      ]
-    };
-  }
-  const { matches } = await env.VECTORIZE.query(values, vectorizeOpts);
+  const { matches } = await queryVisibleVectors(values, env, { topK: 5, userId });
   const scores = new Map<string, number>();
   for (const m of matches) {
-    const pid = (m.metadata as any)?.parentId ?? m.id;
+    const pid = vectorMatchParentId(m);
     scores.set(pid, Math.max(scores.get(pid) ?? 0, m.score));
   }
   return [...scores.entries()].map(([id, score]) => ({ id, score }));

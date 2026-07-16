@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import worker from "../../src/index";
+import worker from "../../src/testing";
 import { makeTestEnv, makeTestDb } from "../helpers/make-env";
 import { req } from "../helpers/make-request";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/testing";
 import { D1Mock } from "../helpers/d1-mock";
 
 const ctx = { waitUntil: (_: Promise<any>) => {} } as any;
@@ -28,6 +28,7 @@ describe("GET /entry", () => {
 
   it("returns the full row with tags parsed to an array", async () => {
     const longContent = "A memory well past the eighty character graph label limit — ".repeat(4);
+    // Legacy ownerless rows are assigned to the canonical system actor by migration.
     db.entries.push({ id: "a", content: longContent, tags: '["work","kind:semantic"]', source: "api", created_at: 1234, vector_ids: '["v"]', recall_count: 3, importance_score: 4 });
 
     const res = await worker.fetch(req("GET", "/entry?id=a"), env, ctx);
@@ -40,7 +41,7 @@ describe("GET /entry", () => {
       tags: ["work", "kind:semantic"],
       source: "api",
       created_at: 1234,
-      owner_username: "",
+      owner_username: "_system",
       is_private: false,
     });
   });

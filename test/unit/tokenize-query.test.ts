@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { tokenizeQuery } from "../../src/index";
+import { tokenizeQuery } from "../../src/testing";
 
 describe("tokenizeQuery()", () => {
   it("preserves identifier-shaped tokens like version strings", () => {

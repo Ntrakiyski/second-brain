@@ -8,6 +8,7 @@
     <meta name="apple-mobile-web-app-title" content="Second Brain" />
     <meta name="theme-color" content="#F4F1EA" />
     <title>Second Brain</title>
+    <link rel="icon" href="/icon.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link
       href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;1,400;1,500&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&display=swap"
@@ -273,7 +274,9 @@
         box-shadow: 0 0 0 3px var(--accent-soft);
       }
 
-      #auth-connect {
+      #auth-connect-btn,
+      #auth-login-btn,
+      #auth-create-btn {
         width: 100%;
         padding: 15px;
         background: var(--accent);
@@ -289,12 +292,28 @@
           transform 0.12s var(--ease);
       }
 
-      #auth-connect:hover {
+      #auth-connect-btn:hover,
+      #auth-login-btn:hover,
+      #auth-create-btn:hover {
         background: var(--accent-press);
       }
 
-      #auth-connect:active {
+      #auth-connect-btn:active,
+      #auth-login-btn:active,
+      #auth-create-btn:active {
         transform: scale(0.985);
+      }
+
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
       }
 
       #auth-overlay select {
@@ -927,12 +946,16 @@
       /* ---- Remember: editorial capture notes ---- */
       .capture-note {
         position: relative;
+        min-width: 0;
+        max-width: 100%;
         font-family: var(--font-serif);
         font-size: 18px;
         line-height: 1.5;
         color: var(--text-primary);
         padding: 22px 0 4px 16px;
         border-top: 0.5px solid var(--line-soft);
+        overflow-wrap: anywhere;
+        word-break: break-word;
         animation: bubble-in 0.36s var(--ease) both;
       }
 
@@ -2502,21 +2525,30 @@
         <h1>Second Brain</h1>
         <!-- Step 1: Connect to server -->
         <form id="auth-connect-step" class="field-group" onsubmit="connect(); return false">
-          <input type="url" id="auth-url" autocomplete="off" autocapitalize="none" />
+          <input type="text" name="username" value="deployment" autocomplete="username" hidden />
+          <label class="sr-only" for="auth-url">Second Brain server URL</label>
+          <input type="url" id="auth-url" placeholder="Second Brain server URL" autocomplete="url" autocapitalize="none" />
+          <label class="sr-only" for="auth-token">Deployment token</label>
           <input type="password" id="auth-token" placeholder="Deployment token" autocomplete="current-password" />
           <button id="auth-connect-btn" type="submit">Connect</button>
         </form>
         <!-- Step 2: Account selection or creation -->
         <div id="auth-user-step" class="field-group" style="display:none">
-          <select id="auth-username"></select>
-          <input type="password" id="auth-key" placeholder="API key" autocomplete="current-password" />
-          <button id="auth-login-btn" type="button" onclick="loginWithKey()">Login</button>
+          <form id="auth-login-form" onsubmit="loginWithKey(); return false" style="display:contents">
+            <label class="sr-only" for="auth-username">Team account</label>
+            <select id="auth-username" autocomplete="username"></select>
+            <input type="text" id="auth-login-username" name="username" autocomplete="username" hidden />
+            <label class="sr-only" for="auth-key">User API key</label>
+            <input type="password" id="auth-key" placeholder="API key" autocomplete="current-password" />
+            <button id="auth-login-btn" type="submit">Login</button>
+          </form>
           <div style="display:flex;align-items:center;gap:12px;margin:8px 0;color:var(--text-tertiary);font-size:13px">
             <span style="flex:1;height:0.5px;background:var(--border)"></span>
             <span>or</span>
             <span style="flex:1;height:0.5px;background:var(--border)"></span>
           </div>
           <form id="auth-create-form" onsubmit="createAccount(); return false" style="display:flex;flex-direction:column;gap:11px">
+            <label class="sr-only" for="auth-create-username">New username</label>
             <input type="text" id="auth-create-username" placeholder="Choose a username" autocomplete="off" maxlength="32" />
             <button id="auth-create-btn" type="submit">Generate API Key</button>
           </form>
@@ -2954,6 +2986,8 @@
     <script>
       let WORKER_URL = '',
         AUTH_TOKEN = '',
+        CURRENT_USERNAME = '',
+        USER_API_KEY = '',
         allEntries = []
       let pendingForgetId = null,
         pendingAppendId = null,
@@ -2971,23 +3005,19 @@
         const origin = window.location.origin
         document.getElementById('auth-url').value = origin
 
-        const url = localStorage.getItem('sb_url') || origin
-        const tok = localStorage.getItem('sb_token')
-        if (tok) {
-          WORKER_URL = url
-          AUTH_TOKEN = tok
-          showApp()
-        }
+        // Secrets from older dashboard versions must not survive in browser
+        // storage. Connection credentials are intentionally memory-only and a
+        // page reload requires authentication again.
+        ;['sb_token', 'sb_key', 'sb_auth_mode'].forEach((key) => localStorage.removeItem(key))
+        document.getElementById('auth-url').value = localStorage.getItem('sb_url') || origin
       }
 
       function authHeaders(extra) {
         const headers = Object.assign({}, extra || {})
-        const user = localStorage.getItem('sb_username')
-        const key = localStorage.getItem('sb_key')
         headers['Authorization'] = `Bearer ${AUTH_TOKEN}`
-        if (user && key) {
-          headers['X-Second-Brain-User'] = user
-          headers['X-Second-Brain-User-Key'] = key
+        if (CURRENT_USERNAME && USER_API_KEY) {
+          headers['X-Second-Brain-User'] = CURRENT_USERNAME
+          headers['X-Second-Brain-User-Key'] = USER_API_KEY
         }
         return headers
       }
@@ -3025,13 +3055,15 @@
         btn.disabled = true
         err.textContent = ''
         try {
-          const res = await fetch(`${url}/list?n=1`, { headers: { Authorization: `Bearer ${tok}` } })
+          // The deployment token is an administrative transport credential,
+          // not a user principal. Probe an admin endpoint before account login.
+          const res = await fetch(`${url}/api/users`, { headers: { Authorization: `Bearer ${tok}` } })
           if (res.status === 401) throw new Error('Invalid token')
           if (!res.ok) throw new Error(`Server error: ${res.status}`)
           WORKER_URL = url
           AUTH_TOKEN = tok
           localStorage.setItem('sb_url', url)
-          localStorage.setItem('sb_token', tok)
+          document.getElementById('auth-token').value = ''
           document.getElementById('auth-connect-step').style.display = 'none'
           document.getElementById('auth-user-step').style.display = ''
           document.getElementById('auth-error').textContent = ''
@@ -3053,6 +3085,7 @@
       async function loginWithKey() {
         const username = document.getElementById('auth-username').value
         const key = document.getElementById('auth-key').value.trim()
+        document.getElementById('auth-login-username').value = username
         const err = document.getElementById('auth-error')
         if (!username || !key) {
           err.textContent = 'Please select an account and enter your API key.'
@@ -3069,11 +3102,11 @@
           })
           if (res.status === 401) throw new Error('Invalid credentials')
           if (!res.ok) throw new Error(`Server error: ${res.status}`)
+          CURRENT_USERNAME = username
+          USER_API_KEY = key
+          document.getElementById('auth-key').value = ''
           localStorage.setItem('sb_url', WORKER_URL)
-          localStorage.setItem('sb_token', AUTH_TOKEN)
           localStorage.setItem('sb_username', username)
-          localStorage.setItem('sb_key', key)
-          localStorage.setItem('sb_auth_mode', 'user')
           showApp()
         } catch (e) {
           err.textContent = e.message || 'Could not log in.'
@@ -3105,8 +3138,9 @@
           document.getElementById('auth-user-step').style.display = 'none'
           document.getElementById('key-reveal').style.display = ''
           document.getElementById('key-reveal-value').textContent = data.key
+          CURRENT_USERNAME = data.username
+          USER_API_KEY = data.key
           localStorage.setItem('sb_username', data.username)
-          localStorage.setItem('sb_key', data.key)
         } catch (e) {
           err.textContent = e.message || 'Could not create account.'
         } finally {
@@ -3124,23 +3158,18 @@
       }
 
       function dismissKeyReveal() {
-        const key = document.getElementById('key-reveal-value').textContent
-        const username = localStorage.getItem('sb_username')
         localStorage.setItem('sb_url', WORKER_URL)
-        localStorage.setItem('sb_token', AUTH_TOKEN)
-        localStorage.setItem('sb_auth_mode', 'user')
+        document.getElementById('key-reveal-value').textContent = ''
         showApp()
       }
 
       function showApp() {
         document.getElementById('auth-overlay').style.display = 'none'
         document.getElementById('app').style.display = 'flex'
-        const username = localStorage.getItem('sb_username')
-        const hasKey = localStorage.getItem('sb_key')
         const disp = document.getElementById('sb-user-display')
-        if (username && hasKey) {
+        if (CURRENT_USERNAME && USER_API_KEY) {
           disp.style.display = 'flex'
-          document.getElementById('sb-username-text').textContent = username
+          document.getElementById('sb-username-text').textContent = CURRENT_USERNAME
         } else {
           disp.style.display = 'none'
         }
@@ -3237,6 +3266,8 @@
         localStorage.removeItem('sb_auth_mode')
         WORKER_URL = ''
         AUTH_TOKEN = ''
+        CURRENT_USERNAME = ''
+        USER_API_KEY = ''
         document.getElementById('app').style.display = 'none'
         document.getElementById('auth-overlay').style.display = 'flex'
         document.getElementById('auth-connect-step').style.display = ''
@@ -3450,13 +3481,19 @@
       <div class="card-actions">
         ${
           entry.id
-            ? `<button class="card-action-btn" onclick="openAppend('${escAttr(entry.id)}', '${escAttr(entry.content.slice(0, 80))}')"><i class="ti ti-writing"></i> Append</button>
-             <button class="card-action-btn" onclick="openConfirm('${escAttr(entry.id)}', this)"><i class="ti ti-x"></i> Forget</button>`
-            : `<button class="card-action-btn" onclick="openAppendFromContent('${escAttr(entry.content)}')"><i class="ti ti-writing"></i> Append</button>`
+            ? `<button class="card-action-btn append-btn" type="button"><i class="ti ti-writing"></i> Append</button>
+             <button class="card-action-btn forget-btn" type="button"><i class="ti ti-x"></i> Forget</button>`
+            : `<button class="card-action-btn append-btn" type="button"><i class="ti ti-writing"></i> Append</button>`
         }
       </div>
     </div>`
         card.querySelector('.card-content').onclick = () => openView(entry, card)
+        card.querySelector('.append-btn').onclick = () => {
+          if (entry.id) openAppend(entry.id, entry.content.slice(0, 80))
+          else openAppendFromContent(entry.content)
+        }
+        const forgetBtn = card.querySelector('.forget-btn')
+        if (forgetBtn) forgetBtn.onclick = () => openConfirm(entry.id, forgetBtn)
         return card
       }
 
@@ -3595,13 +3632,16 @@
   <div class="card-tags">${tags.map((t) => `<span class="tag-chip${t === 'synthesized' ? ' tag-chip--synthesized' : ''}">${escHtml(t)}</span>`).join('')}${vecChip}</div>
   <div class="card-meta-row">${privacyIcon}${ownerBadge}</div>
   <div class="card-actions">
-    <button class="card-action-btn" onclick="openAppend('${escAttr(entry.id)}', '${escAttr(entry.content.slice(0, 80))}')"><i class="ti ti-writing"></i> Append</button>
+    <button class="card-action-btn append-btn" type="button"><i class="ti ti-writing"></i> Append</button>
     <button class="card-action-btn edit-btn"><i class="ti ti-pencil"></i> Edit</button>
-    <button class="card-action-btn" onclick="openConfirm('${escAttr(entry.id)}', this)"><i class="ti ti-x"></i> Forget</button>
+    <button class="card-action-btn forget-btn" type="button"><i class="ti ti-x"></i> Forget</button>
   </div>
 </div>`
         card.querySelector('.card-content').onclick = () => openView({ id: entry.id, content: entry.content, tags }, card)
+        card.querySelector('.append-btn').onclick = () => openAppend(entry.id, entry.content.slice(0, 80))
         card.querySelector('.edit-btn').onclick = () => openEdit(entry.id, entry.content, tags)
+        const forgetBtn = card.querySelector('.forget-btn')
+        forgetBtn.onclick = () => openConfirm(entry.id, forgetBtn)
         return card
       }
 
@@ -3626,7 +3666,7 @@
         userRow.className = 'capture-note'
         const introEl = document.getElementById('remember-intro')
         if (introEl) introEl.remove()
-        userRow.innerHTML = raw.replace(/#([a-zA-Z0-9_-]+)/g, '<span class="hashtag">#$1</span>')
+        appendHashtagText(userRow, raw)
         msgs.appendChild(userRow)
         input.value = ''
         autoResize(input)
@@ -3654,6 +3694,21 @@
           appendBrainBubble(msgs, 'Something went wrong. Try again.', 'sys-note')
         }
         msgs.scrollTop = msgs.scrollHeight
+      }
+
+      function appendHashtagText(container, text) {
+        const tagPattern = /#([a-zA-Z0-9_-]+)/g
+        let cursor = 0
+        let match
+        while ((match = tagPattern.exec(text)) !== null) {
+          if (match.index > cursor) container.appendChild(document.createTextNode(text.slice(cursor, match.index)))
+          const tag = document.createElement('span')
+          tag.className = 'hashtag'
+          tag.textContent = match[0]
+          container.appendChild(tag)
+          cursor = match.index + match[0].length
+        }
+        if (cursor < text.length) container.appendChild(document.createTextNode(text.slice(cursor)))
       }
 
       function openAppend(id, preview) {
@@ -3843,16 +3898,24 @@
             ${patterns
               .map(
                 (p) => `
-              <div class="digest-result" id="pattern-row-${escAttr(p.id)}">
+              <div class="digest-result" id="pattern-row-${escHtml(p.id)}">
                 ${escHtml(p.content)}
                 <div style="display: flex; gap: 8px; margin-top: 10px">
-                  <button class="digest-btn" onclick="resolvePattern('${escAttr(p.id)}', 'confirm', this)">Confirm</button>
-                  <button class="digest-btn danger" onclick="resolvePattern('${escAttr(p.id)}', 'dismiss', this)">Dismiss</button>
+                  <button class="digest-btn pattern-confirm" type="button">Confirm</button>
+                  <button class="digest-btn danger pattern-dismiss" type="button">Dismiss</button>
                 </div>
               </div>`,
               )
               .join('')}
           `
+          patterns.forEach((pattern) => {
+            const row = document.getElementById('pattern-row-' + pattern.id)
+            if (!row) return
+            const confirmBtn = row.querySelector('.pattern-confirm')
+            const dismissBtn = row.querySelector('.pattern-dismiss')
+            confirmBtn.onclick = () => resolvePattern(pattern.id, 'confirm', confirmBtn)
+            dismissBtn.onclick = () => resolvePattern(pattern.id, 'dismiss', dismissBtn)
+          })
         } catch {}
       }
 
@@ -3903,25 +3966,29 @@
           <p class="digest-note">Originals are never deleted — digest adds a summary and ranks originals lower in recall so they don't crowd results.</p>
           ${candidates
             .map(
-              (c) => `
-            <div class="digest-candidate-row" id="digest-row-${escAttr(c.tag)}">
+              (c, index) => `
+            <div class="digest-candidate-row" data-digest-index="${index}">
               <div class="digest-candidate-label">
                 <span>${escHtml(c.tag)}</span>
                 <span class="digest-candidate-count">${c.count} entries</span>
               </div>
-              <button class="digest-btn" onclick="runDigest('${escAttr(c.tag)}', this)">Digest →</button>
+              <button class="digest-btn" type="button">Digest →</button>
             </div>
           `,
             )
             .join('')}
         `
+        el.querySelectorAll('[data-digest-index]').forEach((row) => {
+          const candidate = candidates[Number(row.dataset.digestIndex)]
+          const btn = row.querySelector('.digest-btn')
+          btn.onclick = () => runDigest(candidate.tag, btn, row)
+        })
       }
 
-      async function runDigest(tag, btn) {
+      async function runDigest(tag, btn, row) {
         btn.disabled = true
         btn.classList.add('digest-btn--loading')
         btn.innerHTML = '<i class="ti ti-loader-2"></i> Working…'
-        const row = document.getElementById('digest-row-' + tag)
         try {
           const res = await fetch(`${WORKER_URL}/digest?tag=${encodeURIComponent(tag)}`, {
             headers: authHeaders(),

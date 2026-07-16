@@ -5,6 +5,7 @@ node_modules/
 coverage/
 .wrangler/
 .claude/
+.playwright-cli/
 .dev.vars
 .env
 worker-configuration.d.ts

@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import worker from "../../src/index";
+import worker from "../../src/testing";
 import { makeTestEnv, makeTestDb } from "../helpers/make-env";
 import { req } from "../helpers/make-request";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/testing";
 import { D1Mock } from "../helpers/d1-mock";
+import { AUTH_PEPPER, hmacKey } from "../../src/auth";
 
 const ctx = { waitUntil: (_: Promise<any>) => {} } as any;
 
@@ -108,13 +109,17 @@ describe("GET /graph", () => {
   });
 
   it("includes user's own private entries in graph", async () => {
-    // Create system user so getSystemUserId returns a known ID
-    db.users.push({ id: "sys", username: "_system", normalized_username: "_system", auth_key_hash: "", auth_key_prefix: "", status: "active", created_at: 1000 });
+    const secret = "graph-secret";
+    db.users.push({ id: "sys", username: "graph-owner", normalized_username: "graph-owner", auth_key_hash: await hmacKey(secret, AUTH_PEPPER), auth_key_prefix: "sbu_graph", status: "active", created_at: 1000 });
     seedEntry(db, "mine", "My private", ["private"], 0, "sys");
-    seedEntry(db, "other", "Other public", [], 0, "u2");
+    // Private graph nodes form a separate visibility partition because edges
+    // do not carry ACLs of their own.
+    seedEntry(db, "other", "My other private", ["private"], 0, "sys");
     pushEdge(db, "mine", "other");
 
-    const res = await worker.fetch(req("GET", "/graph"), env, ctx);
+    const res = await worker.fetch(req("GET", "/graph", {
+      userCredentials: { username: "graph-owner", key: `sbu_sys.${secret}` },
+    }), env, ctx);
     const data = await res.json() as any;
     const nodeIds = data.nodes.map((n: any) => n.id);
     expect(nodeIds).toContain("mine");

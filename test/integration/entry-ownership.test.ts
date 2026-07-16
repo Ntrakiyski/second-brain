@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import worker, { _resetDbReady } from "../../src/index";
+import worker, { _resetDbReady } from "../../src/testing";
 import { makeTestEnv, makeTestDb } from "../helpers/make-env";
 import { req } from "../helpers/make-request";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/testing";
 import { D1Mock } from "../helpers/d1-mock";
+import { TEST_USER_ID } from "../helpers/test-principal";
 
 function makeCtx() {
   const promises: Promise<any>[] = [];
@@ -74,8 +75,8 @@ describe("Entry Ownership", () => {
     expect(db.entries[1].owner_user_id).toBe(db.users.find((u: any) => u.username === "bob").id);
   });
 
-  it("legacy auth (bearer only) creates entries owned by system user", async () => {
-    // Trigger initialization to create system user
+  it("the default personal bearer creates entries in its canonical user namespace", async () => {
+    // Trigger initialization to create the inactive migration owner.
     const { ctx, flush } = makeCtx();
     await worker.fetch(req("GET", "/list"), env, ctx);
     await flush();
@@ -83,13 +84,13 @@ describe("Entry Ownership", () => {
     const systemUser = db.users.find((u: any) => u.username === "_system");
     expect(systemUser).toBeDefined();
 
-    // Capture entry with legacy auth (no user headers)
+    // Capture with the test fixture's personal API-key bearer.
     const { ctx: ctx2, flush: flush2 } = makeCtx();
     await worker.fetch(req("POST", "/capture", { body: { content: "Legacy note" } }), env, ctx2);
     await flush2();
 
-    // Verify entry is owned by system user
-    expect(db.entries[0].owner_user_id).toBe(systemUser.id);
+    expect(db.entries[0].owner_user_id).toBe(TEST_USER_ID);
+    expect(db.entries[0].owner_user_id).not.toBe(systemUser.id);
   });
 
   it("POST /append preserves original owner_user_id", async () => {

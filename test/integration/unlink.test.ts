@@ -1,13 +1,23 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import worker, { deleteEdge } from "../../src/index";
+import worker, { deleteEdge } from "../../src/testing";
 import { makeTestEnv, makeTestDb } from "../helpers/make-env";
 import { req } from "../helpers/make-request";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/testing";
 import { D1Mock } from "../helpers/d1-mock";
 
 const ctx = { waitUntil: (_: Promise<any>) => {} } as any;
 
+function seedEntry(db: D1Mock, id: string) {
+  if (db.entries.some((entry: any) => entry.id === id)) return;
+  db.entries.push({
+    id, content: id, tags: "[]", source: "api", created_at: 1,
+    vector_ids: "[]", owner_user_id: "",
+  });
+}
+
 function pushEdge(db: D1Mock, source_id: string, target_id: string, type = "relates_to", weight = 0.7) {
+  seedEntry(db, source_id);
+  seedEntry(db, target_id);
   db.edges.push({ id: `${source_id}-${target_id}-${type}`, source_id, target_id, type, weight, provenance: "explicit", metadata: "{}", created_at: 1, updated_at: 1 });
 }
 
@@ -81,10 +91,27 @@ describe("POST /unlink", () => {
   });
 
   it("no match is still ok with deleted: 0 (idempotent delete)", async () => {
+    seedEntry(db, "a");
+    seedEntry(db, "b");
     const res = await worker.fetch(req("POST", "/unlink", { body: { source_id: "a", target_id: "b" } }), env, ctx);
     expect(res.status).toBe(200);
     const data = await res.json() as any;
     expect(data).toMatchObject({ ok: true, deleted: 0 });
+  });
+
+  it("treats an invisible endpoint the same as a missing endpoint", async () => {
+    seedEntry(db, "a");
+    const missing = await worker.fetch(req("POST", "/unlink", { body: { source_id: "a", target_id: "hidden" } }), env, ctx);
+    const missingBody = await missing.text();
+
+    db.entries.push({
+      id: "hidden", content: "private", tags: JSON.stringify(["private"]), source: "api",
+      created_at: 1, vector_ids: "[]", owner_user_id: "another-user",
+    });
+    const invisible = await worker.fetch(req("POST", "/unlink", { body: { source_id: "a", target_id: "hidden" } }), env, ctx);
+
+    expect(invisible.status).toBe(missing.status);
+    expect(await invisible.text()).toBe(missingBody);
   });
 });
 

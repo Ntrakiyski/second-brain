@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { compressionEligibilitySql, COMPRESSION_MIN_RECALL } from "../../src/index";
+import { compressionEligibilitySql, COMPRESSION_MIN_RECALL } from "../../src/testing";
 
 describe("compressionEligibilitySql", () => {
   it("includes the importance, recall+age, and contradiction-win clauses", () => {
@@ -13,6 +13,13 @@ describe("compressionEligibilitySql", () => {
 
   it("contains exactly one bind placeholder (the age cutoff)", () => {
     expect(compressionEligibilitySql().match(/\?/g)?.length).toBe(1);
+  });
+
+  it("adds an exact-owner placeholder for user-triggered compression", () => {
+    const sql = compressionEligibilitySql("entries.", "user-1");
+    expect(sql.match(/\?/g)?.length).toBe(2);
+    expect(sql).toContain("entries.owner_user_id = ?");
+    expect(sql).not.toContain("tags NOT LIKE");
   });
 
   it("applies a column prefix to every column when given one", () => {

@@ -53,6 +53,7 @@ import { getStatus, withKind, withStatus, buildVisibilityClause } from "./tags";
 import { expandGraph } from "./graph";
 import { inferQueryTags, extractHashtags } from "./classification";
 import { synthesizeInsight, derivePattern } from "./lifecycle";
+import { queryVisibleVectors, vectorMatchParentId } from "./vector-access";
 
 // ─── Time-decay reranking ─────────────────────────────────────────────────────
 
@@ -222,7 +223,31 @@ export function renderRecallText(matches: RecallMatch[], insight: string): strin
 
 // ─── Hybrid recall: keyword search + Reciprocal Rank Fusion ────────────────────
 
-interface KeywordRow { id: string; content: string; tags: string; source: string; created_at: number; }
+interface KeywordRow {
+  id: string;
+  content: string;
+  tags: string;
+  source: string;
+  created_at: number;
+  owner_user_id: string;
+}
+
+function parseStringArray(raw: unknown): string[] | null {
+  if (typeof raw !== "string") return null;
+  try {
+    const values = JSON.parse(raw);
+    return Array.isArray(values) && values.every(value => typeof value === "string") ? values : null;
+  } catch {
+    return null;
+  }
+}
+
+function isVisibleEntryRow(row: { tags: string; owner_user_id: string }, userId?: string): boolean {
+  if (typeof row.owner_user_id !== "string" || !row.owner_user_id) return false;
+  const tags = parseStringArray(row.tags);
+  if (!tags) return false;
+  return (!!userId && row.owner_user_id === userId) || !tags.includes("private");
+}
 
 // Keyword candidates: entries whose content contains any query token, bounded by
 // KEYWORD_CANDIDATE_LIMIT. Relevance ranking happens in fuseDenseAndKeyword.
@@ -235,9 +260,9 @@ async function keywordSearch(tokens: string[], env: Env, userId?: string): Promi
     ? [...tokens.map(t => `%${t}%`), ...visClause.bind]
     : tokens.map(t => `%${t}%`);
   const { results } = await env.DB.prepare(
-    `SELECT id, content, tags, source, created_at FROM entries WHERE ${fullWhere} ORDER BY created_at DESC LIMIT ?`
+    `SELECT id, content, tags, source, created_at, owner_user_id FROM entries WHERE ${fullWhere} ORDER BY created_at DESC LIMIT ?`
   ).bind(...bindValues, KEYWORD_CANDIDATE_LIMIT).all();
-  return results as unknown as KeywordRow[];
+  return (results as unknown as KeywordRow[]).filter(row => isVisibleEntryRow(row, userId));
 }
 
 // Reciprocal Rank Fusion. Dense candidates contribute 1/(k+rank); keyword candidates
@@ -328,23 +353,19 @@ export async function recallEntries(
     // semantic rank falls outside the top 50 (issue #141). D1 is the source of
     // truth for tags and already stores each entry's vector_ids.
     const { results: tagRows } = await env.DB.prepare(
-      `SELECT id, vector_ids, content, tags, source, created_at FROM entries WHERE tags LIKE ?`
+      `SELECT id, vector_ids, content, tags, source, created_at, owner_user_id FROM entries WHERE tags LIKE ?`
     ).bind(`%"${escapeLikePattern(tag)}"%`).all();
     if (!tagRows.length) return { matches: [], insight: "", semanticUnavailable, proposed_edges: [] };
 
-    // Visibility filter: exclude other users' private entries
-    const visibleTagRows = userId
-      ? (tagRows as any[]).filter((r: any) => {
-          const tags: string[] = JSON.parse(r.tags ?? "[]");
-          return !(tags.includes("private") && r.owner_user_id !== userId);
-        })
-      : tagRows as any[];
+    // D1 is authoritative for visibility. Invalid ownership/tags fail closed.
+    const visibleTagRows = (tagRows as unknown as (KeywordRow & { vector_ids: string })[])
+      .filter(row => isVisibleEntryRow(row, userId));
     if (!visibleTagRows.length) return { matches: [], insight: "", semanticUnavailable, proposed_edges: [] };
 
     keywordRows = visibleTagRows as unknown as KeywordRow[];
 
     const vectorIds = [...new Set(
-      (visibleTagRows as any[]).flatMap(r => JSON.parse((r.vector_ids as string) ?? "[]") as string[])
+      visibleTagRows.flatMap(row => parseStringArray(row.vector_ids) ?? [])
     )];
     if (!vectorIds.length) return { matches: [], insight: "", semanticUnavailable, proposed_edges: [] };
 
@@ -371,16 +392,8 @@ export async function recallEntries(
     const vectorizeTopK = Math.min(topK * VECTORIZE_TOP_K_MULTIPLIER, 50);
     const denseQuery = async (): Promise<{ matches: VectorizeMatch[] }> => {
       try {
-        const vectorizeOpts: Record<string, any> = { topK: vectorizeTopK, returnMetadata: "all" };
-        if (userId) {
-          vectorizeOpts.metadataFilter = {
-            OR: [
-              { owner_user_id: { $eq: userId } },
-              { is_private: { $eq: false } }
-            ]
-          };
-        }
-        return await env.VECTORIZE.query(values, vectorizeOpts);
+        const scoped = await queryVisibleVectors(values, env, { topK: vectorizeTopK, userId });
+        return { matches: scoped.matches };
       } catch (e) {
         // This is the authoritative signal that the Vectorize index is unreachable —
         // semanticUnavailable drives the dashboard banner (checkVectorizeHealth/GET /health
@@ -396,16 +409,8 @@ export async function recallEntries(
 
     if (!semanticUnavailable && results.matches.length && results.matches[0].score < DUPLICATE_FLAG_THRESHOLD) {
       try {
-        const widenOpts: Record<string, any> = { topK: 50, returnMetadata: "all" };
-        if (userId) {
-          widenOpts.metadataFilter = {
-            OR: [
-              { owner_user_id: { $eq: userId } },
-              { is_private: { $eq: false } }
-            ]
-          };
-        }
-        results = await env.VECTORIZE.query(values, widenOpts);
+        const scoped = await queryVisibleVectors(values, env, { topK: 50, userId });
+        results = { matches: scoped.matches };
       } catch (e) {
         // Narrow query already succeeded with real matches, so the index works.
         // A transient widen failure must not claim semantic search is unavailable.
@@ -420,23 +425,22 @@ export async function recallEntries(
   const fusedMatches = fuseDenseAndKeyword(results.matches as VectorizeMatch[], keywordRows, tokens, !tag || semanticUnavailable);
   if (!fusedMatches.length) return { matches: [], insight: "", semanticUnavailable, proposed_edges: [] };
 
-  // Visibility filter: after RRF fusion, remove candidates that are other users' private entries.
-  let visibleFusedMatches = fusedMatches;
-  if (userId) {
-    const candidateParentIds = [...new Set(fusedMatches.map(m => (m.metadata as any)?.parentId ?? m.id))] as string[];
-    const visPlaceholders = candidateParentIds.map(() => "?").join(", ");
+  // Re-authorize the fused candidate set against D1. Vector metadata and SQL
+  // LIKE filtering are candidate reductions only; missing or malformed rows fail closed.
+  const candidateParentIds = [...new Set(fusedMatches.map(m => (m.metadata as any)?.parentId ?? m.id))] as string[];
+  const visibleCandidateIds = new Set<string>();
+  for (let i = 0; i < candidateParentIds.length; i += D1_MAX_BOUND_PARAMS) {
+    const batch = candidateParentIds.slice(i, i + D1_MAX_BOUND_PARAMS);
+    const visPlaceholders = batch.map(() => "?").join(", ");
     const { results: visRows } = await env.DB.prepare(
       `SELECT id, owner_user_id, tags FROM entries WHERE id IN (${visPlaceholders})`
-    ).bind(...candidateParentIds).all() as { results: { id: string; owner_user_id: string; tags: string }[] };
-    const hiddenIds = new Set(
-      visRows.filter((r: any) => {
-        const tags: string[] = JSON.parse(r.tags ?? "[]");
-        return tags.includes("private") && r.owner_user_id !== userId;
-      }).map((r: any) => r.id)
-    );
-    visibleFusedMatches = fusedMatches.filter(m => !hiddenIds.has((m.metadata as any)?.parentId ?? m.id));
-    if (!visibleFusedMatches.length) return { matches: [], insight: "", semanticUnavailable, proposed_edges: [] };
+    ).bind(...batch).all() as { results: { id: string; owner_user_id: string; tags: string }[] };
+    for (const row of visRows) {
+      if (isVisibleEntryRow(row, userId)) visibleCandidateIds.add(row.id);
+    }
   }
+  const visibleFusedMatches = fusedMatches.filter(m => visibleCandidateIds.has((m.metadata as any)?.parentId ?? m.id));
+  if (!visibleFusedMatches.length) return { matches: [], insight: "", semanticUnavailable, proposed_edges: [] };
 
   // Fetch recall_count, importance_score, and last_recalled_at for all candidates.
   // The tag path can produce far more than 100 candidates, so chunk the IN query
@@ -580,11 +584,36 @@ export async function recallEntries(
     const { results: edgeRows } = await env.DB.prepare(
       `SELECT source_id, target_id, type, confidence FROM edges WHERE source_id IN (${placeholders}) OR target_id IN (${placeholders}) LIMIT 50`
     ).bind(...ids, ...ids).all() as { results: { source_id: string; target_id: string; type: string; confidence: number }[] };
+
+    // Edges do not carry their own ACL. Hydrate every relation endpoint and
+    // suppress missing/invisible targets so a public match cannot disclose the
+    // id of another user's private memory through a legacy edge.
+    let visibleRelationIds: Set<string> | null = null;
+    if (userId && edgeRows.length) {
+      const relationIds = [...new Set(edgeRows.flatMap((edge) => [edge.source_id, edge.target_id]))];
+      const relationPlaceholders = relationIds.map(() => "?").join(", ");
+      const { results: relationRows } = await env.DB.prepare(
+        `SELECT id, tags, owner_user_id FROM entries WHERE id IN (${relationPlaceholders})`
+      ).bind(...relationIds).all() as { results: { id: string; tags: string; owner_user_id: string }[] };
+      visibleRelationIds = new Set(relationRows.flatMap((row) => {
+        if (row.owner_user_id === userId) return [row.id];
+        try {
+          const tags = JSON.parse(row.tags ?? "[]");
+          return Array.isArray(tags) && tags.every((tag) => typeof tag === "string") && !tags.includes("private")
+            ? [row.id]
+            : [];
+        } catch {
+          return [];
+        }
+      }));
+    }
+
     const edgesByEntry = new Map<string, { type: string; confidence: number; targetId: string }[]>();
     for (const e of edgeRows) {
       const entryId = matchIdSet.has(e.source_id) ? e.source_id : matchIdSet.has(e.target_id) ? e.target_id : null;
       if (!entryId) continue;
       const targetId = entryId === e.source_id ? e.target_id : e.source_id;
+      if (visibleRelationIds && !visibleRelationIds.has(targetId)) continue;
       if (!edgesByEntry.has(entryId)) edgesByEntry.set(entryId, []);
       edgesByEntry.get(entryId)!.push({ type: e.type, confidence: e.confidence ?? 1.0, targetId });
     }
@@ -617,10 +646,10 @@ export async function recallEntries(
 
   // ── Cross-user mentions: flag high-similarity public entries from other users ──
   if (userId) {
-    // Collect unique owner IDs from deduped Vectorize matches that differ from the current user
+    // Use D1 ownership, never mutable Vectorize metadata, for cross-user attribution.
     const crossUserOwnerIds = new Set<string>();
-    for (const m of deduped) {
-      const ownerId = (m.metadata as any)?.owner_user_id;
+    for (const m of matches) {
+      const ownerId = (d1Map.get(m.id) as any)?.owner_user_id;
       if (ownerId && ownerId !== userId) crossUserOwnerIds.add(ownerId);
     }
     if (crossUserOwnerIds.size) {
@@ -634,10 +663,7 @@ export async function recallEntries(
       // Attach crossUserMention to matches owned by other users with high similarity
       const seenOwnerMatches = new Set<string>();
       for (const m of matches) {
-        // Find the original Vectorize match to get the raw score and owner
-        const rawMatch = deduped.find(d => ((d.metadata as any)?.parentId ?? d.id) === m.id);
-        if (!rawMatch) continue;
-        const ownerId = (rawMatch.metadata as any)?.owner_user_id;
+        const ownerId = (d1Map.get(m.id) as any)?.owner_user_id;
         if (!ownerId || ownerId === userId) continue;
         const username = usernameMap.get(ownerId);
         if (!username) continue;
@@ -664,13 +690,13 @@ export async function recallEntries(
     for (const crossMatch of crossUserMatches) {
       try {
         const crossVec = await embed(crossMatch.content, env);
-        // Query Vectorize for similar entries owned by the caller
-        const callerOpts: Record<string, any> = { topK: 3, returnMetadata: "all" };
-        callerOpts.metadataFilter = { owner_user_id: { $eq: userId } };
-        const callerResults = await env.VECTORIZE.query(crossVec, callerOpts);
+        // Query the visible candidate set, then retain only caller-owned rows
+        // using the helper's authoritative D1 ownership map.
+        const callerResults = await queryVisibleVectors(crossVec, env, { topK: 3, userId });
 
         for (const callerMatch of callerResults.matches) {
-          const callerEntryId = (callerMatch.metadata as any)?.parentId ?? callerMatch.id;
+          const callerEntryId = vectorMatchParentId(callerMatch);
+          if (callerResults.entriesById.get(callerEntryId)?.ownerUserId !== userId) continue;
           if (callerEntryId === crossMatch.id) continue;
           if ((callerMatch.score ?? 0) >= 0.85) {
             // Dedup: check if proposal already exists for this pair

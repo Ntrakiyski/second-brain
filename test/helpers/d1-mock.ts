@@ -1,4 +1,9 @@
-import { COMPRESSION_IMPORTANCE_THRESHOLD, COMPRESSION_MIN_RECALL } from "../../src/index";
+import { COMPRESSION_IMPORTANCE_THRESHOLD, COMPRESSION_MIN_RECALL } from "../../src/testing";
+import {
+  TEST_USER_AUTH_HASH,
+  TEST_USER_ID,
+  TEST_USERNAME,
+} from "./test-principal";
 
 function extractValue(s: string, args: any[], index: number): string | undefined {
   if (args[index] !== undefined) return args[index] as string;
@@ -43,7 +48,13 @@ export class D1Mock {
           const [owner_user_id] = args;
           let count = 0;
           for (const row of db.entries) {
-            if (row.owner_user_id === "") { row.owner_user_id = owner_user_id; count++; }
+            // SQLite's ALTER ... DEFAULT '' materializes the empty owner on
+            // legacy rows. Direct test fixtures omit the property entirely,
+            // so model both representations before the bootstrap backfill.
+            if (row.owner_user_id === "" || row.owner_user_id == null) {
+              row.owner_user_id = owner_user_id;
+              count++;
+            }
           }
           return { meta: { changes: count } };
         }
@@ -51,6 +62,12 @@ export class D1Mock {
           const [content, vector_ids, id] = args;
           const row = db.entries.find((e: any) => e.id === id);
           if (row) { row.content = content; row.vector_ids = vector_ids; }
+          return { meta: { changes: row ? 1 : 0 } };
+        }
+        if (s.startsWith("UPDATE entries SET content = ?, tags = ?, vector_ids")) {
+          const [content, tags, vector_ids, id] = args;
+          const row = db.entries.find((e: any) => e.id === id);
+          if (row) { row.content = content; row.tags = tags; row.vector_ids = vector_ids; }
           return { meta: { changes: row ? 1 : 0 } };
         }
         if (s.startsWith("UPDATE entries SET tags = ?, vector_ids")) {
@@ -202,6 +219,32 @@ export class D1Mock {
           if (row) { row.completed_at = completedAt; row.tool_count = toolCount; }
           return { meta: { changes: row ? 1 : 0 } };
         }
+        if (s.startsWith("DELETE FROM edge_proposals WHERE source_id")) {
+          const [sourceId, targetId] = args;
+          const before = db.edgeProposals.length;
+          db.edgeProposals = db.edgeProposals.filter(
+            (proposal: any) => proposal.source_id !== sourceId && proposal.target_id !== targetId
+          );
+          return { meta: { changes: before - db.edgeProposals.length } };
+        }
+        if (s.startsWith("DELETE FROM passages WHERE entry_id")) {
+          const [entryId] = args;
+          const before = db.passages.length;
+          db.passages = db.passages.filter((passage: any) => passage.entry_id !== entryId);
+          return { meta: { changes: before - db.passages.length } };
+        }
+        if (s.startsWith("DELETE FROM episodes WHERE entry_id")) {
+          const [entryId] = args;
+          const before = db.episodes.length;
+          db.episodes = db.episodes.filter((episode: any) => episode.entry_id !== entryId);
+          return { meta: { changes: before - db.episodes.length } };
+        }
+        if (s.startsWith("DELETE FROM entry_snapshots WHERE entry_id")) {
+          const [entryId] = args;
+          const before = db.entry_snapshots.length;
+          db.entry_snapshots = db.entry_snapshots.filter((snapshot: any) => snapshot.entry_id !== entryId);
+          return { meta: { changes: before - db.entry_snapshots.length } };
+        }
         if (s.startsWith("DELETE FROM entries WHERE id")) {
           const [id] = args;
           const before = db.entries.length;
@@ -209,16 +252,19 @@ export class D1Mock {
           return { meta: { changes: before - db.entries.length } };
         }
         if (s.startsWith("INSERT INTO edges")) {
-          const [id, source_id, target_id, type, weight, provenance, metadata, created_at, updated_at] = args;
+          const [id, source_id, target_id, type, weight, provenance, metadata, confidence, created_at, updated_at] = args;
           const existing = db.edges.find((e: any) => e.source_id === source_id && e.target_id === target_id && e.type === type);
           if (existing) {
             existing.weight = Math.max(existing.weight, weight); // ON CONFLICT ... max(weight)
+            const existingConfidence = existing.confidence ?? 1.0;
+            existing.confidence = Math.max(existingConfidence, confidence);
+            if (confidence >= existingConfidence) {
+              existing.provenance = provenance;
+              existing.metadata = metadata;
+            }
             existing.updated_at = updated_at;
-            const meta = typeof metadata === "string" ? JSON.parse(metadata) : metadata;
-            if (meta?.confidence != null) existing.confidence = meta.confidence;
           } else {
-            const meta = typeof metadata === "string" ? JSON.parse(metadata) : metadata;
-            db.edges.push({ id, source_id, target_id, type, weight, provenance, metadata, created_at, updated_at, confidence: meta?.confidence ?? 1.0 });
+            db.edges.push({ id, source_id, target_id, type, weight, provenance, metadata, confidence, created_at, updated_at });
           }
           return { meta: { changes: 1 } };
         }
@@ -323,10 +369,18 @@ export class D1Mock {
         return { meta: {} };
       },
       async first() {
-        if (s.includes("SELECT id, auth_key_hash FROM users WHERE normalized_username")) {
+        if (s.includes("FROM users WHERE normalized_username") && s.includes("auth_key_hash")) {
           const normalized = extractValue(s, args, 0) ?? "";
           const row = db.users.find((u: any) => u.normalized_username === normalized && u.status === "active");
-          return row ? { id: row.id, auth_key_hash: row.auth_key_hash } : null;
+          return row ? { id: row.id, username: row.username, auth_key_hash: row.auth_key_hash } : null;
+        }
+        if (s.includes("SELECT id, username, auth_key_hash FROM users WHERE id")) {
+          const userId = extractValue(s, args, 0) ?? "";
+          const row = db.users.find((u: any) => u.id === userId && u.status === "active");
+          if (row) return { id: row.id, username: row.username, auth_key_hash: row.auth_key_hash };
+          return userId === TEST_USER_ID
+            ? { id: TEST_USER_ID, username: TEST_USERNAME, auth_key_hash: TEST_USER_AUTH_HASH }
+            : null;
         }
         if (s.includes("SELECT id, username, status FROM users WHERE username")) {
           const username = extractValue(s, args, 0) ?? "";
@@ -519,13 +573,29 @@ export class D1Mock {
         if (
           s === "SELECT id FROM entries WHERE tags LIKE ?" ||
           s === "SELECT id, vector_ids FROM entries WHERE tags LIKE ?" ||
-          s === "SELECT id, vector_ids, content, tags, source, created_at FROM entries WHERE tags LIKE ?"
+          s === "SELECT id, vector_ids, content, tags, source, created_at FROM entries WHERE tags LIKE ?" ||
+          s === "SELECT id, vector_ids, content, tags, source, created_at, owner_user_id FROM entries WHERE tags LIKE ?"
         ) {
           const pattern = String(args[0]);
           const tag = pattern.replace(/%"/g, "").replace(/"%/g, "");
           const results = db.entries
-            .filter((e: any) => (JSON.parse(e.tags ?? "[]") as string[]).includes(tag))
-            .map((e: any) => ({ id: e.id, vector_ids: e.vector_ids ?? "[]", content: e.content, tags: e.tags, source: e.source, created_at: e.created_at }));
+            .filter((e: any) => {
+              try {
+                const tags = JSON.parse(e.tags ?? "[]");
+                return Array.isArray(tags) && tags.includes(tag);
+              } catch {
+                return false;
+              }
+            })
+            .map((e: any) => ({
+              id: e.id,
+              vector_ids: e.vector_ids ?? "[]",
+              content: e.content,
+              tags: e.tags,
+              source: e.source,
+              created_at: e.created_at,
+              owner_user_id: e.owner_user_id ?? "",
+            }));
           return { results };
         }
         if (s.includes("FROM entries WHERE vector_ids != '[]'")) {
@@ -642,7 +712,14 @@ export class D1Mock {
             .filter((e: any) => patterns.some((p: string) => String(e.content).toLowerCase().includes(p)))
             .sort((a: any, b: any) => b.created_at - a.created_at)
             .slice(0, limit)
-            .map((e: any) => ({ id: e.id, content: e.content, tags: e.tags, source: e.source, created_at: e.created_at }));
+            .map((e: any) => ({
+              id: e.id,
+              content: e.content,
+              tags: e.tags,
+              source: e.source,
+              created_at: e.created_at,
+              owner_user_id: e.owner_user_id ?? "",
+            }));
           return { results: rows };
         }
         if (s.includes("FROM entries") && s.includes("id NOT IN (SELECT source_id FROM edges)")) {
@@ -916,7 +993,7 @@ export class D1Mock {
           const results = db.passages
             .filter((p: any) => entryIds.includes(p.entry_id))
             .sort((a: any, b: any) => (a.start_offset ?? 0) - (b.start_offset ?? 0))
-            .map((p: any) => ({ id: p.id, entry_id: p.entry_id, content: p.content, section: p.section ?? null, start_offset: p.start_offset ?? null, end_offset: p.end_offset ?? null }));
+            .map((p: any) => ({ id: p.id, entry_id: p.entry_id, content: p.content, section: p.section ?? null, start_offset: p.start_offset ?? null, end_offset: p.end_offset ?? null, vector_ids: p.vector_ids ?? "[]" }));
           return { results };
         }
         if (s.includes("FROM document_sections ds") && s.includes("JOIN documents d")) {

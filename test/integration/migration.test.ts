@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import worker, { _resetDbReady } from "../../src/index";
+import worker, { _resetDbReady } from "../../src/testing";
 import { makeTestEnv } from "../helpers/make-env";
 import { req } from "../helpers/make-request";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/testing";
+import { TEST_USER_ID } from "../helpers/test-principal";
 
 function makeCtx() {
   const promises: Promise<any>[] = [];
@@ -83,11 +84,11 @@ describe("Migration & Ownership", () => {
     expect(results).toHaveLength(1);
   });
 
-  it("legacy auth (bearer only) resolves to system user ID", async () => {
+  it("the canonical personal bearer never resolves to the system user ID", async () => {
     const { ctx, flush } = makeCtx();
     await worker.fetch(req("GET", "/list"), env, ctx);
     await flush();
-    // Capture entry with legacy auth (no user headers)
+    // Capture entry with the test fixture's personal API-key bearer.
     await worker.fetch(req("POST", "/capture", { body: { content: "legacy entry" } }), env, ctx);
     const systemRow = await (env.DB as any).prepare(
       "SELECT id FROM users WHERE username = ?"
@@ -95,7 +96,8 @@ describe("Migration & Ownership", () => {
     const entry = await (env.DB as any).prepare(
       "SELECT owner_user_id FROM entries WHERE content = ?"
     ).bind("legacy entry").first();
-    expect(entry.owner_user_id).toBe(systemRow.id);
+    expect(entry.owner_user_id).toBe(TEST_USER_ID);
+    expect(entry.owner_user_id).not.toBe(systemRow.id);
   });
 
   it("export works after migration", async () => {

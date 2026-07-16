@@ -20,7 +20,7 @@
  */
 
 import type { Env } from "./types";
-import { storeEntry, deleteStaleVectors } from "./ingest";
+import { storeEntry, stageEntryVectors, deleteStaleVectors } from "./ingest";
 import { forgetEntry } from "./lifecycle";
 import { initializeDatabase } from "./db";
 import { CRON_SYNC_MAX_BATCHES } from "./config";
@@ -61,21 +61,21 @@ function makeMirrorStore(env: Env): MirrorStore {
     },
     async updateEntry(id, content) {
       const row = await env.DB.prepare(
-        `SELECT tags, source, vector_ids FROM entries WHERE id = ?`
+        `SELECT tags, source, vector_ids, owner_user_id FROM entries WHERE id = ?`
       ).bind(id).first() as Record<string, any> | null;
       if (!row) return false;
 
       const tags: string[] = JSON.parse(row.tags ?? "[]");
       const oldVectorIds: string[] = JSON.parse(row.vector_ids ?? "[]");
 
-      // Same safe ordering as update/merge/replace: insert new → delete old.
-      await env.DB.prepare(`UPDATE entries SET content = ? WHERE id = ?`).bind(content, id).run();
-      let newVectorIds: string[] = [];
-      try {
-        newVectorIds = await storeEntry(env, id, content, tags, row.source as string, Date.now(), undefined, tags.includes("private"));
-      } catch (e) {
-        console.error("Vectorize re-embed failed (non-fatal):", e);
-      }
+      // Stage vectors first; a failed external write leaves D1 and the prior
+      // search representation untouched and causes the sync item to retry.
+      const newVectorIds = await stageEntryVectors(
+        env, id, content, tags, row.source as string, Date.now(),
+        (row.owner_user_id as string) || undefined, tags.includes("private"),
+      );
+      await env.DB.prepare(`UPDATE entries SET content = ?, vector_ids = ? WHERE id = ?`)
+        .bind(content, JSON.stringify(newVectorIds), id).run();
       try {
         await deleteStaleVectors(env, oldVectorIds, newVectorIds);
       } catch (e) {

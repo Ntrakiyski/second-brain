@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { detectStaleness } from "../../src/index";
+import { detectStaleness } from "../../src/testing";
 import { makeTestEnv, makeTestDb } from "../helpers/make-env";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/testing";
 import { D1Mock } from "../helpers/d1-mock";
 
 describe("Staleness detection (Ticket 06)", () => {

@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import worker from "../../src/index";
+import worker from "../../src/testing";
 import { makeTestEnv, makeTestDb } from "../helpers/make-env";
 import { req } from "../helpers/make-request";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/testing";
 import { D1Mock } from "../helpers/d1-mock";
+import { TEST_USER_ID } from "../helpers/test-principal";
 
 const ctx = { waitUntil: (_: Promise<any>) => {} } as any;
 
@@ -40,7 +41,7 @@ describe("Epistemic status REST endpoint (Ticket 10)", () => {
     db.entries.push({
       id: "entry-1", content: "Test", tags: "[]", source: "api",
       created_at: Date.now(), vector_ids: "[]", recall_count: 0, importance_score: 0,
-      contradiction_wins: 0, contradiction_losses: 0, owner_user_id: "",
+      contradiction_wins: 0, contradiction_losses: 0, owner_user_id: TEST_USER_ID,
       epistemic_status: "candidate",
     });
 
@@ -58,7 +59,7 @@ describe("Epistemic status REST endpoint (Ticket 10)", () => {
     db.entries.push({
       id: "entry-2", content: "Test", tags: "[]", source: "api",
       created_at: Date.now(), vector_ids: "[]", recall_count: 0, importance_score: 0,
-      contradiction_wins: 0, contradiction_losses: 0, owner_user_id: "",
+      contradiction_wins: 0, contradiction_losses: 0, owner_user_id: TEST_USER_ID,
       epistemic_status: "candidate",
     });
 
@@ -77,7 +78,7 @@ describe("Epistemic status REST endpoint (Ticket 10)", () => {
     db.entries.push({
       id: "entry-3", content: "Test", tags: "[]", source: "api",
       created_at: Date.now(), vector_ids: "[]", recall_count: 0, importance_score: 0,
-      contradiction_wins: 0, contradiction_losses: 0, owner_user_id: "",
+      contradiction_wins: 0, contradiction_losses: 0, owner_user_id: TEST_USER_ID,
       epistemic_status: "candidate",
     });
 

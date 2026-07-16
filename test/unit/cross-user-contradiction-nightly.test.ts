@@ -32,13 +32,14 @@ describe("S06 — nightly cross-user contradiction detection", () => {
     insertEntry(db, "entry-b", "I moved to Berlin last week", ["location"], OWNER_B);
 
     const { detectCrossUserContradictions } = await import("../../src/lifecycle");
+    const query = vi.fn().mockResolvedValue({
+      matches: [
+        { id: "v-entry-b", score: 0.92, metadata: { parentId: "entry-b", owner_user_id: OWNER_B } },
+      ],
+    });
     const env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({
-        query: vi.fn().mockResolvedValue({
-          matches: [
-            { id: "v-entry-b", score: 0.92, metadata: { parentId: "entry-b", owner_user_id: OWNER_B } },
-          ],
-        }),
+        query,
       }),
     });
 
@@ -55,6 +56,10 @@ describe("S06 — nightly cross-user contradiction detection", () => {
     expect(proposal.status).toBe("pending");
     expect(proposal.proposed_by).toBe("_nightly_scan");
     expect(proposal.reason).toContain("similarity");
+    for (const [, options] of query.mock.calls) {
+      expect(options).toMatchObject({ filter: { is_private: { $eq: false } } });
+      expect(options).not.toHaveProperty("metadataFilter");
+    }
   });
 
   it("does not create proposals when similarity is below threshold", async () => {
@@ -176,6 +181,64 @@ describe("S06 — nightly cross-user contradiction detection", () => {
     // Only the public entry is scanned (private one is filtered out)
     expect(result.scanned).toBe(1);
     expect(result.proposals).toBe(0);
+  });
+
+  it("uses D1 ownership instead of hostile vector metadata", async () => {
+    const db = makeTestDb();
+    insertEntry(db, "entry-a", "I moved to Berlin", ["location"], OWNER_A);
+    insertEntry(db, "entry-b", "I moved away from Berlin", ["location"], OWNER_B);
+
+    const { detectCrossUserContradictions } = await import("../../src/lifecycle");
+    const env = makeTestEnv(db, {
+      VECTORIZE: makeVectorizeMock({
+        query: vi.fn().mockResolvedValue({ matches: [
+          // The payload lies that entry-b belongs to the source owner. D1 says
+          // it belongs to OWNER_B, so it remains a valid cross-user candidate.
+          { id: "v-entry-b", score: 0.93, metadata: { parentId: "entry-b", owner_user_id: OWNER_A, is_private: false } },
+        ] }),
+      }),
+    });
+
+    const result = await detectCrossUserContradictions(env);
+
+    expect(result.proposals).toBeGreaterThanOrEqual(1);
+    expect(db.edgeProposals.some((proposal: any) =>
+      proposal.source_id === "entry-b" && proposal.target_id === "entry-a"
+    )).toBe(true);
+  });
+
+  it("rejects a D1-private match even when vector metadata claims it is public", async () => {
+    const db = makeTestDb();
+    insertEntry(db, "entry-a", "I moved to Berlin", ["location"], OWNER_A);
+    insertEntry(db, "entry-private", "I moved away from Berlin", ["private"], OWNER_B);
+
+    const { detectCrossUserContradictions } = await import("../../src/lifecycle");
+    const env = makeTestEnv(db, {
+      VECTORIZE: makeVectorizeMock({
+        query: vi.fn().mockResolvedValue({ matches: [
+          { id: "v-entry-private", score: 0.99, metadata: { parentId: "entry-private", owner_user_id: OWNER_B, is_private: false } },
+        ] }),
+      }),
+    });
+
+    const result = await detectCrossUserContradictions(env);
+
+    expect(result.scanned).toBe(1);
+    expect(result.proposals).toBe(0);
+  });
+
+  it("fails closed for a recent source whose tags are not an array", async () => {
+    const db = makeTestDb();
+    insertEntry(db, "malformed", "Do not inspect", ["location"], OWNER_A);
+    db.entries[0].tags = JSON.stringify("location");
+    const query = vi.fn().mockResolvedValue({ matches: [] });
+
+    const { detectCrossUserContradictions } = await import("../../src/lifecycle");
+    const env = makeTestEnv(db, { VECTORIZE: makeVectorizeMock({ query }) });
+    const result = await detectCrossUserContradictions(env);
+
+    expect(result).toEqual({ scanned: 0, proposals: 0 });
+    expect(query).not.toHaveBeenCalled();
   });
 
   it("returns zero when no entries exist", async () => {

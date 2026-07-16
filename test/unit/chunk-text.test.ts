@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { chunkText } from "../../src/index";
+import { chunkText } from "../../src/testing";
 
 describe("chunkText", () => {
   it("returns a single chunk for short text", () => {

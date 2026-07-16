@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { compressTag } from "../../src/index";
+import { compressTag } from "../../src/testing";
 import { makeTestDb, makeTestEnv } from "../helpers/make-env";
 import { D1Mock } from "../helpers/d1-mock";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/testing";
 
 function makeSseStream(response: string) {
   return new ReadableStream({

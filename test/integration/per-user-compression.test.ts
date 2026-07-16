@@ -3,9 +3,9 @@
  * entries by user ownership and visibility.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { compressTag, compressionEligibilitySql } from "../../src/index";
+import { compressTag, compressionEligibilitySql } from "../../src/testing";
 import { makeTestEnv, makeTestDb, makeVectorizeMock } from "../helpers/make-env";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/testing";
 import { D1Mock } from "../helpers/d1-mock";
 
 function makeSseStream(response: string) {
@@ -73,16 +73,15 @@ describe("Per-user compression", () => {
       expect(sql).not.toContain("owner_user_id");
     });
 
-    it("allows public entries from other users", () => {
+    it("requires exact ownership instead of public visibility", () => {
       const sql = compressionEligibilitySql("", "user-1");
-      // Should filter: (owner_user_id = ?) OR (tags NOT LIKE '%"private"%')
-      expect(sql).toContain("tags NOT LIKE");
-      expect(sql).toContain("private");
+      expect(sql).toContain("owner_user_id = ?");
+      expect(sql).not.toContain("tags NOT LIKE");
     });
   });
 
   describe("compressTag with userId", () => {
-    it("only compresses entries visible to the user", async () => {
+    it("only compresses entries owned by the user", async () => {
       // Seed 15 entries tagged "project" owned by user-1
       for (let i = 0; i < 15; i++) {
         seed(db, `u1-${i}`, `User 1 note ${i}`, ["project"], "user-1");
@@ -100,21 +99,31 @@ describe("Per-user compression", () => {
       expect(result.synthesizedId).toBeTruthy();
     });
 
-    it("includes public entries from other users as context", async () => {
+    it("does not read or mutate another user's public entries and owns the digest", async () => {
       // Seed 12 entries tagged "project" owned by user-1
       for (let i = 0; i < 12; i++) {
         seed(db, `u1-${i}`, `User 1 note ${i}`, ["project"], "user-1");
       }
-      // Seed 5 public entries from user-2 (should be included)
+      // Seed 5 public entries from user-2. Visibility must not grant mutation rights.
       for (let i = 0; i < 5; i++) {
         seed(db, `u2-pub-${i}`, `User 2 public note ${i}`, ["project"], "user-2");
       }
+      const foreignBefore = db.entries
+        .filter(entry => entry.owner_user_id === "user-2")
+        .map(entry => JSON.stringify(entry));
 
-      const { ctx } = makeCtx();
+      const { ctx, drain } = makeCtx();
       const result = await compressTag("project", env, ctx, "user-1");
+      await drain();
 
-      // Should include user-1's 12 + user-2's 5 public = 17 entries
-      expect(result.entriesUsed).toBe(17);
+      expect(result.entriesUsed).toBe(12);
+      expect(db.entries
+        .filter(entry => entry.owner_user_id === "user-2")
+        .map(entry => JSON.stringify(entry))).toEqual(foreignBefore);
+
+      const digest = db.entries.find(entry => entry.id === result.synthesizedId);
+      expect(digest.owner_user_id).toBe("user-1");
+      expect(JSON.parse(digest.tags)).not.toContain("private");
     });
 
     it("excludes private entries from other users", async () => {
@@ -132,6 +141,37 @@ describe("Per-user compression", () => {
 
       // Should only compress user-1's 12 entries
       expect(result.entriesUsed).toBe(12);
+    });
+
+    it("keeps a digest private when any owned source is private", async () => {
+      for (let i = 0; i < 9; i++) {
+        seed(db, `u1-public-${i}`, `User 1 public note ${i}`, ["project"], "user-1");
+      }
+      seed(db, "u1-private", "User 1 private note", ["project", "private"], "user-1");
+
+      const { ctx, drain } = makeCtx();
+      const result = await compressTag("project", env, ctx, "user-1");
+      await drain();
+
+      expect(result.entriesUsed).toBe(10);
+      const digest = db.entries.find(entry => entry.id === result.synthesizedId);
+      expect(digest.owner_user_id).toBe("user-1");
+      expect(JSON.parse(digest.tags)).toContain("private");
+    });
+
+    it("fails closed for non-array tag metadata", async () => {
+      for (let i = 0; i < 9; i++) {
+        seed(db, `valid-${i}`, `Valid note ${i}`, ["project"], "user-1");
+      }
+      seed(db, "malformed", "Malformed metadata", ["project"], "user-1");
+      db.entries.find(entry => entry.id === "malformed")!.tags = JSON.stringify("project");
+
+      const before = JSON.stringify(db.entries.find(entry => entry.id === "malformed"));
+      const { ctx } = makeCtx();
+      const result = await compressTag("project", env, ctx, "user-1");
+
+      expect(result).toEqual({ synthesizedId: null, entriesUsed: 0, text: "" });
+      expect(JSON.stringify(db.entries.find(entry => entry.id === "malformed"))).toBe(before);
     });
 
     it("compresses without userId (backward compat)", async () => {

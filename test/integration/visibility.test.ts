@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import worker, { _resetDbReady } from "../../src/index";
+import worker, { _resetDbReady } from "../../src/testing";
 import { makeTestEnv, makeTestDb } from "../helpers/make-env";
 import { req } from "../helpers/make-request";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/testing";
 import { D1Mock } from "../helpers/d1-mock";
 
 function makeCtx() {

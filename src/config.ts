@@ -15,7 +15,7 @@
 export const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, Accept",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, Accept, X-Second-Brain-User, X-Second-Brain-User-Key",
 };
 
 export function graceMs(env: { VECTORIZE_GRACE_MS?: string }): number {
@@ -47,7 +47,9 @@ export const COMPRESSION_MIN_RECALL = 2;             // recalled >= this many ti
 export const COMPRESSION_MIN_AGE_MS = 60 * 86400000; // entries with fewer than COMPRESSION_MIN_RECALL recalls protected until this old (60 days)
 
 // Returns a SQL boolean fragment for "this entry is eligible for compression".
-// Contains exactly one `?` placeholder — bind `Date.now() - COMPRESSION_MIN_AGE_MS`.
+// Contains one age-cutoff placeholder, plus an owner placeholder when ownerUserId
+// is provided. A user-triggered digest is a mutation, so visibility is not enough:
+// only entries owned by that caller may be compressed.
 // columnPrefix: "" for bare columns (compressTag), "entries." for json_each-joined queries.
 export function compressionEligibilitySql(columnPrefix = "", ownerUserId?: string): string {
   const p = columnPrefix;
@@ -55,7 +57,7 @@ export function compressionEligibilitySql(columnPrefix = "", ownerUserId?: strin
       AND (${p}recall_count = 0 OR (${p}recall_count < ${COMPRESSION_MIN_RECALL} AND ${p}created_at < ?))
       AND (${p}contradiction_wins IS NULL OR ${p}contradiction_wins = 0)`;
   if (ownerUserId) {
-    sql += ` AND ((${p}owner_user_id = ?) OR (${p}tags NOT LIKE '%\"private\"%'))`;
+    sql += ` AND ${p}owner_user_id = ?`;
   }
   return sql;
 }
@@ -77,7 +79,7 @@ export const DIGEST_MAX_TOKENS = 400;
 // ─── Vectorize constants ──────────────────────────────────────────────────────
 
 export const VECTORIZE_FIX_HINT =
-  "run `npx wrangler vectorize create second-brain-vectors --dimensions=384 --metric=cosine`, or grant the build token Vectorize Edit and redeploy";
+  "run `npm run vectors:create` and `npm run vectors:indexes`, or grant the build token Vectorize Edit and redeploy";
 
 export const VECTORIZE_TOP_K_MULTIPLIER = 3;
 // getByIds batch size for tag-scoped recall — Vectorize rejects more than 20 IDs

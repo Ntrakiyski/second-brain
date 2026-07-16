@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import worker from "../../src/index";
+import worker from "../../src/testing";
 import { makeTestEnv, makeTestDb, makeVectorizeMock } from "../helpers/make-env";
 import { req } from "../helpers/make-request";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/testing";
 import { D1Mock } from "../helpers/d1-mock";
 
 const ctx = { waitUntil: (_: Promise<any>) => {} } as any;
@@ -82,5 +82,27 @@ describe("Document hierarchy (Ticket 08)", () => {
       env, ctx
     );
     expect(res.status).toBe(404);
+  });
+
+  it("does not expose hierarchy children for another user's private entry", async () => {
+    const now = Date.now();
+    db.entries.push({
+      id: "hidden-entry", content: "Private content", tags: JSON.stringify(["private"]), source: "api",
+      created_at: now, vector_ids: "[]", recall_count: 0, importance_score: 0,
+      contradiction_wins: 0, contradiction_losses: 0, owner_user_id: "another-user",
+    });
+    db.episodes.push({
+      id: "hidden-episode", entry_id: "hidden-entry", content: "Private content",
+      content_type: "text", source: "api", created_at: now,
+    });
+    db.passages.push({
+      id: "hidden-passage", entry_id: "hidden-entry", episode_id: "hidden-episode",
+      content: "secret child text", section: "Secret", start_offset: 0, end_offset: 17,
+      vector_ids: "[]", created_at: now,
+    });
+
+    const hidden = await worker.fetch(req("GET", "/entries/hidden-entry/hierarchy"), env, ctx);
+    expect(hidden.status).toBe(404);
+    expect(await hidden.json()).toEqual({ ok: false, error: "Entry not found" });
   });
 });

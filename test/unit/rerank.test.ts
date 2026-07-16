@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { rerankWithTimeDecay } from "../../src/index";
+import { rerankWithTimeDecay } from "../../src/testing";
 
 const NOW = Date.now();
 const MS_DAY = 86400000;

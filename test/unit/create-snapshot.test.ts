@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { createSnapshot } from "../../src/index";
+import { createSnapshot } from "../../src/testing";
 import { makeTestDb, makeTestEnv } from "../helpers/make-env";
 import type { Env } from "../../src/types";
 import { D1Mock } from "../helpers/d1-mock";

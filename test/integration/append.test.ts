@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import worker from "../../src/index";
+import worker from "../../src/testing";
 import { makeTestEnv, makeTestDb, makeVectorizeMock } from "../helpers/make-env";
 import { req } from "../helpers/make-request";
-import type { Env } from "../../src/index";
+import type { Env } from "../../src/testing";
 import { D1Mock } from "../helpers/d1-mock";
+import { TEST_USER_ID } from "../helpers/test-principal";
 
 const ctx = { waitUntil: (_: Promise<any>) => {} } as any;
 
@@ -30,8 +31,8 @@ describe("POST /append", () => {
   });
 
   it("auto-links the entry to a similar neighbor after appending (#16)", async () => {
-    db.entries.push({ id: "target", content: "Original note", tags: "[]", source: "api", created_at: 1, vector_ids: "[]" });
-    db.entries.push({ id: "neighbor", content: "Related memory", tags: "[]", source: "api", created_at: 1, vector_ids: "[]" });
+    db.entries.push({ id: "target", content: "Original note", tags: "[]", source: "api", created_at: 1, vector_ids: "[]", owner_user_id: TEST_USER_ID });
+    db.entries.push({ id: "neighbor", content: "Related memory", tags: "[]", source: "api", created_at: 1, vector_ids: "[]", owner_user_id: TEST_USER_ID });
     env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({
         query: vi.fn().mockResolvedValue({ matches: [{ id: "neighbor", score: 0.85, metadata: { parentId: "neighbor" } }] }),
@@ -48,7 +49,7 @@ describe("POST /append", () => {
   });
 
   it("does not link a loosely-related neighbor below the threshold", async () => {
-    db.entries.push({ id: "target", content: "Original note", tags: "[]", source: "api", created_at: 1, vector_ids: "[]" });
+    db.entries.push({ id: "target", content: "Original note", tags: "[]", source: "api", created_at: 1, vector_ids: "[]", owner_user_id: TEST_USER_ID });
     env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({
         query: vi.fn().mockResolvedValue({ matches: [{ id: "loose", score: 0.6, metadata: { parentId: "loose" } }] }),
@@ -75,6 +76,7 @@ describe("POST /append", () => {
       source: "api",
       created_at: Date.now(),
       vector_ids: "[]",
+      owner_user_id: TEST_USER_ID,
     });
 
     const res = await worker.fetch(
@@ -103,6 +105,7 @@ describe("POST /append", () => {
       source: "api",
       created_at: Date.now(),
       vector_ids: '["entry-1"]',
+      owner_user_id: TEST_USER_ID,
     });
 
     await worker.fetch(
@@ -134,6 +137,7 @@ describe("POST /append", () => {
       source: "api",
       created_at: Date.now(),
       vector_ids: '["entry-1","entry-1-update-111"]',
+      owner_user_id: TEST_USER_ID,
     });
 
     const res = await worker.fetch(
@@ -158,11 +162,11 @@ describe("POST /append", () => {
     expect(deleteByIdsMock).toHaveBeenCalledWith(["entry-1", "entry-1-update-111"]);
   });
 
-  it("oversized append: new vectors inserted before old ones are deleted (safe ordering)", async () => {
+  it("oversized append: new vectors upserted before old ones are deleted (safe ordering)", async () => {
     const callOrder: string[] = [];
     env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({
-        insert: vi.fn().mockImplementation(async () => { callOrder.push("insert"); return { mutationId: "m" }; }),
+        upsert: vi.fn().mockImplementation(async () => { callOrder.push("upsert"); return { mutationId: "m" }; }),
         deleteByIds: vi.fn().mockImplementation(async () => { callOrder.push("delete"); return { mutationId: "m" }; }),
       }),
     });
@@ -173,6 +177,7 @@ describe("POST /append", () => {
       source: "api",
       created_at: Date.now(),
       vector_ids: '["entry-1"]',
+      owner_user_id: TEST_USER_ID,
     });
 
     await worker.fetch(
@@ -181,13 +186,13 @@ describe("POST /append", () => {
       ctx
     );
 
-    expect(callOrder.indexOf("insert")).toBeLessThan(callOrder.indexOf("delete"));
+    expect(callOrder.indexOf("upsert")).toBeLessThan(callOrder.indexOf("delete"));
   });
 
-  it("oversized append: Vectorize re-embed failure is non-fatal — D1 still updated", async () => {
+  it("oversized append: Vectorize re-embed failure fails closed and leaves D1 unchanged", async () => {
     env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({
-        insert: vi.fn().mockRejectedValue(new Error("Vectorize down")),
+        upsert: vi.fn().mockRejectedValue(new Error("Vectorize down")),
       }),
     });
     db.entries.push({
@@ -197,6 +202,7 @@ describe("POST /append", () => {
       source: "api",
       created_at: Date.now(),
       vector_ids: '["entry-1"]',
+      owner_user_id: TEST_USER_ID,
     });
 
     const res = await worker.fetch(
@@ -205,11 +211,11 @@ describe("POST /append", () => {
       ctx
     );
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(500);
     const data = await res.json() as any;
-    expect(data.ok).toBe(true);
-    // D1 content still updated even if Vectorize failed
-    expect(db.entries[0].content).toContain("More info");
+    expect(data.ok).toBe(false);
+    expect(db.entries[0].content).toBe(LONG_CONTENT);
+    expect(db.entries[0].vector_ids).toBe('["entry-1"]');
   });
 
   it("oversized append: old vector deletion failure is non-fatal", async () => {
@@ -225,6 +231,7 @@ describe("POST /append", () => {
       source: "api",
       created_at: Date.now(),
       vector_ids: '["entry-1"]',
+      owner_user_id: TEST_USER_ID,
     });
 
     const res = await worker.fetch(
@@ -246,6 +253,7 @@ describe("POST /append", () => {
       source: "api",
       created_at: Date.now(),
       vector_ids: "[]",
+      owner_user_id: TEST_USER_ID,
     });
 
     const res = await worker.fetch(
@@ -268,6 +276,7 @@ describe("POST /append", () => {
       source: "api",
       created_at: Date.now(),
       vector_ids: "[]",
+      owner_user_id: TEST_USER_ID,
     });
 
     const failEnv = makeTestEnv(db, {
