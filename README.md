@@ -1,11 +1,13 @@
 # Second Brain — Living Team Knowledgebase
 
-**A governed, time-aware knowledgebase for teams of humans and domain agents.**
+**A governed, time-aware knowledgebase that translates between the mental maps of humans and domain agents.**
 
 [![Built with Cloudflare Workers](https://img.shields.io/badge/Built%20with-Cloudflare%20Workers-F38020?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
 [![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-8B5CF6)](https://modelcontextprotocol.io/)
 
 Second Brain turns scattered notes, decisions, source material, and agent context into a shared team knowledgebase that can be queried, cited, reviewed, and safely operated by humans or domain-specific AI agents.
+
+The real product is not “memory” by itself. The real product is translation between different mental maps: helping one person or agent understand what another person or agent discovered, why it mattered to them, and how it may become useful in a different context.
 
 This project started as a fork of [Second Brain for AI](https://github.com/rahilp/second-brain-cloudflare). It now extends that idea into a multi-user, provenance-first, operator-governed team knowledgebase.
 
@@ -13,7 +15,13 @@ This project started as a fork of [Second Brain for AI](https://github.com/rahil
 
 ## What it is
 
-Second Brain is not just “semantic search over notes.” It is a knowledgebase control plane for a mixed team of people and agents:
+Second Brain is not just “semantic search over notes.” It has three product layers:
+
+1. **Shared knowledge layer** — durable, governed knowledge that humans and agents can capture, recall, cite, connect, version, and review.
+2. **Translation layer** — workflows that map knowledge from one mental model into another person’s, project’s, or agent domain’s context.
+3. **Living organism / Hermes layer** — external Hermes-style profiles and scheduled jobs that scout, draft, connect, and propose maintenance through governed MCP/API access.
+
+Inside this repository, those layers show up as a knowledgebase control plane for a mixed team of people and agents:
 
 - Users and agents can save knowledge entries through the dashboard, REST API, or MCP.
 - Each entry has an owner, visibility, versions, immutable source episodes, and rollback history.
@@ -22,7 +30,9 @@ Second Brain is not just “semantic search over notes.” It is a knowledgebase
 - AI operators such as Hermes can read, draft, and propose changes through scoped service identities instead of touching storage directly.
 - Consequential agent actions go through proposals, policy checks, and mandatory audit logging.
 
-The intended end state is a living knowledgebase that behaves like a responsible team: humans contribute judgment and approval, while specialized agents scout, remember, cite, notice overlap, propose maintenance, and never silently rewrite the past.
+The intended end state is a living knowledgebase that behaves like a responsible team: humans contribute judgment and approval, while specialized agents scout, remember, cite, notice overlap, translate discoveries across contexts, propose maintenance, and never silently rewrite the past.
+
+Hermes itself, domain-agent runtimes, and broader studio operating workflows are intentionally outside this repository. This repo provides the shared knowledge system, the governance boundaries, and the skills that let external agents use it well.
 
 ## User value
 
@@ -41,6 +51,13 @@ The intended end state is a living knowledgebase that behaves like a responsible
 - Detect overlap and contradictions across users.
 - Review proposed knowledge changes before they become canonical.
 - Deactivate users safely while preserving public team knowledge and cleaning private artifacts.
+
+### For translation between mental maps
+
+- Let Nikolay capture a GitHub repository as a possible automation building block while Goria later receives an explanation grounded in her own data-quality work.
+- Let one agent discover a tool, paper, or pattern and have another agent understand how it applies to its own domain.
+- Preserve the original meaning of a discovery while generating new use cases for different recipients.
+- Turn “this exists” into “this matters to you because...” without forcing everyone to share the same vocabulary or background.
 
 ### For agent teammates
 
@@ -64,7 +81,9 @@ These agents are “team members,” but governed ones: they can be proactive in
 
 ## Current implementation
 
-### Pillar 1 — Provenance-first memory
+### Layer 1 — Shared knowledge layer
+
+Implemented foundations:
 
 - Immutable `episodes` preserve exact source input.
 - One document envelope per episode keeps source lineage unambiguous.
@@ -75,9 +94,6 @@ These agents are “team members,” but governed ones: they can be proactive in
   - `known_at` = when Second Brain knew that state.
 - Evidence passages, documents, and citation metadata flow into recall.
 - Vector cleanup is durable and retryable when stale vector deletion fails.
-
-### Pillar 2 — Shared knowledge base
-
 - Every entry has explicit `owner_user_id`, `created_by_user_id`, and `visibility`.
 - Private entries are enforced across D1 reads, Vectorize metadata, graph traversal, exports, integrations, and UI.
 - Public entries are visible to the team.
@@ -86,7 +102,18 @@ These agents are “team members,” but governed ones: they can be proactive in
 - Edge history is versioned and reversible via `edge_versions`.
 - Cross-user awareness events notify users when public work overlaps.
 
-### Pillar 3 — Operator control plane
+### Layer 2 — Translation layer
+
+The repository already provides the substrate for translation through cited recall, graph links, relationship provenance, user ownership, visibility boundaries, and agent skills. The higher-level product behavior is staged as feature work:
+
+- **Opportunity mapping:** when a human or agent captures a discovery, the system maps it to related people, projects, domains, and possible use cases.
+- **Personalized explanation:** the same knowledge can be explained differently for Nikolay, Goria, a research scout, an engineering agent, or a quality critic based on their context and goals.
+
+These features belong in this product because they are the bridge between shared knowledge and actual usefulness. They should be built on top of the existing provenance, visibility, graph, recall, proposal, and audit foundations.
+
+### Layer 3 — Living organism / Hermes layer
+
+Second Brain is designed so Hermes-style profiles can operate through governed service identities instead of direct storage access:
 
 - Service identities have scoped credentials, expiry, rotation, suspension, and revocation.
 - Operators are actor-scoped: human, service, or system.
@@ -95,11 +122,9 @@ These agents are “team members,” but governed ones: they can be proactive in
 - Proposal execution rechecks policy, payload hash, target revision, preconditions, expiry, and actor scope.
 - Mandatory audit creates a requested run/event before governed mutations.
 - Completion reconciliation repairs terminal audit projections after post-mutation audit failures.
-- Hermes is treated as a replaceable client of this layer, not as the canonical knowledge store.
+- Hermes is treated as a replaceable external client of this layer, not as the canonical knowledge store.
 
-### Pillar 4 — Autonomous operations
-
-The foundation is ready for multiple specialized operator profiles, but full autonomous operation is intentionally staged. The safe rollout for each domain agent is:
+The repo supports multiple specialized operator profiles, but full autonomous operation is intentionally staged. The safe rollout for each domain agent is:
 
 1. Read-only shadow.
 2. Private draft candidates.
@@ -107,7 +132,7 @@ The foundation is ready for multiple specialized operator profiles, but full aut
 4. Bounded scheduled scouting/research.
 5. Optional approved executor identity.
 
-See [docs/operator-runtime-deployment.md](docs/operator-runtime-deployment.md) for the runtime boundary and rollout plan.
+See [docs/operator-runtime-deployment.md](docs/operator-runtime-deployment.md) for the runtime boundary and rollout plan. Actual Hermes setup, profile hosting, and scheduled-job runtime configuration happen outside this repository.
 
 ## How people use it
 
@@ -134,14 +159,14 @@ The dashboard supports:
 
 This repo includes practical skill files that humans can hand to Codex, Hermes, or another MCP-connected agent:
 
-- [Second Brain MCP Knowledgebase](.agents/skills/second-brain-mcp-knowledgebase/SKILL.md) — how to use Second Brain through MCP as a governed team knowledgebase.
-- [Hermes Domain Profile](.agents/skills/hermes-domain-profile/SKILL.md) — how to turn “build a scheduled job for X” into a safe domain-agent profile.
+- [Second Brain MCP Knowledgebase](.agents/skills/second-brain-mcp-knowledgebase/SKILL.md) — how people and agents should use Second Brain through MCP as a governed team knowledgebase and translation layer.
+- [Hermes Domain Profile Creator](.agents/skills/hermes-domain-profile/SKILL.md) — how Hermes should turn “build a scheduled job for X” into a safe domain-agent profile, with sources, cadence, scopes, outputs, proposals, and review boundaries.
 
 These skills are meant to reduce setup friction. The human should be able to tell Hermes:
 
-> Read the Hermes Domain Profile skill and let's build a scheduled job for `<domain or goal>`.
+> Read the Hermes Domain Profile Creator skill and let's build a scheduled job for `<domain or goal>`.
 
-Then Hermes can help define sources, cadence, scopes, outputs, proposal behavior, and safety limits without needing direct storage access.
+Then Hermes can help define the profile, sources, cadence, scopes, outputs, proposal behavior, and safety limits without needing direct storage access. The skill creates the operating specification; the actual Hermes runtime and scheduling setup stay outside this repo.
 
 ### MCP clients
 
@@ -275,9 +300,9 @@ Service/operator tool availability depends on the service identity’s scopes an
 - scheduled cron for graph/compression/integration/audit cleanup work
 - local Workerd smoke script in [scripts/smoke-workerd.sh](scripts/smoke-workerd.sh)
 
-## Future product layer: translation between mental maps
+## Future product features: translation between mental maps
 
-The foundation is the shared knowledge layer. The next product layer is translation: helping one person or agent understand another person's knowledge in their own context.
+The foundation is the shared knowledge layer. The product value comes from translation: helping one person or agent understand another person or agent's knowledge in their own context.
 
 Planned features:
 
@@ -359,6 +384,7 @@ Second Brain is intentionally a governed knowledgebase, not an unrestricted agen
 - **Secret storage.** API keys, credentials, and private tokens belong in secret managers, not memory entries, proposals, or audit summaries.
 - **Guaranteed truth.** The system preserves evidence, provenance, confidence, and time; humans still judge disputed claims.
 - **Fully autonomous compliance actions.** Hard forget and access-control changes remain explicit human-controlled operations.
+- **Studio workflow automation.** Client meetings, proposal writing, delivery process, and the broader studio operating model can use Second Brain as context, but they are not implemented in this repo.
 
 ## Documentation
 

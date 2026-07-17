@@ -1,17 +1,49 @@
 ---
 name: hermes-domain-profile
-description: Use when creating or configuring a Hermes-style domain agent profile or scheduled job for Second Brain. Guides agents to define domain, scope, sources, cadence, MCP permissions, outputs, proposal behavior, safety limits, and review process.
+description: Use when creating a Hermes-style domain profile or scheduled job that operates through Second Brain. Guides Hermes to interview the human, define the profile's mental map, sources, cadence, MCP permissions, outputs, proposal behavior, safety limits, and review process.
 ---
 
-# Hermes Domain Profile
+# Hermes Domain Profile Creator
 
 Use this skill when the human says something like:
 
 > Read this skill and let's build a scheduled job for `<domain or goal>`.
 
-The goal is to turn an idea into a safe Hermes-style domain agent profile that operates through Second Brain's governed MCP/API surface.
+The goal is to turn a vague idea into a safe Hermes-style domain agent profile that operates through Second Brain's governed MCP/API surface.
 
-Hermes profiles are agent teammates. They can be proactive in a domain, but they are not unrestricted agents and never receive direct database, Vectorize, deployment, migration, or secret access.
+Hermes profiles are agent teammates with different mental maps. They can be proactive in a domain, but they are not unrestricted agents and never receive direct database, Vectorize, deployment, migration, or secret access.
+
+This skill produces the profile and scheduled-job specification. It does not implement the Hermes runtime, host the profile, configure external schedulers, or automate the user's broader studio workflow.
+
+## Product frame
+
+Second Brain has three layers:
+
+1. **Shared knowledge layer** — the governed place where humans and agents capture, recall, cite, link, version, and review knowledge.
+2. **Translation layer** — the product behavior that maps knowledge from one person/agent's mental model into another person's, project’s, or domain agent’s context.
+3. **Living organism / Hermes layer** — proactive Hermes profiles that scout, draft, connect, and propose maintenance through scoped tools.
+
+Every Hermes profile should improve at least one of these outcomes:
+
+- better shared knowledge;
+- better translation between mental maps;
+- better proactive maintenance of the knowledgebase.
+
+If the proposed job does not improve one of those outcomes, do not create it.
+
+## Conversation flow
+
+When creating a profile, Hermes should guide the human through this order:
+
+1. Clarify the desired outcome in plain language.
+2. Identify the profile's mental map: what it cares about, what it ignores, and how it judges usefulness.
+3. Define the audience: which human, project, or agent domain benefits from the work.
+4. Select approved sources and Second Brain recall queries.
+5. Choose output type: digest, draft entry, opportunity map, personalized explanation, proposal, or alert.
+6. Choose the lowest safe MCP scopes.
+7. Define review rules and stop conditions.
+8. Produce a profile card and scheduled-job spec.
+9. Ask only for missing information that materially changes safety or usefulness.
 
 ## Profile definition
 
@@ -19,6 +51,7 @@ For every profile, define:
 
 - **Name:** human-readable identity, e.g. `Research Scout`, `Engineering Librarian`.
 - **Mission:** one sentence describing why this agent exists.
+- **Mental map:** what this profile notices, values, ignores, and questions.
 - **Domain:** topics/projects/sources it is responsible for.
 - **Audience:** who benefits from its work.
 - **Cadence:** manual, hourly, daily, weekly, or event-triggered.
@@ -64,8 +97,10 @@ When the human provides a goal, produce this job spec:
 ```yaml
 profile_name:
 mission:
+mental_map:
 cadence:
 domain:
+audience:
 source_allowlist:
 second_brain_queries:
 actions_allowed:
@@ -80,6 +115,34 @@ failure_mode:
 ```
 
 Then ask only for missing information that materially changes safety or usefulness.
+
+## Second Brain usage rules
+
+Hermes should use Second Brain as the governed knowledge layer, not as a scratchpad.
+
+Use recall to understand:
+
+- what the team already knows;
+- who created the relevant knowledge;
+- what evidence and citations exist;
+- where contradictions or stale assumptions may be;
+- which recipient or domain the output should be translated for.
+
+Use draft/proposal behavior for:
+
+- new public knowledge candidates;
+- relationship changes that affect multiple people or domains;
+- deprecations, corrections, or contradiction handling;
+- personalized explanations that should become reusable knowledge;
+- opportunity maps that should be reviewed before becoming canonical.
+
+Avoid:
+
+- storing secrets;
+- publishing direct changes without review;
+- overwriting old claims instead of preserving history;
+- treating search results as truth without citations;
+- assuming all recipients share the same vocabulary or mental model.
 
 ## Workflow patterns
 
@@ -121,6 +184,19 @@ Steps:
 4. Avoid assuming they share the source actor's mental map.
 5. Suggest next readings or experiments.
 
+### Profile creator
+
+Use when the human wants a new domain Hermes profile.
+
+Steps:
+
+1. Turn the human's phrase into a profile mission.
+2. Define the profile's mental map and audience.
+3. Decide whether the first version should be read-only, draft-only, proposal-based, or bounded scheduled scouting.
+4. Produce the profile card and scheduled-job spec.
+5. Name what must be configured outside Second Brain, such as Hermes runtime, external scheduler, credentials, and source connectors.
+6. Recommend a small first run before increasing autonomy.
+
 ### Quality critic
 
 Use when the agent checks weak claims or stale assumptions.
@@ -139,6 +215,7 @@ Steps:
 ```text
 Name:
 Mission:
+Mental map:
 Domain:
 Cadence:
 Sources:
@@ -175,12 +252,13 @@ Recommended human action:
 ## Safety checks before finalizing a job
 
 - Does the job have a clear domain and stop condition?
+- Does the profile have a clear mental map and audience?
 - Are sources explicitly allowlisted?
 - Is the output reviewable?
 - Are direct destructive or access-control actions forbidden?
 - Are secrets excluded from memory, prompts, and audit summaries?
 - Can the job be stopped by revoking/suspending one service identity?
 - Would replacing Hermes require only credential rotation and runtime changes?
+- Is runtime/scheduler setup clearly outside this repo?
 
 If any answer is no, revise the profile before scheduling it.
-
