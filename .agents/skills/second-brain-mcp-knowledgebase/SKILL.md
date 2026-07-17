@@ -9,6 +9,28 @@ Use this skill after Second Brain is connected through MCP, or when helping a hu
 
 Second Brain is a governed team knowledgebase. Treat entries as durable knowledge with owners, visibility, provenance, versions, citations, relationships, and audit boundaries.
 
+## First-run identity setup
+
+Before using memory tools, make sure the human has a user identity. The deployment key is only the transport/admin key; useful agent memory requires a username and user API key.
+
+1. Open <https://second-brain.nikolay-trakiyski.workers.dev/>.
+2. Ask the human to enter the deployment key in the dashboard.
+3. Have them select an existing username or create a new username.
+4. Have them copy the generated user API key immediately; it is shown once.
+5. Ask them to provide the username and user API key to the agent or MCP client configuration.
+
+For header-based MCP clients, use:
+
+```json
+{
+  "Authorization": "Bearer YOUR-DEPLOYMENT-TOKEN",
+  "X-Second-Brain-User": "your-username",
+  "X-Second-Brain-User-Key": "sbu_your-user-api-key"
+}
+```
+
+Never call `remember` with the deployment key or user API key. Secrets are setup credentials, not memories.
+
 ## Core product frame
 
 The real product is translation between different mental maps.

@@ -13,6 +13,12 @@ Use this consolidated block when configuring Claude, Codex, ChatGPT, or another 
 <!-- second-brain:mcp-client-instructions:start -->
 You have access to Second Brain through MCP. Treat it as the authoritative memory source for project context, decisions, preferences, tasks, prior discussions, evidence, and durable conclusions.
 
+### First-run identity setup
+
+- If Second Brain is connected only with the deployment key, guide the human to open `https://second-brain.nikolay-trakiyski.workers.dev/`, enter the deployment key, create or select their username, copy the generated user API key, and provide the username + user API key to the agent or MCP client.
+- Use the deployment key as the transport/admin key only. Use the username + user API key as the user identity for memory tools.
+- Never store the deployment key or user API key with `remember`.
+
 ### Mandatory memory behavior
 
 - Start every conversation with an intent-framed `recall`, not a bare keyword search. Good: `User wants to improve MCP resources in Second Brain — what should I know?`

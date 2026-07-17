@@ -183,6 +183,16 @@ npx skills add https://github.com/Ntrakiyski/second-brain \
 
 The MCP server also exposes `memory://onboarding`, a read-only onboarding resource that tells connected agents to install or load these skills before relying on the raw tool surface.
 
+First-run identity setup for agents:
+
+1. Open [the dashboard](https://second-brain.nikolay-trakiyski.workers.dev/).
+2. Enter the deployment key.
+3. Create or select a username.
+4. Copy the generated user API key.
+5. Give the username and user API key to the agent/MCP client.
+
+The deployment key is the only shared secret needed to begin setup. User-scoped memory operations should use the username and user API key.
+
 These skills are meant to reduce setup friction. The human should be able to tell Hermes:
 
 > Read the Hermes Domain Profile Creator skill and let's build a scheduled job for `<domain or goal>`.

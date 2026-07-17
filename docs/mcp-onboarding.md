@@ -34,6 +34,28 @@ npx skills add https://github.com/Ntrakiyski/second-brain --list
 - `second-brain-mcp-knowledgebase` — how agents should use Second Brain as a governed memory and translation layer: recall first, capture durable context, cite evidence, respect privacy, use graph links, inspect history, and route consequential actions through proposals.
 - `hermes-domain-profile` — how to define a safe Hermes-style domain agent or scheduled job that operates through Second Brain with explicit sources, cadence, permissions, outputs, proposal behavior, and review boundaries.
 
+## First-run identity setup
+
+Before using memory tools, make sure the human has a user identity. The only shared secret needed to start is the deployment key.
+
+1. Open the dashboard: <https://second-brain.nikolay-trakiyski.workers.dev/>.
+2. Enter the deployment key to connect.
+3. Select an existing username or create a new username.
+4. Copy the generated user API key immediately; it is shown once.
+5. Ask the human to provide the username and user API key to the agent or MCP client configuration.
+
+For MCP clients that use headers, configure:
+
+```json
+{
+  "Authorization": "Bearer YOUR-DEPLOYMENT-TOKEN",
+  "X-Second-Brain-User": "your-username",
+  "X-Second-Brain-User-Key": "sbu_your-user-api-key"
+}
+```
+
+Do not store, log, or remember the deployment key or user API key as memory entries.
+
 ## Tool/resource split
 
 - Use skills for operating behavior: when to recall, what to capture, how to tag, when to use proposals, and what safety boundaries apply.
@@ -43,10 +65,11 @@ npx skills add https://github.com/Ntrakiyski/second-brain --list
 ## First-use behavior for agents
 
 1. Install or load the MCP-use skills above when possible.
-2. Start every conversation with an intent-framed `recall`, not bare keywords.
-3. Use `hops: 1` or `hops: 2` when tracing causes, decisions, consequences, or relationships.
-4. Store only durable, valuable information; never store secrets.
-5. Prefer citation-backed answers and use `passages` when evidence matters.
-6. Use proposal flows for uncertain, cross-user, consequential, or governed actions.
+2. If no username and user API key are configured, guide the human through the dashboard identity setup above before calling tools.
+3. Start every conversation with an intent-framed `recall`, not bare keywords.
+4. Use `hops: 1` or `hops: 2` when tracing causes, decisions, consequences, or relationships.
+5. Store only durable, valuable information; never store secrets.
+6. Prefer citation-backed answers and use `passages` when evidence matters.
+7. Use proposal flows for uncertain, cross-user, consequential, or governed actions.
 
 If skills cannot be installed, follow the guidance in this resource and the `second-brain-mcp-knowledgebase` skill manually.
