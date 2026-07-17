@@ -41,7 +41,7 @@ describe("Auth", () => {
   }
 
   for (const [method, path, body] of PROTECTED_ROUTES) {
-    it(`${method} ${path} — deployment bearer alone has no user principal`, async () => {
+    it(`${method} ${path} — workspace key bearer alone has no user principal`, async () => {
       const res = await worker.fetch(req(method, path, { body, token: "test-token" }), env, ctx);
       expect(res.status).toBe(401);
     });
@@ -110,7 +110,7 @@ describe("Auth", () => {
     });
   });
 
-  it("does not turn the deployment token into a browser OAuth principal", async () => {
+  it("does not turn the workspace key into a browser OAuth principal", async () => {
     const completeAuthorization = vi.fn();
     (env as any).OAUTH_PROVIDER = {
       parseAuthRequest: vi.fn().mockResolvedValue({ scope: ["memory"] }),
@@ -154,7 +154,7 @@ describe("Auth", () => {
     expect(ownerIds).not.toContain(db.users.find(user => user.username === "_system")?.id);
   });
 
-  it("does not let the deployment bearer mutate system-owned entries", async () => {
+  it("does not let the workspace key bearer mutate system-owned entries", async () => {
     await worker.fetch(req("GET", "/list"), env, ctx); // initializes the system owner
     const systemUser = db.users.find(user => user.username === "_system");
     expect(systemUser).toBeDefined();
@@ -170,7 +170,7 @@ describe("Auth", () => {
 
     const res = await worker.fetch(req("POST", "/update", {
       token: "test-token",
-      body: { id: "system-entry", content: "deployment token overwrite" },
+      body: { id: "system-entry", content: "workspace key overwrite" },
     }), env, ctx);
 
     expect(res.status).toBe(401);
@@ -217,7 +217,7 @@ describe("Auth", () => {
     }
   });
 
-  it("POST /capture — deployment credentials in the URL are rejected", async () => {
+  it("POST /capture — workspace credentials in the URL are rejected", async () => {
     const request = new Request("http://localhost/capture?token=test-token", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

@@ -1,6 +1,6 @@
 # 01 — Auth Infrastructure & User Model
 
-**What to build:** A `users` table with secure key storage. Auth middleware that resolves `(username, key)` from request headers against the deployment `AUTH_TOKEN`. Legacy single-token auth continues to work. The system is ready for multi-user but no data changes yet.
+**What to build:** A `users` table with secure key storage. Auth middleware that resolves `(username, key)` from request headers against the workspace key (`AUTH_TOKEN`). Legacy single-key auth continues to work. The system is ready for multi-user but no data changes yet.
 
 **Blocked by:** None — can start immediately
 
@@ -60,7 +60,7 @@
 
 **Add route after the auth block (near line 2748):**
 - `GET /api/users` — returns `{ users: [{ id, username, status }] }` for all active users
-- Requires deployment AUTH_TOKEN (same as existing auth)
+- Requires workspace key (`AUTH_TOKEN`, same as existing auth)
 - No user credentials needed — this is for the login screen
 
 ### `test/helpers/make-env.ts` — Update test environment
@@ -92,8 +92,8 @@
 - [ ] `users` table created with correct schema on startup
 - [ ] `POST /api/users` creates a user, returns `{ username, key }` (key shown once)
 - [ ] `GET /api/users` returns list of active users
-- [ ] Auth with `(deployment_token + username + key)` passes and resolves user_id
-- [ ] Auth with only `deployment_token` (legacy) passes with user_id `_legacy`
+- [ ] Auth with `(workspace_key + username + key)` passes and resolves user_id
+- [ ] Auth with only `workspace_key` (legacy) passes with user_id `_legacy`
 - [ ] Auth with wrong key returns 401
 - [ ] Auth with unknown username returns 401
 - [ ] All existing auth tests still pass

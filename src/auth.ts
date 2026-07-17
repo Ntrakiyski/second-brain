@@ -7,7 +7,7 @@
  * Input: HTTP requests with credential headers/bearer tokens, the DB, and env secrets.
  * Output: Auth results (user ID + username), API keys, login HTML, or error responses.
  * Logic: HMAC-SHA-256 hashing, constant-time comparison, and D1 user lookups.
- *   The deployment bearer token is an administrative/transport gate only;
+ *   The workspace key bearer token is an administrative/transport gate only;
  *   user-scoped requests always resolve an active row from `users`.
  */
 
@@ -180,12 +180,12 @@ export async function resolveUser(
  *
  * Resolution order:
  * 1. If either legacy user header is present, require both and verify them.
- *    This preserves the current two-factor deployment-token + user-key flow.
+ *    This preserves the current two-factor workspace-key + user-key flow.
  * 2. Otherwise use the OAuthProvider principal from ctx.props.userId.
  * 3. If neither path yields a valid actor, fail closed.
  *
  * A legacy header actor requires either a valid OAuth principal (normal
- * provider-wrapped requests) or the explicit deployment token (safe direct
+ * provider-wrapped requests) or the explicit workspace key (safe direct
  * legacy calls/tests). This prevents user headers alone from bypassing OAuth.
  */
 export async function resolveMcpActor(
@@ -253,7 +253,7 @@ export async function resolveMcpActor(
 
 export function isAuthorized(request: Request, env: Env): boolean {
   // Credentials in URLs leak into access logs, browser history, analytics, and
-  // referrer headers. Accept the deployment secret only in Authorization.
+  // referrer headers. Accept the workspace key only in Authorization.
   return request.headers.get("Authorization") === `Bearer ${env.AUTH_TOKEN}`;
 }
 
@@ -268,8 +268,8 @@ export function json(data: unknown, status = 200): Response {
 
 // Async auth: returns `{ error, user_id, username }`. All user-scoped route
 // handlers should use this. Accepted forms are either a personal API key as
-// Bearer token, or the deployment transport token plus verified user headers.
-// The deployment token alone deliberately has no user principal.
+// Bearer token, or the workspace transport key plus verified user headers.
+// The workspace key alone deliberately has no user principal.
 export async function requireAuthAsync(
   request: Request, env: Env
 ): Promise<{ error: Response | null; user_id?: string; username?: string }> {
@@ -277,7 +277,7 @@ export async function requireAuthAsync(
   const hasUsername = username !== null;
   const hasKey = key !== null;
   if (hasUsername || hasKey) {
-    // A partial actor selection must never fall back to the deployment-wide
+    // A partial actor selection must never fall back to the workspace-wide
     // system actor. Treat malformed/partial credential attempts as failures.
     if (!username || !key) {
       return { error: json({ ok: false, error: "Unauthorized" }, 401) };

@@ -44,7 +44,7 @@ Second Brain v2 is a **multi-user shared memory** platform for AI agents and hum
 | `VECTORIZE` | Vectorize Index `second-brain-vectors_v2` | 384-dim cosine semantic search |
 | `AI` | Workers AI | `@cf/baai/bge-small-en-v1.5` (embeddings) + `@cf/meta/llama-4-scout-17b-16e-instruct` (LLM) |
 | `OAUTH_KV` | KV Namespace | OAuth tokens, grants, clients + integration state |
-| `AUTH_TOKEN` | Secret (deployment token) | Bearer auth for all requests |
+| `AUTH_TOKEN` | Secret (workspace key) | Bearer auth for all requests |
 
 **Cron:** `0 1 * * *` — nightly compression + graph pass + integration sync + cross-user contradiction detection. Hermes (the external agent) owns higher-level scheduled jobs like the morning digest.
 
@@ -681,10 +681,10 @@ Stored as entry tagged `["auto-pattern"]`. Hidden from normal recall until confi
 
 ### Human Request Auth
 
-1. **Deployment token** (`AUTH_TOKEN` secret) — Bearer header on every request
+1. **Workspace key** (`AUTH_TOKEN` secret) — Bearer header on every request
 2. **User credentials** — `X-Second-Brain-User` (username) + `X-Second-Brain-User-Key` (`sbu_xxx.yyy` format)
 
-MCP clients may instead authenticate directly with a personal API key. Automated operators use dedicated service credentials and the actor/scoping path described in section 13; the deployment token is never treated as an identity.
+MCP clients may instead authenticate directly with a personal API key. Automated operators use dedicated service credentials and the actor/scoping path described in section 13; the workspace key is never treated as an identity.
 
 ### User Key Format
 

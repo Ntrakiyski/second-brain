@@ -15,9 +15,9 @@ You have access to Second Brain through MCP. Treat it as the authoritative memor
 
 ### First-run identity setup
 
-- If Second Brain is connected only with the deployment key, open `https://second-brain.nikolay-trakiyski.workers.dev/` automatically when browser tools are available; otherwise give the human the link. Then have them enter the deployment key, create or select their username, copy the generated user API key, and provide the username + user API key to the agent or MCP client.
-- Use the deployment key as the transport/admin key only. Use the username + user API key as the user identity for memory tools.
-- Never store the deployment key or user API key with `remember`.
+- If Second Brain is connected only with the workspace key, open `https://second-brain.nikolay-trakiyski.workers.dev/` automatically when browser tools are available; otherwise give the human the link. Then have them enter the workspace key, create or select their username, copy the generated user API key, and provide the username + user API key to the agent or MCP client.
+- Use the workspace key as the workspace/transport key only. Use the username + user API key as the user identity for memory tools.
+- Never store the workspace key or user API key with `remember`.
 
 ### Mandatory memory behavior
 
@@ -104,7 +104,7 @@ npm run typecheck        # generates worker-configuration.d.ts first, then tsc
 - `defaultHandler` — all REST routes + static assets from `public/`
 
 **Multi-user auth layers:**
-1. **Deployment token** (`AUTH_TOKEN`) — Bearer header, checked first on every request
+1. **Workspace key** (`AUTH_TOKEN`) — Bearer header, checked first on every request
 2. **User credentials** — `X-Second-Brain-User` (username) + `X-Second-Brain-User-Key` (`sbu_xxx.yyy` format)
 3. **Visibility enforcement** — `buildVisibilityClause(userId)` adds `(owner_user_id = ? OR tags NOT LIKE '%"private"%')` to all queries
 4. **Ownership checks** — forget/link/unlink/update verify `owner_user_id` before mutating
@@ -129,8 +129,8 @@ npm run typecheck        # generates worker-configuration.d.ts first, then tsc
 
 ## Key Gotchas
 
-- **Auth is two-layer.** Every request needs `Bearer <AUTH_TOKEN>` (deployment token). User-specific requests also need `X-Second-Brain-User` + `X-Second-Brain-User-Key` headers. Neither layer is optional for user-scoped operations.
-- **`AUTH_TOKEN` is the deployment token only.** User API keys (`sbu_xxx.yyy`) go in `X-Second-Brain-User-Key`, never as Bearer. Confusing these causes "Invalid credentials".
+- **Auth is two-layer.** Every request needs `Bearer <AUTH_TOKEN>` (workspace key). User-specific requests also need `X-Second-Brain-User` + `X-Second-Brain-User-Key` headers. Neither layer is optional for user-scoped operations.
+- **`AUTH_TOKEN` is the workspace key only.** User API keys (`sbu_xxx.yyy`) go in `X-Second-Brain-User-Key`, never as Bearer. Confusing these causes "Invalid credentials".
 - **`forgetEntry()` has no ownership check.** Always verify `owner_user_id` BEFORE calling it. The REST `POST /forget` and MCP `forget` handlers do this; direct calls don't.
 - **`_system` user** owns all pre-migration entries (public, visible to everyone). Their `status` is `'inactive'` so they can't authenticate.
 - **Visibility clause format:** `(owner_user_id = ? OR tags NOT LIKE '%"private"%')`. Private entries must include `"private"` in the JSON tags array.

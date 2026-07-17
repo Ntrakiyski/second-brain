@@ -37,7 +37,7 @@
 - Called on init and after account creation
 
 **JavaScript — new `createAccount()` function:**
-- `async function createAccount()` — reads username from input, calls `POST /api/users` with deployment token
+- `async function createAccount()` — reads username from input, calls `POST /api/users` with workspace key
 - On success: hides create form, shows `#key-reveal` with the returned key
 - On error: shows error message
 - After "I've saved it" clicked: switch to Sign In tab, reload user dropdown
@@ -63,7 +63,7 @@
   - Generates key via `generateApiKey()` from ticket 01
   - Hashes key, inserts into users table
   - Returns: `{ ok: true, username: string, key: string }` (key is the raw `sbu_<id>.<secret>`)
-  - Requires deployment AUTH_TOKEN (same as existing auth)
+  - Requires workspace key (`AUTH_TOKEN`, same as existing auth)
 
 ### `test/integration/users-api.test.ts` — Registration flow tests
 - Test: POST /api/users creates user, returns key

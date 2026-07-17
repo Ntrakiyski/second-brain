@@ -130,10 +130,16 @@ function fakeDocument(elements: Record<string, FakeElement>) {
 }
 
 describe("dashboard credential storage", () => {
+  it("presents the shared bearer credential as a workspace key", () => {
+    expect(indexHtml).toContain('for="auth-token">Workspace key</label>');
+    expect(indexHtml).toContain('placeholder="Workspace key"');
+    expect(indexHtml).not.toContain("Deployment token");
+  });
+
   it("removes credentials left by older dashboard versions during init", () => {
     const authUrl = fakeElement();
     const storage = makeStorage({
-      sb_token: "legacy-deployment-token",
+      sb_token: "legacy-workspace-key",
       sb_key: "legacy-user-key",
       sb_auth_mode: "legacy",
       sb_url: "https://brain.example.test",
@@ -160,11 +166,11 @@ describe("dashboard credential storage", () => {
     expect(authUrl.value).toBe("https://brain.example.test");
   });
 
-  it("keeps deployment and user credentials in memory through connect and login", async () => {
+  it("keeps workspace and user credentials in memory through connect and login", async () => {
     const storage = makeStorage();
     const elements = {
       "auth-url": fakeElement({ value: "https://brain.example.test/" }),
-      "auth-token": fakeElement({ value: "deployment-secret" }),
+      "auth-token": fakeElement({ value: "workspace-secret" }),
       "auth-error": fakeElement(),
       "auth-connect-btn": fakeElement({ textContent: "Connect" }),
       "auth-connect-step": fakeElement(),
@@ -202,11 +208,11 @@ describe("dashboard credential storage", () => {
 
     expect(connectHarness.state()).toEqual({
       WORKER_URL: "https://brain.example.test",
-      AUTH_TOKEN: "deployment-secret",
+      AUTH_TOKEN: "workspace-secret",
     });
     expect(fetch).toHaveBeenLastCalledWith(
       "https://brain.example.test/api/users",
-      { headers: { Authorization: "Bearer deployment-secret" } },
+      { headers: { Authorization: "Bearer workspace-secret" } },
     );
     expect(elements["auth-token"].value).toBe("");
 
@@ -217,7 +223,7 @@ describe("dashboard credential storage", () => {
       "showApp",
       `"use strict";
        const WORKER_URL = "https://brain.example.test";
-       const AUTH_TOKEN = "deployment-secret";
+       const AUTH_TOKEN = "workspace-secret";
        let CURRENT_USERNAME = "";
        let USER_API_KEY = "";
        const loginWithKey = (${extractInlineFunction("loginWithKey")});

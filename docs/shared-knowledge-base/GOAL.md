@@ -11,7 +11,7 @@ Extend Second Brain from a single-user personal memory tool into a multi-user sh
 | Current (v1) | Next (v2) |
 |---|---|
 | One deployment, one owner | One deployment, multiple users |
-| Single AUTH_TOKEN | Deployment token + per-user authentication keys |
+| Single AUTH_TOKEN | Workspace key + per-user authentication keys |
 | No ownership tracking | Every memory has an owner (owner_user_id) |
 | No visibility rules | System-enforced `private` tag: only owner can see |
 | No connection visibility rules | Private memories connect only to owner's private memories |
@@ -26,7 +26,7 @@ Extend Second Brain from a single-user personal memory tool into a multi-user sh
 - Cloudflare Workers + D1 + Vectorize stack
 - Semantic search, duplicate detection, contradiction handling
 - Nightly compression and graph maintenance
-- Existing deployment URL + deployment token flow (first screen)
+- Existing deployment URL + workspace key flow (first screen)
 
 ---
 
@@ -49,7 +49,7 @@ Two-screen flow:
 
 **Screen 1:** Connect to Second Brain (same as today)
 - Worker URL
-- Deployment AUTH_TOKEN
+- Workspace key (`AUTH_TOKEN`)
 
 **Screen 2:** Who are you?
 - Select existing username → enter their key
@@ -58,13 +58,13 @@ Two-screen flow:
 Every request carries:
 
 ```http
-Authorization: Bearer <DEPLOYMENT_AUTH_TOKEN>
+Authorization: Bearer <WORKSPACE_KEY>
 X-Second-Brain-User: nik
 X-Second-Brain-User-Key: <USER_AUTH_KEY>
 ```
 
 The server:
-1. Validates deployment token
+1. Validates workspace key
 2. Looks up user by normalized username
 3. Verifies user key hash
 4. Resolves internal `user_id`
@@ -258,7 +258,7 @@ Any HTTP client calling the REST API:
 The CLI tool must:
 - Accept `--user` and `--user-key` flags (or equivalent config)
 - Update `.env` or config file to store user credentials
-- Continue working with just the deployment token during transition
+- Continue working with just the workspace key during transition
 
 ## 16.4 Browser Extension
 
@@ -328,8 +328,8 @@ Expand the main page to better visualize memories with the new features:
 
 # 20. Acceptance Criteria
 
-1. Existing URL + deployment token flow still works
-2. User selection screen appears after deployment auth
+1. Existing URL + workspace key flow still works
+2. User selection screen appears after workspace-key auth
 3. New users can be created with auto-generated keys
 4. Raw keys are shown once, only hashes stored
 5. Incorrect keys are rejected

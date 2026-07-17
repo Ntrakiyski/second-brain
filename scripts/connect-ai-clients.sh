@@ -125,7 +125,7 @@ fi
 echo
 echo "── Done ──"
 echo "Reminders:"
-echo "  • On first use you'll be prompted in your browser to enter your AUTH_TOKEN —"
+echo "  • On first use you'll be prompted in your browser to enter your workspace key (AUTH_TOKEN) —"
 echo "    that's the one-time OAuth handshake. (If you connect both Claude Code and"
 echo "    Codex in the same browser session, you may only be asked once.)"
 echo "  • Also using the ChatGPT or Claude apps (not Codex CLI / Claude Code)? Their"

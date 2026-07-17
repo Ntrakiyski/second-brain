@@ -98,9 +98,9 @@ Second Brain v2 transforms the single-user memory system into a **multi-user sha
 
 #### Accounts & Auth
 - **Per-user accounts** with individual API keys (`sbu_xxx.yyy` format, HMAC-SHA-256 hashed)
-- **Two-step auth flow:** deployment token connects to the server → select or create your account
+- **Two-step auth flow:** workspace key connects to the server → select or create your account
 - **User key generation** from the dashboard with one-time key reveal
-- **Deployment owner** can create and deactivate accounts
+- **Workspace owner** can create and deactivate accounts
 - **Sidebar username display** shows who you're logged in as
 
 #### Ownership & Visibility
@@ -129,7 +129,7 @@ Second Brain v2 transforms the single-user memory system into a **multi-user sha
 - **Keyword search** enforces visibility (only scoped entries returned)
 
 ### Dashboard UI
-- **Two-step login:** URL + deployment token → user dropdown + API key or create account
+- **Two-step login:** URL + workspace key → user dropdown + API key or create account
 - **Owner badges** and **privacy lock icons** on memory cards
 - **User filter** and **visibility filter** dropdowns
 - **Forget button** uses REST API (no more MCP SSE parsing issues)
@@ -147,8 +147,8 @@ Second Brain v2 transforms the single-user memory system into a **multi-user sha
 - New test suites: `auth.test.ts`, `users-api.test.ts`, `visibility.test.ts`, `migration.test.ts`, `entry-ownership.test.ts`, `vector-metadata.test.ts`, `cross-user-conflict.test.ts`, `mcp-user-context.test.ts`, `per-user-compression.test.ts`
 
 ### Breaking Changes
-- Single-user auth flow replaced with two-step deployment-token + user-account flow
-- `AUTH_TOKEN` is now the deployment token only — user API keys are separate
+- Single-user auth flow replaced with two-step workspace-key + user-account flow
+- `AUTH_TOKEN` is now the workspace key only — user API keys are separate
 - Legacy entries assigned to `_system` user (public, visible to all)
 
 ### Migration

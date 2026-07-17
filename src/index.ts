@@ -34,7 +34,7 @@ const oauthProvider = new OAuthProvider({
   tokenEndpoint: "/oauth/token",
   clientRegistrationEndpoint: "/oauth/register",
   // Personal API keys may be used directly by non-browser MCP clients. The
-  // deployment token is deliberately not a principal: it can gate legacy
+  // workspace key is deliberately not a principal: it can gate legacy
   // transport, but it must never collapse every client into one user namespace.
   resolveExternalToken: async ({ token, env }) => {
     const typedEnv = env as Env;

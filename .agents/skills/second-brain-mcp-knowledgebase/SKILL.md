@@ -11,10 +11,10 @@ Second Brain is a governed team knowledgebase. Treat entries as durable knowledg
 
 ## First-run identity setup
 
-Before using memory tools, make sure the human has a user identity. The deployment key is only the transport/admin key; useful agent memory requires a username and user API key. If the client has browser support, open the dashboard automatically as the first onboarding action; otherwise show the link and ask the human to open it.
+Before using memory tools, make sure the human has a user identity. The workspace key is only the workspace/transport key; useful agent memory requires a username and user API key. If the client has browser support, open the dashboard automatically as the first onboarding action; otherwise show the link and ask the human to open it.
 
 1. Open <https://second-brain.nikolay-trakiyski.workers.dev/>.
-2. Ask the human to enter the deployment key in the dashboard.
+2. Ask the human to enter the workspace key in the dashboard.
 3. Have them select an existing username or create a new username.
 4. Have them copy the generated user API key immediately; it is shown once.
 5. Ask them to provide the username and user API key to the agent or MCP client configuration.
@@ -23,13 +23,13 @@ For header-based MCP clients, use:
 
 ```json
 {
-  "Authorization": "Bearer YOUR-DEPLOYMENT-TOKEN",
+  "Authorization": "Bearer YOUR-WORKSPACE-KEY",
   "X-Second-Brain-User": "your-username",
   "X-Second-Brain-User-Key": "sbu_your-user-api-key"
 }
 ```
 
-Never call `remember` with the deployment key or user API key. Secrets are setup credentials, not memories.
+Never call `remember` with the workspace key or user API key. Secrets are setup credentials, not memories.
 
 ## Core product frame
 

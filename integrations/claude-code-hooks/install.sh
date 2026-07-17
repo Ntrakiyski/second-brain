@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Adds Second Brain hooks to Claude Code's global settings.
-# Usage: bash install.sh https://your-worker.workers.dev your-token
+# Usage: bash install.sh https://your-worker.workers.dev your-workspace-key
 #
 # After running, every Claude Code session will:
 #   - auto-recall relevant context on start
@@ -19,7 +19,7 @@ if [[ -z "$WORKER_URL" ]]; then
   read -rp "Enter your Second Brain worker URL (e.g. https://your-worker.workers.dev): " WORKER_URL
 fi
 if [[ -z "$TOKEN" ]]; then
-  read -rsp "Enter your AUTH_TOKEN: " TOKEN
+  read -rsp "Enter your workspace key (AUTH_TOKEN): " TOKEN
   echo
 fi
 

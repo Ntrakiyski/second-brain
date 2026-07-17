@@ -3,7 +3,7 @@
  *
  * Setup:
  * 1. Replace YOUR_WORKER_URL with your Worker URL (e.g. second-brain.yourname.workers.dev)
- * 2. Replace YOUR_TOKEN with your AUTH_TOKEN secret
+ * 2. Replace YOUR_TOKEN with your workspace key (AUTH_TOKEN)
  * 3. Create a new bookmark in your browser
  * 4. Paste the entire javascript: line below as the bookmark URL
  * 5. Click it on any page to save to your second brain

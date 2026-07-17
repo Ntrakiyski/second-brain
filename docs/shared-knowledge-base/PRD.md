@@ -19,7 +19,7 @@ Extend Second Brain into a multi-user shared memory platform. Every user authent
 3. As a returning user, I want to select my username from a dropdown and enter my key, so that I can access my memories quickly
 4. As a user, I want my key to be shown once at creation and never stored in plaintext, so that my identity is secure
 5. As a user, I want incorrect keys to be rejected with a clear error, so that I know what went wrong
-6. As a user, I want the deployment AUTH_TOKEN to still work as the first screen of authentication, so that existing setups are not disrupted
+6. As a user, I want the workspace key (`AUTH_TOKEN`) to still work as the first screen of authentication, so that existing setups are not disrupted
 7. As a user, I want my username to be display-only and my key to prove identity, so that the system is secure by design
 
 ### Memory Ownership
@@ -95,7 +95,7 @@ Extend Second Brain into a multi-user shared memory platform. Every user authent
 46. As a user, I want to deactivate my account, so that I can leave the team
 47. As a user, I want my public memories to stay visible to the team after I deactivate, so that shared knowledge is preserved
 48. As a user, I want my private memories to be deleted when I deactivate, so that my personal data is removed
-49. As the deployment owner, I want to be able to deactivate other users, so that I can manage team membership
+49. As the workspace owner, I want to be able to deactivate other users, so that I can manage team membership
 
 ### Dashboard
 
@@ -161,7 +161,7 @@ Three modes: (1) My public memories — user's memories without `private` tag, (
 
 ### User Deactivation
 
-When a user is deactivated: public memories stay visible, private memories are deleted, status changes to `inactive`. No admin role is needed for now — deployment owner can deactivate others.
+When a user is deactivated: public memories stay visible, private memories are deleted, status changes to `inactive`. No admin role is needed for now — workspace owner can deactivate others.
 
 ### Migration Strategy
 
@@ -176,12 +176,12 @@ When a user is deactivated: public memories stay visible, private memories are d
 
 Every request carries:
 ```
-Authorization: Bearer <DEPLOYMENT_AUTH_TOKEN>
+Authorization: Bearer <WORKSPACE_KEY>
 X-Second-Brain-User: <username>
 X-Second-Brain-User-Key: <user_key>
 ```
 
-The server validates deployment token, looks up user, verifies key hash, resolves internal `user_id`.
+The server validates the workspace key, looks up user, verifies key hash, resolves internal `user_id`.
 
 ### User List Endpoint
 

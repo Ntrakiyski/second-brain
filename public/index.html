@@ -2940,11 +2940,11 @@
         <h1>Second Brain</h1>
         <!-- Step 1: Connect to server -->
         <form id="auth-connect-step" class="field-group" onsubmit="connect(); return false">
-          <input type="text" name="username" value="deployment" autocomplete="username" hidden />
+          <input type="text" name="username" value="workspace" autocomplete="username" hidden />
           <label class="sr-only" for="auth-url">Second Brain server URL</label>
           <input type="url" id="auth-url" placeholder="Second Brain server URL" autocomplete="url" autocapitalize="none" />
-          <label class="sr-only" for="auth-token">Deployment token</label>
-          <input type="password" id="auth-token" placeholder="Deployment token" autocomplete="current-password" />
+          <label class="sr-only" for="auth-token">Workspace key</label>
+          <input type="password" id="auth-token" placeholder="Workspace key" autocomplete="current-password" />
           <button id="auth-connect-btn" type="submit">Connect</button>
         </form>
         <!-- Step 2: Account selection or creation -->
@@ -3560,10 +3560,10 @@
 
       async function connect() {
         const url = document.getElementById('auth-url').value.trim().replace(/\/$/, '')
-        const tok = document.getElementById('auth-token').value.trim()
+        const workspaceKey = document.getElementById('auth-token').value.trim()
         const err = document.getElementById('auth-error')
         const btn = document.getElementById('auth-connect-btn')
-        if (!url || !tok) {
+        if (!url || !workspaceKey) {
           err.textContent = 'Please fill in both fields.'
           return
         }
@@ -3571,13 +3571,13 @@
         btn.disabled = true
         err.textContent = ''
         try {
-          // The deployment token is an administrative transport credential,
+          // The workspace key is an administrative transport credential,
           // not a user principal. Probe an admin endpoint before account login.
-          const res = await fetch(`${url}/api/users`, { headers: { Authorization: `Bearer ${tok}` } })
-          if (res.status === 401) throw new Error('Invalid token')
+          const res = await fetch(`${url}/api/users`, { headers: { Authorization: `Bearer ${workspaceKey}` } })
+          if (res.status === 401) throw new Error('Invalid workspace key')
           if (!res.ok) throw new Error(`Server error: ${res.status}`)
           WORKER_URL = url
-          AUTH_TOKEN = tok
+          AUTH_TOKEN = workspaceKey
           localStorage.setItem('sb_url', url)
           document.getElementById('auth-token').value = ''
           document.getElementById('auth-connect-step').style.display = 'none'

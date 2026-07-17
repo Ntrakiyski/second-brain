@@ -305,7 +305,7 @@ export const defaultHandler = {
       return storageUnavailableResponse();
     }
 
-    // POST /api/users — create a new user (requires deployment token)
+    // POST /api/users — create a new user (requires workspace key)
     if (url.pathname === "/api/users" && request.method === "POST") {
       if (!isAuthorized(request, env)) {
         return json({ ok: false, error: "Unauthorized" }, 401);
@@ -338,7 +338,7 @@ export const defaultHandler = {
       return json({ ok: true, username, key: fullKey }, 201);
     }
 
-    // GET /api/users — list active users (requires deployment token)
+    // GET /api/users — list active users (requires workspace key)
     if (url.pathname === "/api/users" && request.method === "GET") {
       if (!isAuthorized(request, env)) {
         return json({ ok: false, error: "Unauthorized" }, 401);

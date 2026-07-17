@@ -131,7 +131,7 @@ if (Get-Command codex -ErrorAction SilentlyContinue) {
 Write-Host ""
 Write-Host "-- Done --"
 Write-Host "Reminders:"
-Write-Host "  - On first use you'll be prompted in your browser to enter your AUTH_TOKEN -"
+Write-Host "  - On first use you'll be prompted in your browser to enter your workspace key (AUTH_TOKEN) -"
 Write-Host "    that's the one-time OAuth handshake. (If you connect both Claude Code and"
 Write-Host "    Codex in the same browser session, you may only be asked once.)"
 Write-Host "  - Also using the ChatGPT or Claude apps (not Codex CLI / Claude Code)? Their"

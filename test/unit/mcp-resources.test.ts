@@ -36,6 +36,10 @@ describe("MCP resources", () => {
     expect(result.contents[0].text).toContain("npx skills add https://github.com/Ntrakiyski/second-brain");
     expect(result.contents[0].text).toContain("second-brain-mcp-knowledgebase");
     expect(result.contents[0].text).toContain("https://second-brain.nikolay-trakiyski.workers.dev/");
+    expect(result.contents[0].text).toContain("workspace key");
+    expect(result.contents[0].text).toContain("YOUR-WORKSPACE-KEY");
     expect(result.contents[0].text).toContain("X-Second-Brain-User-Key");
+    expect(result.contents[0].text).not.toContain("deployment key");
+    expect(result.contents[0].text).not.toContain("YOUR-DEPLOYMENT-TOKEN");
   });
 });

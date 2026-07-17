@@ -110,7 +110,7 @@ describe("MCP actor resolution", () => {
     });
   });
 
-  it("allows verified legacy credentials without props only with the deployment token", async () => {
+  it("allows verified legacy credentials without props only with the workspace key", async () => {
     const { env, credentials } = await seedUser();
     const authorized = await resolveMcpActor(
       req("POST", "/mcp", { body: MCP_BODY, userCredentials: credentials }),

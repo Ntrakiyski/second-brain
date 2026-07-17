@@ -148,7 +148,7 @@ Open the live deployment:
 
 The dashboard supports:
 
-- deployment-token connection;
+- workspace-key connection;
 - user creation and login with per-user API keys;
 - recall, recent memories, capture, graph, and settings views;
 - temporal recall controls;
@@ -186,12 +186,12 @@ The MCP server also exposes `memory://onboarding`, a read-only onboarding resour
 First-run identity setup for agents:
 
 1. Open [the dashboard](https://second-brain.nikolay-trakiyski.workers.dev/) automatically when the MCP client has browser support, or ask the human to open it.
-2. Enter the deployment key.
+2. Enter the workspace key.
 3. Create or select a username.
 4. Copy the generated user API key.
 5. Give the username and user API key to the agent/MCP client.
 
-The deployment key is the only shared secret needed to begin setup. User-scoped memory operations should use the username and user API key.
+The workspace key is the only shared secret needed to begin setup. User-scoped memory operations should use the username and user API key.
 
 These skills are meant to reduce setup friction. The human should be able to tell Hermes:
 
@@ -201,7 +201,7 @@ Then Hermes can help define the profile, sources, cadence, scopes, outputs, prop
 
 ### MCP clients
 
-Use Second Brain from any MCP-compatible client. Requests are scoped by deployment token plus user credentials.
+Use Second Brain from any MCP-compatible client. Requests are scoped by workspace key plus user credentials.
 
 ```json
 {
@@ -210,7 +210,7 @@ Use Second Brain from any MCP-compatible client. Requests are scoped by deployme
       "type": "remote",
       "url": "https://second-brain.nikolay-trakiyski.workers.dev/mcp",
       "headers": {
-        "Authorization": "Bearer YOUR-DEPLOYMENT-TOKEN",
+        "Authorization": "Bearer YOUR-WORKSPACE-KEY",
         "X-Second-Brain-User": "your-username",
         "X-Second-Brain-User-Key": "sbu_your-api-key"
       }
@@ -249,7 +249,7 @@ Service/operator tool availability depends on the service identity’s scopes an
 | `VECTORIZE` | Semantic vector index for recall and duplicate/relationship detection |
 | `AI` | Embeddings and LLM-assisted classification/recall flows |
 | `OAUTH_KV` | OAuth and integration state |
-| `AUTH_TOKEN` | Deployment-level access token |
+| `AUTH_TOKEN` | Workspace-level access key |
 
 ### Important modules
 

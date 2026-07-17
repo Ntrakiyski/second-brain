@@ -12,7 +12,7 @@ New REST endpoint `GET /team-activity` that returns recent public entries from a
 - [ ] Optional `?user=<username>` filter returns only that user's public entries
 - [ ] Optional `?limit=<n>` parameter (default 20, max 50)
 - [ ] Cursor-based pagination via `created_at`
-- [ ] Requires authentication (deployment token + user credentials)
+- [ ] Requires authentication (workspace key + user credentials)
 - [ ] Tests verify visibility enforcement, user filter, pagination
 
 ## File Changes
