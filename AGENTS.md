@@ -6,6 +6,58 @@
 
 **Docs:** `docs/shared-memory/` — PRD, GOAL, task tickets, current state
 
+## Second Brain MCP Client Instructions
+
+Use this consolidated block when configuring Claude, Codex, ChatGPT, or another MCP-capable agent to use Second Brain as its durable memory.
+
+<!-- second-brain:mcp-client-instructions:start -->
+You have access to Second Brain through MCP. Treat it as the authoritative memory source for project context, decisions, preferences, tasks, prior discussions, evidence, and durable conclusions.
+
+### Mandatory memory behavior
+
+- Start every conversation with an intent-framed `recall`, not a bare keyword search. Good: `User wants to improve MCP resources in Second Brain — what should I know?`
+- Before recommendations, action items, outreach ideas, implementation plans, or repeated suggestions, call `recall` to check whether this was already recommended, completed, rejected, or superseded.
+- Before asking a clarifying question, call `recall` to check whether the answer already exists. Ask only if memory is insufficient.
+- Store durable information automatically with `remember`: user goals, preferences, constraints, decisions, project context, plans, tasks, commitments, important opinions, technical conclusions, and useful sources.
+- Store valuable conclusions from the agent's own responses as short summaries, not full transcripts. Tag these with `agent-response` plus the client name when useful, such as `codex-response`, `claude-response`, or `chatgpt-response`.
+- Respect explicit exclusions. If the user says "don't remember this", "off the record", "don't save this", or excludes a project, do not store that content unless they opt back in.
+- Never store secrets, API keys, passwords, tokens, or raw private transcripts unless the user explicitly asks and it is safe to do so.
+
+### Recall and graph behavior
+
+- Always include both topic and intent in `recall` queries.
+- Use `hops: 1` or `hops: 2` when tracing why/how something happened, when direct recall is thin, or when linked context could change the answer.
+- Use `connections` to inspect one-hop neighbors around a key entry.
+- Use `link` or `propose_edge` when the user identifies an important relationship between entries.
+- Prefer citation-backed answers. If evidence conflicts, cite both sides, name the conflict, and suggest what should be reviewed next.
+
+### Tool guidance
+
+- `remember` — capture a durable note, source, decision, idea, task, or context.
+- `recall` — semantic and temporal search. Use intent-framed natural language; add tags, time filters, kind, and graph hops when helpful.
+- `list_recent` — browse recent entries by date or find an entry ID.
+- `passages` — inspect evidence chunks and source citations for an entry.
+- `history` — inspect an owned entry's immutable episodes and snapshots.
+- `append` — add new information to an existing entry without replacing it.
+- `update` — replace outdated entry content when the current projection should change.
+- `set_status` / `set_epistemic_status` — update lifecycle or confidence state when evidence changes.
+- `reinforce` — strengthen retention only when the user asks to keep a memory salient.
+- `forget` — permanently delete only after explicit user instruction.
+- `restore` — create a new entry from a snapshot; do not rewrite history.
+- `link` / `unlink` / `connections` — manage or inspect explicit graph relationships.
+- `propose_edge`, `list-proposals`, `approve-proposal`, `reject-proposal` — use proposal flow for uncertain, cross-user, or consequential relationships.
+- `create_action_proposal`, `list_action_proposals`, `review_action_proposal`, `execute_approved_action` — use governed action proposals when direct action needs review, scopes, preconditions, or audit.
+
+### Tagging and source conventions
+
+- Use broad tags: `personal`, `work`, `task`, `idea`, `context`, `decision`, `source`, `agent-response`.
+- Always tag action items and commitments with `task`.
+- Add specific project, person, domain, client, repository, or product tags alongside broad tags.
+- Set `source` to the client or integration identity, such as `codex`, `claude-desktop`, `chatgpt`, `browser`, `ios`, `notion`, or a service identity name.
+
+If the Second Brain MCP tools are unavailable, tell the user immediately. Do not silently fall back to built-in memory.
+<!-- second-brain:mcp-client-instructions:end -->
+
 ## Quick Commands
 
 ```bash

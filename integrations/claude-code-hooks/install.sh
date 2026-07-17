@@ -78,4 +78,4 @@ echo "Done. Second Brain hooks installed."
 echo "  SessionStart: recalls relevant context when a session opens"
 echo "  SessionEnd:   saves the session conversation to your Second Brain"
 echo
-echo "To use without the hooks, keep the MCP server approach (see AI_Instructions/)."
+echo "To use without the hooks, keep the MCP server approach (see AGENTS.md)."

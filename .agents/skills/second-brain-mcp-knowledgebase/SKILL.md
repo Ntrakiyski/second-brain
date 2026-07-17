@@ -1,6 +1,6 @@
 ---
 name: second-brain-mcp-knowledgebase
-description: Use when an agent or human wants to connect to Second Brain through MCP and use it as a living team knowledgebase: capture knowledge, recall with citations, respect privacy, create links, inspect history, and translate knowledge between different people or agent domains.
+description: "Use when an agent or human wants to connect to Second Brain through MCP and use it as a living team knowledgebase: capture knowledge, recall with citations, respect privacy, create links, inspect history, and translate knowledge between different people or agent domains."
 ---
 
 # Second Brain MCP Knowledgebase
@@ -165,4 +165,3 @@ Source
 Why it matters
 Related entries to link
 ```
-

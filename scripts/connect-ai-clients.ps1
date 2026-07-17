@@ -14,7 +14,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$RawBase = "https://raw.githubusercontent.com/rahilp/second-brain-cloudflare/main"
+$RawBase = "https://raw.githubusercontent.com/Ntrakiyski/second-brain/main"
+$InstructionSourcePath = "AGENTS.md"
+$InstructionSectionStart = "<!-- second-brain:mcp-client-instructions:start -->"
+$InstructionSectionEnd = "<!-- second-brain:mcp-client-instructions:end -->"
 $StartMarker = "<!-- second-brain:instructions:start -->"
 $EndMarker = "<!-- second-brain:instructions:end -->"
 $SentinelPhrase = "At the start of EVERY conversation, call recall"
@@ -36,10 +39,20 @@ Write-Host "Worker URL: $WorkerUrl"
 Write-Host "MCP endpoint: $McpUrl"
 Write-Host ""
 
+function Get-ClientInstructions {
+  $document = Invoke-RestMethod -Uri "$RawBase/$InstructionSourcePath" -ErrorAction Stop
+  $startIndex = $document.IndexOf($InstructionSectionStart)
+  $endIndex = $document.IndexOf($InstructionSectionEnd)
+  if ($startIndex -lt 0 -or $endIndex -lt 0 -or $endIndex -le $startIndex) {
+    throw "Instruction block markers not found in $RawBase/$InstructionSourcePath"
+  }
+  $contentStart = $startIndex + $InstructionSectionStart.Length
+  return $document.Substring($contentStart, $endIndex - $contentStart).Trim()
+}
+
 function Append-Instructions {
   param(
     [string]$TargetFile,
-    [string]$SourcePath,
     [string]$Label
   )
 
@@ -61,9 +74,9 @@ function Append-Instructions {
   }
 
   try {
-    $body = Invoke-RestMethod -Uri "$RawBase/$SourcePath" -ErrorAction Stop
+    $body = Get-ClientInstructions
   } catch {
-    Write-Warning "[$Label] Could not fetch instruction body from $RawBase/$SourcePath - skipping."
+    Write-Warning "[$Label] Could not fetch instruction block from $RawBase/$InstructionSourcePath - skipping."
     return
   }
 
@@ -73,8 +86,8 @@ function Append-Instructions {
 }
 
 Write-Host "-- Global instructions --"
-Append-Instructions -TargetFile (Join-Path $env:USERPROFILE ".claude\CLAUDE.md") -SourcePath "AI_Instructions/CLAUDE_INSTRUCTIONS.md" -Label "Claude Code"
-Append-Instructions -TargetFile (Join-Path $env:USERPROFILE ".codex\AGENTS.md") -SourcePath "AI_Instructions/CODEX_INSTRUCTIONS.md" -Label "Codex CLI"
+Append-Instructions -TargetFile (Join-Path $env:USERPROFILE ".claude\CLAUDE.md") -Label "Claude Code"
+Append-Instructions -TargetFile (Join-Path $env:USERPROFILE ".codex\AGENTS.md") -Label "Codex CLI"
 Write-Host ""
 
 Write-Host "-- MCP server registration (OAuth - no token needed here) --"
@@ -123,6 +136,6 @@ Write-Host "    that's the one-time OAuth handshake. (If you connect both Claude
 Write-Host "    Codex in the same browser session, you may only be asked once.)"
 Write-Host "  - Also using the ChatGPT or Claude apps (not Codex CLI / Claude Code)? Their"
 Write-Host "    personalization / custom-instruction settings are account-level and have no"
-Write-Host "    public write API - paste AI_Instructions/CHATGPT_INSTRUCTIONS.md into ChatGPT's"
-Write-Host "    Settings -> Personalization -> Custom Instructions, and a similar block into"
-Write-Host "    claude.ai's profile preferences, by hand."
+Write-Host "    public write API - paste the 'Second Brain MCP Client Instructions' block"
+Write-Host "    from AGENTS.md into ChatGPT's Settings -> Personalization -> Custom Instructions,"
+Write-Host "    and a similar block into claude.ai's profile preferences, by hand."

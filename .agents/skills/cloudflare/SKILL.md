@@ -7,6 +7,9 @@ references:
   - d1
   - durable-objects
   - workers-ai
+metadata:
+  internal: true
+
 ---
 
 # Cloudflare Platform Skill

@@ -56,6 +56,7 @@ import {
 import { decideOperatorAction, requireAllowedDecision } from "./operator-policy";
 import { verifyServiceActor } from "./service-actor";
 import { withMandatoryAudit } from "./mandatory-audit";
+import { MCP_ONBOARDING_MARKDOWN, MCP_ONBOARDING_RESOURCE_URI } from "./mcp-onboarding";
 
 // ─── MCP Server ───────────────────────────────────────────────────────────────
 
@@ -127,6 +128,23 @@ export function buildMcpServer(env: Env, ctx: ExecutionContext, actor: ActorCont
   }
 
   const server = new McpServer({ name: "second-brain", version: "1.0.0" });
+
+  server.registerResource(
+    "second-brain-mcp-onboarding",
+    MCP_ONBOARDING_RESOURCE_URI,
+    {
+      title: "Second Brain MCP Onboarding",
+      description: "Read this first after connecting Second Brain MCP. Explains which MCP-use skills to install from skills.sh and how agents should start using the tools.",
+      mimeType: "text/markdown",
+    },
+    (uri) => ({
+      contents: [{
+        uri: uri.toString(),
+        mimeType: "text/markdown",
+        text: MCP_ONBOARDING_MARKDOWN,
+      }],
+    }),
+  );
 
   if (actor.kind === "service") {
     const serviceActor = actor;

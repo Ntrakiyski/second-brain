@@ -8,6 +8,9 @@ references:
   - astro
   - sveltekit
   - hugo
+metadata:
+  internal: true
+
 ---
 
 # Turnstile Spin skill

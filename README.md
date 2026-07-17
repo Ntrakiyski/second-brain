@@ -166,6 +166,23 @@ This repo includes practical skill files that humans can hand to Codex, Hermes, 
 - [Second Brain MCP Knowledgebase](.agents/skills/second-brain-mcp-knowledgebase/SKILL.md) — how people and agents should use Second Brain through MCP as a governed team knowledgebase and translation layer.
 - [Hermes Domain Profile Creator](.agents/skills/hermes-domain-profile/SKILL.md) — how Hermes should turn “build a scheduled job for X” into a safe domain-agent profile, with sources, cadence, scopes, outputs, proposals, and review boundaries.
 
+Install the public MCP-use skills with the Skills CLI:
+
+```bash
+npx skills add https://github.com/Ntrakiyski/second-brain -g -y
+```
+
+Only MCP-use skills are public by default. Development/maintainer skills in `.agents/skills/` are marked internal so Skills CLI and skills.sh users do not install them accidentally. If needed, install the MCP-use skills explicitly:
+
+```bash
+npx skills add https://github.com/Ntrakiyski/second-brain \
+  --skill second-brain-mcp-knowledgebase \
+  --skill hermes-domain-profile \
+  -g -y
+```
+
+The MCP server also exposes `memory://onboarding`, a read-only onboarding resource that tells connected agents to install or load these skills before relying on the raw tool surface.
+
 These skills are meant to reduce setup friction. The human should be able to tell Hermes:
 
 > Read the Hermes Domain Profile Creator skill and let's build a scheduled job for `<domain or goal>`.

@@ -8,7 +8,10 @@
 
 set -euo pipefail
 
-RAW_BASE="https://raw.githubusercontent.com/rahilp/second-brain-cloudflare/main"
+RAW_BASE="https://raw.githubusercontent.com/Ntrakiyski/second-brain/main"
+INSTRUCTION_SOURCE_PATH="AGENTS.md"
+INSTRUCTION_SECTION_START="<!-- second-brain:mcp-client-instructions:start -->"
+INSTRUCTION_SECTION_END="<!-- second-brain:mcp-client-instructions:end -->"
 START_MARKER="<!-- second-brain:instructions:start -->"
 END_MARKER="<!-- second-brain:instructions:end -->"
 SENTINEL_PHRASE="At the start of EVERY conversation, call recall"
@@ -37,11 +40,20 @@ fetch() {
   curl -fsSL "$1"
 }
 
+fetch_client_instructions() {
+  local document
+  document="$(fetch "${RAW_BASE}/${INSTRUCTION_SOURCE_PATH}")" || return 1
+  awk -v start="$INSTRUCTION_SECTION_START" -v end="$INSTRUCTION_SECTION_END" '
+    $0 == start { capture = 1; next }
+    $0 == end { capture = 0 }
+    capture { print }
+  ' <<< "$document"
+}
+
 # ─── Append instructions idempotently ────────────────────────────────────────
 append_instructions() {
   local target_file="$1"
-  local source_path="$2"
-  local label="$3"
+  local label="$2"
 
   mkdir -p "$(dirname "$target_file")"
   touch "$target_file"
@@ -57,8 +69,8 @@ append_instructions() {
   fi
 
   local body
-  if ! body="$(fetch "${RAW_BASE}/${source_path}")"; then
-    echo "[$label] Could not fetch instruction body from ${RAW_BASE}/${source_path} — skipping." >&2
+  if ! body="$(fetch_client_instructions)" || [[ -z "$body" ]]; then
+    echo "[$label] Could not fetch instruction block from ${RAW_BASE}/${INSTRUCTION_SOURCE_PATH} — skipping." >&2
     return
   fi
 
@@ -73,8 +85,8 @@ append_instructions() {
 }
 
 echo "── Global instructions ──"
-append_instructions "$HOME/.claude/CLAUDE.md" "AI_Instructions/CLAUDE_INSTRUCTIONS.md" "Claude Code"
-append_instructions "$HOME/.codex/AGENTS.md" "AI_Instructions/CODEX_INSTRUCTIONS.md" "Codex CLI"
+append_instructions "$HOME/.claude/CLAUDE.md" "Claude Code"
+append_instructions "$HOME/.codex/AGENTS.md" "Codex CLI"
 echo
 
 # ─── Register MCP server via OAuth ────────────────────────────────────────────
@@ -118,6 +130,6 @@ echo "    that's the one-time OAuth handshake. (If you connect both Claude Code 
 echo "    Codex in the same browser session, you may only be asked once.)"
 echo "  • Also using the ChatGPT or Claude apps (not Codex CLI / Claude Code)? Their"
 echo "    personalization / custom-instruction settings are account-level and have no"
-echo "    public write API — paste AI_Instructions/CHATGPT_INSTRUCTIONS.md into ChatGPT's"
-echo "    Settings → Personalization → Custom Instructions, and a similar block into"
-echo "    claude.ai's profile preferences, by hand."
+echo "    public write API — paste the 'Second Brain MCP Client Instructions' block"
+echo "    from AGENTS.md into ChatGPT's Settings → Personalization → Custom Instructions,"
+echo "    and a similar block into claude.ai's profile preferences, by hand."
