@@ -1,109 +1,133 @@
-# Second Brain — Shared Memory
+# Second Brain — Living Team Memory
 
-**Multi-user shared memory for teams of AI agents and humans.**
+**A governed, time-aware memory layer for teams of humans and AI agents.**
 
-[![Built with Cloudflare Workers](https://img.shields.io/badge/Built%20with-Cloudflare%20Workers-F38020?logo=cloudflare\&logoColor=white)](https://workers.cloudflare.com/)
+[![Built with Cloudflare Workers](https://img.shields.io/badge/Built%20with-Cloudflare%20Workers-F38020?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
 [![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-8B5CF6)](https://modelcontextprotocol.io/)
 
-This is a fork of [Second Brain for AI](https://github.com/rahilp/second-brain-cloudflare) — a persistent memory platform that gives Claude, ChatGPT, Cursor, Codex, and other AI tools access to the same memory. We extended it with **multi-user support**, turning it into a shared team memory.
+Second Brain turns scattered notes, decisions, source material, and agent context into a shared memory system that can be queried, cited, reviewed, and safely operated by humans or AI agents.
+
+This project started as a fork of [Second Brain for AI](https://github.com/rahilp/second-brain-cloudflare). It now extends that idea into a multi-user, provenance-first, operator-governed team memory platform.
 
 **Live deployment:** [second-brain.nikolay-trakiyski.workers.dev](https://second-brain.nikolay-trakiyski.workers.dev/)
 
-> **Original project:** [github.com/rahilp/second-brain-cloudflare](https://github.com/rahilp/second-brain-cloudflare) — single-user memory, deploy to your own Cloudflare account in two minutes.
->
-> <a href="https://www.producthunt.com/products/second-brain-cloudflare?embed=true&utm_source=badge-top-post-badge&utm_medium=badge&utm_campaign=badge-second-brain-for-ai" target="_blank" rel="noopener noreferrer"><img alt="Second Brain for AI: Persistent memory for Claude, ChatGPT, and Cursor" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/top-post-badge.svg?post_id=1151393&theme=light&period=daily&t=1780357463637"></a>
+## What it is
 
-## What's new in v2
+Second Brain is not just “semantic search over notes.” It is a memory control plane:
 
-* **Multi-user.** Create separate accounts with per-user API keys. Each user has their own private workspace. Public memories are shared across your team. A **deployment token** lets you connect to the server; then select your account and enter your API key — or generate a new account right from the dashboard.
+- Users and agents can save memories through the dashboard, REST API, or MCP.
+- Each memory has an owner, visibility, versions, immutable source episodes, and rollback history.
+- Recall can answer using semantic search, graph expansion, citations, and temporal filters.
+- Public memories form a shared team knowledge base; private memories stay private.
+- AI operators such as Hermes can read, draft, and propose changes through scoped service identities instead of touching storage directly.
+- Consequential agent actions go through proposals, policy checks, and mandatory audit logging.
 
-* **Memory graph.** Memories now connect to each other — automatically as you save, or explicitly with the new `link` and `connections` tools. Recall can follow those connections (the `hops` option) to surface related context that a plain search would miss, and the dashboard has a new **Graph** tab to explore your memory visually.
+The intended end state is a memory system that behaves like a responsible teammate: it remembers, cites, notices overlap, proposes maintenance, and never silently rewrites the past.
 
-* **Per-user visibility.** Each entry is owned by a specific user. Private entries (tagged `private`) are only visible to their owner. Public entries are visible to everyone. Filters in the dashboard let you browse by user and visibility.
+## User value
 
-* **User management.** The deployment owner can create and deactivate accounts. Deactivating an account removes its private memories while keeping public ones.
+### For individuals
 
-* **Per-user compression.** Nightly memory compression runs independently for each user, ensuring digests and roll-ups never mix data across users.
+- Capture decisions, ideas, tasks, research notes, preferences, and project context in one place.
+- Ask questions in natural language instead of remembering exact wording.
+- See where an answer came from through source/citation cards.
+- Restore or inspect previous versions when memory changes.
+- Mark important memories as reinforced so useful knowledge stays alive.
 
-* **Cross-user conflict detection.** When you save something similar to another user's public memory, recall surfaces the connection so you can avoid duplicated effort.
+### For teams
 
-* **Notion sync.** Connect your Notion workspace from **Settings → Integrations** in the dashboard. Pages you share with the connection sync into memory, stay updated as they change in Notion, and surface in recall alongside everything else. Nightly automatic sync, or on demand with **Sync now**.
+- Share public knowledge while preserving each person’s private workspace.
+- See recent team activity and public memories without exposing private notes.
+- Detect overlap and contradictions across users.
+- Review proposed knowledge changes before they become canonical.
+- Deactivate users safely while preserving public team knowledge and cleaning private artifacts.
 
-* **Graceful degradation.** If the Vectorize index is missing, recall now falls back to keyword search with a clear notice instead of failing, a new `/health` endpoint reports index status, and the dashboard shows a banner with the exact fix.
+### For AI agents
 
-## See it in action
+- Use one durable memory layer across Claude, ChatGPT, Cursor, Codex, Hermes, and any MCP-compatible client.
+- Retrieve scoped context instead of relying on chat history.
+- Operate through least-privilege service identities.
+- Draft or propose changes without bypassing human review.
+- Leave an audit trail for every governed mutation.
 
-**Live deployment:** [https://second-brain.nikolay-trakiyski.workers.dev](https://second-brain.nikolay-trakiyski.workers.dev/)
+## Current implementation
 
-[![Second Brain Demo](https://img.youtube.com/vi/h0JqRM0UxHE/hqdefault.jpg)](https://youtu.be/h0JqRM0UxHE)
+### Pillar 1 — Provenance-first memory
 
-## How it works
+- Immutable `episodes` preserve exact source input.
+- One document envelope per episode keeps source lineage unambiguous.
+- `entry_snapshots` preserve user-visible state before mutations.
+- Restore creates a new version instead of rewriting old history.
+- `as_of` and `known_at` support bitemporal recall:
+  - `as_of` = world/valid time.
+  - `known_at` = when Second Brain knew that state.
+- Evidence passages, documents, and citation metadata flow into recall.
+- Vector cleanup is durable and retryable when stale vector deletion fails.
 
-Connect Second Brain to the AI tools you already use, then save information as it comes up.
+### Pillar 2 — Shared knowledge base
 
-Second Brain retrieves memories by meaning rather than exact wording. Asking:
+- Every entry has explicit `owner_user_id`, `created_by_user_id`, and `visibility`.
+- Private entries are enforced across D1 reads, Vectorize metadata, graph traversal, exports, integrations, and UI.
+- Public entries are visible to the team.
+- Relationships are typed: `relates_to`, `contradicts`, `supports`, `derives_from`, `has_limitation`, and more.
+- Edge confidence and provenance distinguish explicit, inferred, and system-created relationships.
+- Edge history is versioned and reversible via `edge_versions`.
+- Cross-user awareness events notify users when public work overlaps.
 
-> What did I decide about the pricing model?
+### Pillar 3 — Operator control plane
 
-can surface the correct memory even when the original note used completely different words.
+- Service identities have scoped credentials, expiry, rotation, suspension, and revocation.
+- Operators are actor-scoped: human, service, or system.
+- Policy returns `allow`, `proposal_required`, or `deny`.
+- Consequential service actions become human-reviewable proposals.
+- Proposal execution rechecks policy, payload hash, target revision, preconditions, expiry, and actor scope.
+- Mandatory audit creates a requested run/event before governed mutations.
+- Completion reconciliation repairs terminal audit projections after post-mutation audit failures.
+- Hermes is treated as a replaceable client of this layer, not as the canonical memory store.
 
-### Memory tools
+### Pillar 4 — Autonomous operations
 
-| Tool          | What it does                                             |
-| ------------- | -------------------------------------------------------- |
-| `remember`    | Store ideas, decisions, preferences, and project context |
-| `append`      | Add an update to an existing memory                      |
-| `update`      | Replace an existing memory                               |
-| `recall`      | Find memories by meaning rather than exact wording       |
-| `list_recent` | Browse recently saved memories                           |
-| `forget`      | Permanently delete a memory                              |
+The foundation is ready, but full autonomous Hermes operation is intentionally staged. The safe rollout is:
 
-## Save from anywhere
+1. Read-only shadow.
+2. Private draft candidates.
+3. Proposal pilot.
+4. Bounded scheduled scouting/research.
+5. Optional approved executor identity.
 
-Memory is most useful when capturing information is easy. Second Brain connects to the tools and moments where context already exists.
+See [docs/operator-runtime-deployment.md](docs/operator-runtime-deployment.md) for the runtime boundary and rollout plan.
 
-* **AI clients:** Use `remember` directly within Claude, ChatGPT, Cursor, Codex, and other MCP clients.
+## How people use it
 
-* **Command line:** Run `brain remember`, `brain recall`, and other commands from your terminal.
+### Web dashboard
 
-  ```bash
-  npm install -g second-brain-cf-cli
-  ```
+Open the live deployment:
 
-* **Notion:** Connect your Notion workspace from **Settings → Integrations** in the web dashboard. Create an internal **connection** in the [Notion developer portal](https://app.notion.com/developers/connections) (a connection, not a personal access token — only connections appear in a page's Connections menu), share the pages you want remembered with it, and paste its secret — shared pages sync into memory automatically (nightly, or on demand with **Sync now**) and stay updated as they change in Notion.
+[https://second-brain.nikolay-trakiyski.workers.dev](https://second-brain.nikolay-trakiyski.workers.dev/)
 
-* **Obsidian:** Automatically sync notes using the [Second Brain Sync plugin](https://github.com/rahilp/second-brain-obsidian-plugin), also available through [Obsidian Community Plugins](https://community.obsidian.md/plugins/second-brain-sync).
+The dashboard supports:
 
-* **Browser extension:** Capture a page or highlighted text using the [Chrome extension](https://github.com/rahilp/second-brain-browser-extension).
+- deployment-token connection;
+- user creation and login with per-user API keys;
+- recall, recent memories, capture, graph, and settings views;
+- temporal recall controls;
+- citation cards;
+- memory history and restore;
+- publish/private visibility controls;
+- reinforcement controls;
+- service identity management for administrators;
+- proposal and awareness inbox surfaces.
 
-* **iPhone and iPad:** Use the Brain Dump, Text Brain Dump, and Save to Brain shortcuts in [`integrations/ios-shortcuts/`](integrations/ios-shortcuts/).
+### MCP clients
 
-* **Bookmarklet:** Use the lightweight bookmarklet in [`integrations/bookmarklet.js`](integrations/bookmarklet.js).
-
-## Quick Start
-
-Already deployed? Open the dashboard and connect.
-
-### 1. Connect to the dashboard
-
-Go to [second-brain.nikolaytrakiyski.workers.dev](https://second-brain.nikolaytrakiyski.workers.dev/). Enter the URL and your deployment token, then click **Connect**.
-
-### 2. Create or select your account
-
-On the account screen, either:
-- **Create a new account** — enter a username and click **Generate API Key**. Copy the key (it won't be shown again) and click **Continue**.
-- **Use an existing account** — select your username from the dropdown, enter your API key, and click **Login**.
-
-### 3. Connect your AI tools
-
-Add the MCP server URL with your user credentials to your MCP client config:
+Use Second Brain from any MCP-compatible client. Requests are scoped by deployment token plus user credentials.
 
 ```json
 {
   "mcp": {
     "second-brain": {
       "type": "remote",
-      "url": "https://second-brain.nikolaytrakiyski.workers.dev/mcp",
+      "url": "https://second-brain.nikolay-trakiyski.workers.dev/mcp",
       "headers": {
         "Authorization": "Bearer YOUR-DEPLOYMENT-TOKEN",
         "X-Second-Brain-User": "your-username",
@@ -114,33 +138,192 @@ Add the MCP server URL with your user credentials to your MCP client config:
 }
 ```
 
-This scopes all MCP tools (`remember`, `recall`, `list_recent`, etc.) to your user account. Private memories stay private; public memories are shared.
+Human tools include memory capture, recall, append/update, history/restore, graph connections, proposals, and visibility-aware listing.
 
-### Deploy your own
+Service/operator tool availability depends on the service identity’s scopes and current policy decision.
 
-To deploy your own instance of Second Brain, follow the original project's instructions at [github.com/rahilp/second-brain-cloudflare](https://github.com/rahilp/second-brain-cloudflare).
+### Integrations
+
+- **Notion:** connect from Settings → Integrations. Shared pages sync into versioned memory. Removed upstream pages are archived/deprecated; hard forget remains an explicit human-only compliance action.
+- **Browser/CLI/iOS/Obsidian:** existing upstream capture paths can continue to send memories through the authenticated API/MCP layer.
+
+## Technical architecture
+
+### Runtime
+
+- Cloudflare Workers
+- Cloudflare D1
+- Cloudflare Vectorize
+- Workers AI
+- Cloudflare KV
+- Static dashboard assets
+- Model Context Protocol server
+- Scheduled cron maintenance
+
+### Main bindings
+
+| Binding | Purpose |
+|---|---|
+| `DB` | D1 database for entries, versions, users, proposals, audit, service identities, integrations, and graph history |
+| `VECTORIZE` | Semantic vector index for recall and duplicate/relationship detection |
+| `AI` | Embeddings and LLM-assisted classification/recall flows |
+| `OAUTH_KV` | OAuth and integration state |
+| `AUTH_TOKEN` | Deployment-level access token |
+
+### Important modules
+
+| Module | Role |
+|---|---|
+| [src/routes.ts](src/routes.ts) | REST API and dashboard routes |
+| [src/mcp.ts](src/mcp.ts) | MCP tools and actor-scoped tool surface |
+| [src/db.ts](src/db.ts) | Ordered migrations and schema validation |
+| [src/entry-version-service.ts](src/entry-version-service.ts) | Versioned memory writes, episodes, snapshots, citations, vector cleanup |
+| [src/recall.ts](src/recall.ts) | Semantic/keyword/temporal recall and citation rendering |
+| [src/visibility.ts](src/visibility.ts) | Visibility transitions and vector metadata synchronization |
+| [src/graph.ts](src/graph.ts) | Typed relationship graph, edge history, restore, graph expansion |
+| [src/action-proposals.ts](src/action-proposals.ts) | Human-reviewed proposal lifecycle and execution |
+| [src/mandatory-audit.ts](src/mandatory-audit.ts) | Fail-closed audit envelope and reconciliation |
+| [src/service-identities.ts](src/service-identities.ts) | Service identity and credential lifecycle |
+| [src/operator-policy.ts](src/operator-policy.ts) | Operator action policy |
+| [src/awareness-events.ts](src/awareness-events.ts) | Cross-user overlap awareness |
+| [src/integrations-mirror.ts](src/integrations-mirror.ts) | Tenant-safe integration mirroring |
+| [src/lifecycle.ts](src/lifecycle.ts) | Scheduled compression, graph pass, contradiction/staleness jobs |
+
+### Core data model
+
+| Table | Purpose |
+|---|---|
+| `entries` | Current user-visible memory projection |
+| `episodes` | Immutable source ledger |
+| `documents`, `document_sections`, `passages` | Citation-grade source structure |
+| `entry_snapshots` | Pre-mutation state history |
+| `edges` | Current relationship graph |
+| `edge_versions` | Immutable edge relationship history and restore ledger |
+| `users` | Human accounts and roles |
+| `user_deactivations` | Safe deactivation workflow |
+| `service_identities`, `service_credentials` | Operator identities and scoped secrets |
+| `action_proposals`, `proposal_events` | Human-reviewed action flow |
+| `agent_runs`, `agent_events` | Operator/audit run ledger |
+| `audit_completion_reconciliation` | Durable audit repair queue |
+| `awareness_events` | Cross-user overlap notifications |
+| `vector_cleanup_queue` | Retryable stale-vector cleanup |
+
+## API highlights
+
+### Memory
+
+- `POST /capture`
+- `POST /append`
+- `POST /update`
+- `POST /forget`
+- `POST /deprecate`
+- `POST /entries/:id/visibility`
+- `GET /entries/:id/history`
+- `POST /entries/:id/restore`
+- `POST /entries/:id/reinforce`
+- `GET /recall`
+- `GET /list`
+- `GET /export`
+
+### Graph
+
+- `POST /link`
+- `POST /unlink`
+- `GET /connections`
+- `GET /graph`
+- `GET /edges/:id/history`
+- `POST /edges/:id/restore`
+
+### Governance
+
+- `GET /action-proposals`
+- `POST /action-proposals`
+- `POST /action-proposals/:id/review`
+- `POST /action-proposals/:id/execute`
+- `GET /api/service-identities`
+- `POST /api/service-identities`
+- credential rotation, revocation, suspension, and service-identity status routes
+
+### Health and maintenance
+
+- `GET /health`
+- scheduled cron for graph/compression/integration/audit cleanup work
+- local Workerd smoke script in [scripts/smoke-workerd.sh](scripts/smoke-workerd.sh)
+
+## Local development
+
+Install dependencies:
+
+```bash
+npm ci
+```
+
+Run locally:
+
+```bash
+AUTH_TOKEN=local-browser-test npm exec -- wrangler dev --local --port 8787
+```
+
+Open:
+
+```text
+http://127.0.0.1:8787/
+```
+
+Local Wrangler does not fully support Vectorize/AI bindings. If you see a red banner saying semantic search is disabled, that is expected in local-only mode. The deployed Cloudflare Worker should use the real bindings.
+
+Run checks:
+
+```bash
+npm test
+npx tsc --noEmit
+npm run smoke:workerd
+```
+
+## Deployment
+
+This repository deploys through Cloudflare Workers.
+
+Required Cloudflare resources:
+
+- D1 database: `second-brain-db`
+- Vectorize index: `second-brain-vectors_v2`
+- Workers AI binding: `AI`
+- KV namespace: `OAUTH_KV`
+- secret: `AUTH_TOKEN`
+
+The deployed project is configured in [wrangler.jsonc](wrangler.jsonc).
+
+Deployment can happen through Cloudflare’s GitHub integration on pushes to `main`, or manually with:
+
+```bash
+CLOUDFLARE_API_TOKEN=... npm run deploy
+```
+
+Database schema is managed by ordered runtime migrations in [src/db.ts](src/db.ts). The snapshot in [db/schema.sql](db/schema.sql) is kept in sync for fresh databases and operator visibility.
+
+## Safety principles
+
+- Private memory must never leak through recall, graph, export, integrations, proposals, or vector metadata.
+- Every meaningful mutation must be reversible or auditable.
+- Hard forget is human-only and reserved for explicit compliance purge.
+- Contradiction does not silently supersede knowledge.
+- Agents can propose; humans approve consequential changes.
+- Hermes and future operators never get direct D1, Vectorize, deployment, or migration access.
+- Replacing an operator runtime should require credential rotation, not data migration.
 
 ## Documentation
 
-* [Project docs](docs/shared-memory/) — PRD, goal, tasks, and current state
-* [Contribution guide](docs/CONTRIBUTION.md) — how to build new features
-* [CHANGELOG](CHANGELOG.md) — what changed in each version
-* [Original project](https://github.com/rahilp/second-brain-cloudflare) — upstream single-user version
+- [Vision](docs/VISION.md)
+- [System architecture](docs/system-architecture.md)
+- [Operator runtime deployment](docs/operator-runtime-deployment.md)
+- [Hermes living knowledge agent charter](docs/research/hermes-living-knowledge-agent-charter.md)
+- [Memory system docs](docs/memory-system/GOAL.md)
+- [Shared knowledge docs](docs/pillar2-shared-knowledge/GOAL.md)
+- [Changelog](CHANGELOG.md)
 
-## Technology
+## Attribution
 
-Second Brain is built with:
+This project builds on [Second Brain for AI](https://github.com/rahilp/second-brain-cloudflare) by Rahil Parikh.
 
-* Cloudflare Workers
-* D1 SQLite
-* Cloudflare Vectorize
-* Workers AI
-* Cloudflare KV
-* Model Context Protocol
-* TypeScript
-
-It runs within Cloudflare's free tier at personal scale.
-
-Your data stays in your own Cloudflare account.
-
-[MIT License](LICENSE) · [Discussions](https://github.com/rahilp/second-brain-cloudflare/discussions)
+[MIT License](LICENSE)
