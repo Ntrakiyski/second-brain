@@ -15,7 +15,7 @@ You have access to Second Brain through MCP. Treat it as the authoritative memor
 
 ### First-run identity setup
 
-- If Second Brain is connected only with the deployment key, guide the human to open `https://second-brain.nikolay-trakiyski.workers.dev/`, enter the deployment key, create or select their username, copy the generated user API key, and provide the username + user API key to the agent or MCP client.
+- If Second Brain is connected only with the deployment key, open `https://second-brain.nikolay-trakiyski.workers.dev/` automatically when browser tools are available; otherwise give the human the link. Then have them enter the deployment key, create or select their username, copy the generated user API key, and provide the username + user API key to the agent or MCP client.
 - Use the deployment key as the transport/admin key only. Use the username + user API key as the user identity for memory tools.
 - Never store the deployment key or user API key with `remember`.
 

@@ -185,7 +185,7 @@ The MCP server also exposes `memory://onboarding`, a read-only onboarding resour
 
 First-run identity setup for agents:
 
-1. Open [the dashboard](https://second-brain.nikolay-trakiyski.workers.dev/).
+1. Open [the dashboard](https://second-brain.nikolay-trakiyski.workers.dev/) automatically when the MCP client has browser support, or ask the human to open it.
 2. Enter the deployment key.
 3. Create or select a username.
 4. Copy the generated user API key.

@@ -36,7 +36,7 @@ npx skills add https://github.com/Ntrakiyski/second-brain --list
 
 ## First-run identity setup
 
-Before using memory tools, make sure the human has a user identity. The only shared secret needed to start is the deployment key.
+Before using memory tools, make sure the human has a user identity. The only shared secret needed to start is the deployment key. If the client has browser support, open the dashboard automatically as the first onboarding action; otherwise show the link and ask the human to open it.
 
 1. Open the dashboard: <https://second-brain.nikolay-trakiyski.workers.dev/>.
 2. Enter the deployment key to connect.
@@ -65,7 +65,7 @@ Do not store, log, or remember the deployment key or user API key as memory entr
 ## First-use behavior for agents
 
 1. Install or load the MCP-use skills above when possible.
-2. If no username and user API key are configured, guide the human through the dashboard identity setup above before calling tools.
+2. If no username and user API key are configured, open the dashboard automatically when possible and guide the human through the identity setup above before calling tools.
 3. Start every conversation with an intent-framed `recall`, not bare keywords.
 4. Use `hops: 1` or `hops: 2` when tracing causes, decisions, consequences, or relationships.
 5. Store only durable, valuable information; never store secrets.

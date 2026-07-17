@@ -11,7 +11,7 @@ Second Brain is a governed team knowledgebase. Treat entries as durable knowledg
 
 ## First-run identity setup
 
-Before using memory tools, make sure the human has a user identity. The deployment key is only the transport/admin key; useful agent memory requires a username and user API key.
+Before using memory tools, make sure the human has a user identity. The deployment key is only the transport/admin key; useful agent memory requires a username and user API key. If the client has browser support, open the dashboard automatically as the first onboarding action; otherwise show the link and ask the human to open it.
 
 1. Open <https://second-brain.nikolay-trakiyski.workers.dev/>.
 2. Ask the human to enter the deployment key in the dashboard.
