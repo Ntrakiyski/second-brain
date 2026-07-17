@@ -13,11 +13,9 @@ This project started as a fork of [Second Brain for AI](https://github.com/rahil
 
 **Live deployment:** [second-brain.nikolay-trakiyski.workers.dev](https://second-brain.nikolay-trakiyski.workers.dev/)
 
-## Demo video
+## Demo
 
-[![Watch the Second Brain demo](media/demo/second-brain-readme-demo/poster.png)](media/demo/second-brain-readme-demo/renders/second-brain-demo-portfolio-720p.mp4)
-
-The demo shows the product spine: shared knowledge layer, translation between mental maps, and Hermes-style living knowledge profiles. Source, storyboard, portfolio embed snippet, and higher-quality render are in [media/demo/second-brain-readme-demo](media/demo/second-brain-readme-demo/README.md).
+![Second Brain behind-the-scenes demo](media/second-brain-demo.gif)
 
 ## What it is
 
