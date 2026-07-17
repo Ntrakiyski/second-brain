@@ -1,28 +1,28 @@
-# Second Brain — Living Team Memory
+# Second Brain — Living Team Knowledgebase
 
-**A governed, time-aware memory layer for teams of humans and AI agents.**
+**A governed, time-aware knowledgebase for teams of humans and AI agents.**
 
 [![Built with Cloudflare Workers](https://img.shields.io/badge/Built%20with-Cloudflare%20Workers-F38020?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
 [![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-8B5CF6)](https://modelcontextprotocol.io/)
 
-Second Brain turns scattered notes, decisions, source material, and agent context into a shared memory system that can be queried, cited, reviewed, and safely operated by humans or AI agents.
+Second Brain turns scattered notes, decisions, source material, and agent context into a shared team knowledgebase that can be queried, cited, reviewed, and safely operated by humans or AI agents.
 
-This project started as a fork of [Second Brain for AI](https://github.com/rahilp/second-brain-cloudflare). It now extends that idea into a multi-user, provenance-first, operator-governed team memory platform.
+This project started as a fork of [Second Brain for AI](https://github.com/rahilp/second-brain-cloudflare). It now extends that idea into a multi-user, provenance-first, operator-governed team knowledgebase.
 
 **Live deployment:** [second-brain.nikolay-trakiyski.workers.dev](https://second-brain.nikolay-trakiyski.workers.dev/)
 
 ## What it is
 
-Second Brain is not just “semantic search over notes.” It is a memory control plane:
+Second Brain is not just “semantic search over notes.” It is a knowledgebase control plane:
 
-- Users and agents can save memories through the dashboard, REST API, or MCP.
-- Each memory has an owner, visibility, versions, immutable source episodes, and rollback history.
+- Users and agents can save knowledge entries through the dashboard, REST API, or MCP.
+- Each entry has an owner, visibility, versions, immutable source episodes, and rollback history.
 - Recall can answer using semantic search, graph expansion, citations, and temporal filters.
-- Public memories form a shared team knowledge base; private memories stay private.
+- Public entries form the team knowledgebase; private entries stay private.
 - AI operators such as Hermes can read, draft, and propose changes through scoped service identities instead of touching storage directly.
 - Consequential agent actions go through proposals, policy checks, and mandatory audit logging.
 
-The intended end state is a memory system that behaves like a responsible teammate: it remembers, cites, notices overlap, proposes maintenance, and never silently rewrites the past.
+The intended end state is a living knowledgebase that behaves like a responsible teammate: it remembers, cites, notices overlap, proposes maintenance, and never silently rewrites the past.
 
 ## User value
 
@@ -31,20 +31,20 @@ The intended end state is a memory system that behaves like a responsible teamma
 - Capture decisions, ideas, tasks, research notes, preferences, and project context in one place.
 - Ask questions in natural language instead of remembering exact wording.
 - See where an answer came from through source/citation cards.
-- Restore or inspect previous versions when memory changes.
+- Restore or inspect previous versions when knowledge changes.
 - Mark important memories as reinforced so useful knowledge stays alive.
 
 ### For teams
 
 - Share public knowledge while preserving each person’s private workspace.
-- See recent team activity and public memories without exposing private notes.
+- See recent team activity and public knowledge without exposing private notes.
 - Detect overlap and contradictions across users.
 - Review proposed knowledge changes before they become canonical.
 - Deactivate users safely while preserving public team knowledge and cleaning private artifacts.
 
 ### For AI agents
 
-- Use one durable memory layer across Claude, ChatGPT, Cursor, Codex, Hermes, and any MCP-compatible client.
+- Use one durable knowledge layer across Claude, ChatGPT, Cursor, Codex, Hermes, and any MCP-compatible client.
 - Retrieve scoped context instead of relying on chat history.
 - Operate through least-privilege service identities.
 - Draft or propose changes without bypassing human review.
@@ -83,7 +83,7 @@ The intended end state is a memory system that behaves like a responsible teamma
 - Proposal execution rechecks policy, payload hash, target revision, preconditions, expiry, and actor scope.
 - Mandatory audit creates a requested run/event before governed mutations.
 - Completion reconciliation repairs terminal audit projections after post-mutation audit failures.
-- Hermes is treated as a replaceable client of this layer, not as the canonical memory store.
+- Hermes is treated as a replaceable client of this layer, not as the canonical knowledge store.
 
 ### Pillar 4 — Autonomous operations
 
