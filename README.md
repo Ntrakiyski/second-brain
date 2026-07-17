@@ -1,11 +1,11 @@
 # Second Brain — Living Team Knowledgebase
 
-**A governed, time-aware knowledgebase for teams of humans and AI agents.**
+**A governed, time-aware knowledgebase for teams of humans and domain agents.**
 
 [![Built with Cloudflare Workers](https://img.shields.io/badge/Built%20with-Cloudflare%20Workers-F38020?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
 [![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-8B5CF6)](https://modelcontextprotocol.io/)
 
-Second Brain turns scattered notes, decisions, source material, and agent context into a shared team knowledgebase that can be queried, cited, reviewed, and safely operated by humans or AI agents.
+Second Brain turns scattered notes, decisions, source material, and agent context into a shared team knowledgebase that can be queried, cited, reviewed, and safely operated by humans or domain-specific AI agents.
 
 This project started as a fork of [Second Brain for AI](https://github.com/rahilp/second-brain-cloudflare). It now extends that idea into a multi-user, provenance-first, operator-governed team knowledgebase.
 
@@ -13,7 +13,7 @@ This project started as a fork of [Second Brain for AI](https://github.com/rahil
 
 ## What it is
 
-Second Brain is not just “semantic search over notes.” It is a knowledgebase control plane:
+Second Brain is not just “semantic search over notes.” It is a knowledgebase control plane for a mixed team of people and agents:
 
 - Users and agents can save knowledge entries through the dashboard, REST API, or MCP.
 - Each entry has an owner, visibility, versions, immutable source episodes, and rollback history.
@@ -22,7 +22,7 @@ Second Brain is not just “semantic search over notes.” It is a knowledgebase
 - AI operators such as Hermes can read, draft, and propose changes through scoped service identities instead of touching storage directly.
 - Consequential agent actions go through proposals, policy checks, and mandatory audit logging.
 
-The intended end state is a living knowledgebase that behaves like a responsible teammate: it remembers, cites, notices overlap, proposes maintenance, and never silently rewrites the past.
+The intended end state is a living knowledgebase that behaves like a responsible team: humans contribute judgment and approval, while specialized agents scout, remember, cite, notice overlap, propose maintenance, and never silently rewrite the past.
 
 ## User value
 
@@ -42,13 +42,25 @@ The intended end state is a living knowledgebase that behaves like a responsible
 - Review proposed knowledge changes before they become canonical.
 - Deactivate users safely while preserving public team knowledge and cleaning private artifacts.
 
-### For AI agents
+### For agent teammates
 
+- Create multiple Hermes-style profiles for different domains, each with its own identity, scopes, and responsibilities.
 - Use one durable knowledge layer across Claude, ChatGPT, Cursor, Codex, Hermes, and any MCP-compatible client.
 - Retrieve scoped context instead of relying on chat history.
 - Operate through least-privilege service identities.
 - Draft or propose changes without bypassing human review.
 - Leave an audit trail for every governed mutation.
+
+Example agent teammates:
+
+- **Research Scout:** watches papers, RSS feeds, GitHub repos, and technical sources.
+- **Engineering Librarian:** tracks APIs, architecture decisions, dependencies, and implementation notes.
+- **Product Memory Owner:** keeps product decisions, user insights, experiments, and open questions coherent.
+- **Competitive Intel Agent:** monitors competitors, market shifts, and positioning changes.
+- **QA / Critic Agent:** looks for contradictions, stale assumptions, weak evidence, and missing citations.
+- **Personal Chief of Staff:** turns private notes into drafts or proposals without publishing them directly.
+
+These agents are “team members,” but governed ones: they can be proactive in their domain while Second Brain enforces identity, visibility, policy, proposal review, and audit.
 
 ## Current implementation
 
@@ -87,7 +99,7 @@ The intended end state is a living knowledgebase that behaves like a responsible
 
 ### Pillar 4 — Autonomous operations
 
-The foundation is ready, but full autonomous Hermes operation is intentionally staged. The safe rollout is:
+The foundation is ready for multiple specialized operator profiles, but full autonomous operation is intentionally staged. The safe rollout for each domain agent is:
 
 1. Read-only shadow.
 2. Private draft candidates.
@@ -311,6 +323,18 @@ Database schema is managed by ordered runtime migrations in [src/db.ts](src/db.t
 - Agents can propose; humans approve consequential changes.
 - Hermes and future operators never get direct D1, Vectorize, deployment, or migration access.
 - Replacing an operator runtime should require credential rotation, not data migration.
+
+## What this architecture is not built for
+
+Second Brain is intentionally a governed knowledgebase, not an unrestricted agent runtime. It is not designed for:
+
+- **Unreviewed high-impact autonomy.** Agents can scout, draft, and propose; they should not silently publish major knowledge changes, delete data, change permissions, or deploy infrastructure.
+- **Direct storage access by agents.** Hermes-style profiles must never receive D1, Vectorize, Cloudflare deployment, migration, or backup credentials.
+- **Realtime chat state.** This is durable knowledge and provenance, not a replacement for transient conversation memory or low-latency agent scratchpads.
+- **High-frequency event streaming.** It is not Kafka, an analytics warehouse, or a telemetry firehose.
+- **Secret storage.** API keys, credentials, and private tokens belong in secret managers, not memory entries, proposals, or audit summaries.
+- **Guaranteed truth.** The system preserves evidence, provenance, confidence, and time; humans still judge disputed claims.
+- **Fully autonomous compliance actions.** Hard forget and access-control changes remain explicit human-controlled operations.
 
 ## Documentation
 
