@@ -116,6 +116,7 @@ describe("Vectorize ACL", () => {
     expect(result.mergeAction).toBeNull();
     expect(result.crossUserSimilar).toEqual({
       entryId: "bob-public",
+      ownerUserId: BOB,
       ownerUsername: "bob",
       score: 0.99,
     });

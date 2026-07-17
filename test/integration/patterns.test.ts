@@ -4,11 +4,23 @@ import { makeTestEnv, makeTestDb, makeVectorizeMock } from "../helpers/make-env"
 import { req } from "../helpers/make-request";
 import type { Env } from "../../src/testing";
 import { D1Mock } from "../helpers/d1-mock";
+import { TEST_USER_ID } from "../helpers/test-principal";
 
 const ctx = { waitUntil: (_: Promise<any>) => {} } as any;
 
 function seedPattern(db: D1Mock, id: string, content: string) {
-  db.entries.push({ id, content, tags: '["auto-pattern"]', source: "system", created_at: 1000, vector_ids: `["${id}"]`, recall_count: 0, importance_score: 0 });
+  db.entries.push({
+    id,
+    content,
+    tags: '["auto-pattern"]',
+    source: "system",
+    created_at: 1000,
+    vector_ids: `["${id}"]`,
+    recall_count: 0,
+    importance_score: 0,
+    owner_user_id: TEST_USER_ID,
+    visibility: "public",
+  });
 }
 
 describe("POST /patterns/resolve", () => {
@@ -49,8 +61,12 @@ describe("POST /patterns/resolve", () => {
     seedPattern(db, "p1", "You tend to write tests before shipping");
     env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({
-        query: vi.fn().mockResolvedValue({
-          matches: [{ id: "p1", score: 0.9, metadata: { parentId: "p1", isUpdate: false } }],
+        query: vi.fn().mockImplementation(async () => {
+          const row = db.entries.find((entry: any) => entry.id === "p1");
+          const currentVectorId = JSON.parse(row?.vector_ids ?? "[]")[0] ?? "p1";
+          return {
+            matches: [{ id: currentVectorId, score: 0.9, metadata: { parentId: "p1", isUpdate: false } }],
+          };
         }),
       }),
     });

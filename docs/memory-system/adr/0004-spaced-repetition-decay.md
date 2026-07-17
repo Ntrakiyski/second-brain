@@ -1,8 +1,13 @@
 # ADR-0004: Spaced Repetition Decay from Last Recall
 
-**Status:** Accepted  
+**Status:** Superseded 2026-07-16 by explicit reinforcement
 **Date:** 2026-07-13  
 **Deciders:** Nikolay Trakiyski  
+
+> Recall is now strictly read-only. Only an explicit owner action through the
+> human REST/MCP reinforcement surface increments `recall_count`, sets
+> `last_recalled_at`, and resets `retention_score`. This removes ranking
+> feedback caused by merely appearing in search results.
 
 ## Context
 

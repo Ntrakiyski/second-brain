@@ -2,9 +2,16 @@
 
 **Version:** 1.0  
 **Date:** 2026-07-13  
-**Status:** Implementation in progress  
+**Status:** historical implementation plan — superseded by the implemented trust contract
 
 ---
+
+> This PRD records the initial ticket plan. The current normative behavior is
+> defined by [VISION.md](../VISION.md), [System Architecture](../system-architecture.md),
+> and `src/entry-version-service.ts`. In particular, immutable provenance is
+> synchronous rather than fire-and-forget, snapshots cover user-visible entry
+> state, every episode has one document envelope, recall does not mutate usage
+> counters, and retention changes only through explicit owner reinforcement.
 
 ## Overview
 

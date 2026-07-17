@@ -43,6 +43,7 @@ describe("GET /entry", () => {
       created_at: 1234,
       owner_username: "_system",
       is_private: false,
+      is_owned: false,
     });
   });
 

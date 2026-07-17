@@ -32,15 +32,17 @@ describe("applyStatus()", () => {
     });
   });
 
-  it("canonical: returns true, sets status:canonical tag, vectors untouched", async () => {
+  it("canonical: returns true and commits a new version-scoped vector projection", async () => {
     const result = await applyStatus("entry-1", "canonical", env);
     expect(result).toBe(true);
 
     const row = db.entries.find((e: any) => e.id === "entry-1");
     const tags: string[] = JSON.parse(row.tags);
     expect(tags).toContain("status:canonical");
-    expect(row.vector_ids).toBe(JSON.stringify(["v1"]));
-    expect(deleteByIdsMock).not.toHaveBeenCalled();
+    const vectorIds = JSON.parse(row.vector_ids);
+    expect(vectorIds).toHaveLength(1);
+    expect(vectorIds[0]).toMatch(/^ev:/);
+    expect(deleteByIdsMock).toHaveBeenCalledWith(["v1"]);
   });
 
   it("draft: replaces status:canonical with status:draft (only one status tag)", async () => {

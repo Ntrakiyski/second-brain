@@ -13,14 +13,20 @@
  *   5. reindexAllVectors — bulk migration helper to add ownership metadata
  */
 
-import type { Env } from "./types";
+import type { AwarenessDelivery, Env } from "./types";
 import { chunkText, embed } from "./helpers";
-import { CHUNK_MAX_CHARS } from "./config";
 import { classifyEntry, extractHashtags } from "./classification";
 import { checkDuplicateAndContradiction } from "./duplicates";
 import { getStatus, withKind, withStatus } from "./tags";
 import { createEdge, inferEdgesOnWrite, neighborsFromVectorQuery } from "./graph";
-import { deprecateEntry } from "./lifecycle";
+import { commitEntryVersion } from "./entry-version-service";
+import { sha256Hex } from "./governance-utils";
+import { getSystemUserId } from "./db";
+import {
+  discardOverlapAwarenessIntent,
+  reconcileOverlapAwarenessIntent,
+  stageOverlapAwarenessIntent,
+} from "./awareness-events";
 
 // ─── Store entry (full embed + chunk) ────────────────────────────────────────
 // Returns the list of vector IDs inserted so forget() can clean up exactly.
@@ -104,21 +110,29 @@ export async function deleteStaleVectors(env: Env, oldIds: string[], newIds: str
 
 // Re-index all vectors with ownership metadata. Called from POST /vectorize-pending?reindex=true
 // or as a standalone migration step after adding owner_user_id/is_private to vector metadata.
-export async function reindexAllVectors(env: Env): Promise<{ processed: number; failed: number }> {
+export async function reindexAllVectors(env: Env, ownerUserId?: string): Promise<{ processed: number; failed: number }> {
   let processed = 0;
   let failed = 0;
 
   // Find all entries that have vectors
-  const { results: entries } = await env.DB.prepare(
-    `SELECT id, content, tags, source, created_at, vector_ids, owner_user_id FROM entries WHERE vector_ids != '[]'`
-  ).all() as { results: Record<string, any>[] };
+  const sql = `SELECT id, content, tags, source, created_at, vector_ids,
+      owner_user_id, visibility FROM entries
+    WHERE vector_ids != '[]'${ownerUserId ? " AND owner_user_id = ?" : ""}`;
+  const { results: entries } = await env.DB.prepare(sql)
+    .bind(...(ownerUserId ? [ownerUserId] : []))
+    .all() as { results: Record<string, any>[] };
 
   for (const entry of entries) {
     const id = entry.id as string;
     const oldVectorIds: string[] = JSON.parse(entry.vector_ids as string ?? "[]");
     const tags: string[] = JSON.parse(entry.tags as string ?? "[]");
     const ownerUserId = (entry as any).owner_user_id as string ?? "";
-    const isPrivate = tags.includes("private");
+    const visibility = entry.visibility as string;
+    if (visibility !== "private" && visibility !== "public") {
+      failed++;
+      continue;
+    }
+    const isPrivate = visibility === "private";
 
     try {
       // Upsert first so a failed re-embed leaves the last known-good vectors
@@ -154,11 +168,9 @@ export async function createSnapshot(env: Env, entryId: string): Promise<string 
 }
 
 // ─── Append to existing entry ─────────────────────────────────────────────────
-// For short appends (combined content ≤ CHUNK_MAX_CHARS): adds only the new
-// addition as a single new Vectorize vector pointing to the parent ID.
-// For large appends (combined content > CHUNK_MAX_CHARS): falls back to a full
-// re-embed of the combined content using the same safe 3-step pattern as update
-// (insert new → delete old), so Vectorize always holds properly chunked vectors.
+// Appends use the same versioned commit as every other knowledge mutation.
+// The exact addition is retained in the episode ledger and the complete new
+// entry state is re-embedded under version-scoped vector ids.
 
 export async function appendToEntry(
   env: Env,
@@ -170,88 +182,40 @@ export async function appendToEntry(
   ownerUserId?: string,
   ctx?: ExecutionContext
 ): Promise<void> {
-  // Snapshot: backup before destructive append — fire-and-forget (non-fatal)
-  if (ctx) {
-    ctx.waitUntil(createSnapshot(env, id).catch(e => console.error("Snapshot creation failed (non-fatal):", e)));
-  }
-
-  // Read existing vector_ids upfront — needed by both paths
   const row = await env.DB.prepare(
-    `SELECT vector_ids FROM entries WHERE id = ?`
+    `SELECT content, tags, source, owner_user_id, revision
+     FROM entries WHERE id = ?`
   ).bind(id).first() as Record<string, any> | null;
+  if (!row) throw new Error(`No entry found with ID: ${id}`);
 
-  const existingVectorIds: string[] = JSON.parse(row?.vector_ids ?? "[]");
+  const actorUserId = ownerUserId || (row.owner_user_id as string);
+  if (!actorUserId) throw new Error("Entry ownership is required for append");
+  if (ownerUserId && row.owner_user_id && row.owner_user_id !== ownerUserId) {
+    throw new Error(`No entry found with ID: ${id}`);
+  }
 
   const timestamp = new Date().toLocaleDateString();
   const separator = `\n\n[Update ${timestamp}]: `;
-  const newContent = existingContent + separator + addition;
+  const authoritativeContent = (row.content as string) ?? existingContent;
+  const authoritativeTags: string[] = JSON.parse((row.tags as string) ?? JSON.stringify(tags));
+  const authoritativeSource = (row.source as string) ?? source;
+  const newContent = authoritativeContent + separator + addition;
 
-  if (newContent.length > CHUNK_MAX_CHARS) {
-    // ── Full re-embed path ───────────────────────────────────────────────────
-    // Combined content is too large for a single vector — re-chunk everything.
-    // Same safe ordering as update/merge/replace: insert new → delete old.
+  await commitEntryVersion({
+    kind: "append",
+    actorUserId,
+    entryId: id,
+    expectedRevision: Number(row.revision ?? 0),
+    rawContent: addition,
+    materializedContent: newContent,
+    tags: authoritativeTags,
+    source: authoritativeSource,
+  }, env);
 
-    // Step 1: Stage the new vector set. Failure leaves D1 and old vectors intact.
-    const newVectorIds = await stageEntryVectors(
-      env, id, newContent, tags, source, Date.now(), ownerUserId, tags.includes("private"),
-    );
-
-    // Step 2: Commit content + exact vector references together in D1.
-    await env.DB.prepare(`UPDATE entries SET content = ?, vector_ids = ? WHERE id = ?`)
-      .bind(newContent, JSON.stringify(newVectorIds), id).run();
-
-    // Step 3: Delete only stale vectors — ids reused by the upsert must survive.
-    try {
-      await deleteStaleVectors(env, existingVectorIds, newVectorIds);
-    } catch (e) {
-      console.error("Old vector cleanup failed (non-fatal):", e);
-    }
-
-    // Auto-link the updated entry to similar neighbors (#16) — same inference as on capture.
-    try {
-      await inferEdgesOnWrite(id, await neighborsFromVectorQuery(await embed(addition, env), env, ownerUserId), env);
-    } catch (e) {
-      console.error("Append auto-link failed (non-fatal):", e);
-    }
-
-    return;
-  }
-
-  // ── Normal append-only path (combined content ≤ CHUNK_MAX_CHARS) ────────────
-  // Timestamp-based suffix guarantees uniqueness across concurrent appends
-  const newChunkId = `${id}-update-${Date.now()}`;
-
-  const values = await embed(addition, env);
-
-  const metadata: Record<string, any> = {
-    content: addition,
-    parentId: id,
-    isUpdate: true,
-    tags,
-    source,
-    created_at: Date.now(),
-    owner_user_id: ownerUserId ?? "",
-    is_private: tags.includes("private"),
-  };
-
-  tags.forEach(t => {
-    metadata[`tag_${t}`] = true;
-  });
-
-  await env.VECTORIZE.insert([{
-    id: newChunkId,
-    values,
-    metadata,
-  }]);
-
-  // Single UPDATE for both content and vector_ids — saves one D1 round trip
-  await env.DB.prepare(
-    `UPDATE entries SET content = ?, vector_ids = ? WHERE id = ?`
-  ).bind(newContent, JSON.stringify([...existingVectorIds, newChunkId]), id).run();
-
-  // Auto-link the updated entry to similar neighbors (#16) — reuse the addition embedding.
+  // Graph inference is derived state and may remain asynchronous/non-fatal.
   try {
-    await inferEdgesOnWrite(id, await neighborsFromVectorQuery(values, env, ownerUserId), env);
+    const values = await embed(addition, env);
+    await inferEdgesOnWrite(id, await neighborsFromVectorQuery(values, env, actorUserId), env);
   } catch (e) {
     console.error("Append auto-link failed (non-fatal):", e);
   }
@@ -259,20 +223,43 @@ export async function appendToEntry(
 
 // ─── Shared write path ────────────────────────────────────────────────────────
 
-// Classify an entry's content (importance + canonical + kind) and apply the tags,
-// asynchronously. Used for both newly-inserted entries and smart-merge targets.
-function scheduleClassifyAndTag(entryId: string, content: string, env: Env, ctx: ExecutionContext): void {
+// Classification is derived work and may run asynchronously, but any visible
+// tag change still goes through the versioned mutation service. Classifier
+// suggestions never promote an entry to canonical without governance.
+function scheduleClassifyAndTag(
+  entryId: string,
+  content: string,
+  actorUserId: string,
+  env: Env,
+  ctx: ExecutionContext,
+): void {
   ctx.waitUntil(
     classifyEntry(content, env)
-      .then(async ({ importance, canonical, kind }) => {
+      .then(async ({ importance, kind }) => {
         await env.DB.prepare(`UPDATE entries SET importance_score = ? WHERE id = ?`).bind(importance, entryId).run();
-        if (!kind && !canonical) return;
-        const row = await env.DB.prepare(`SELECT tags FROM entries WHERE id = ?`).bind(entryId).first() as Record<string, any> | null;
-        if (!row) return;
-        let tags: string[] = JSON.parse(row.tags ?? "[]");
-        if (kind) tags = withKind(tags, kind);
-        if (canonical && getStatus(tags) === null) tags = withStatus(tags, "canonical");
-        await env.DB.prepare(`UPDATE entries SET tags = ? WHERE id = ?`).bind(JSON.stringify(tags), entryId).run();
+        if (!kind) return;
+        const row = await env.DB.prepare(
+          `SELECT content, tags, source, owner_user_id, revision,
+                  valid_from, valid_to, epistemic_status
+           FROM entries WHERE id = ?`,
+        ).bind(entryId).first() as Record<string, any> | null;
+        if (!row || row.owner_user_id !== actorUserId || row.content !== content) return;
+        const currentTags: string[] = JSON.parse(row.tags ?? "[]");
+        const nextTags = withKind(currentTags, kind);
+        if (JSON.stringify(nextTags) === JSON.stringify(currentTags)) return;
+        await commitEntryVersion({
+          kind: "status",
+          actorUserId,
+          entryId,
+          expectedRevision: Number(row.revision ?? 0),
+          rawContent: `classification:${kind}`,
+          materializedContent: row.content as string,
+          tags: nextTags,
+          source: row.source as string,
+          validFrom: row.valid_from as number | null,
+          validTo: row.valid_to as number | null,
+          epistemicStatus: row.epistemic_status,
+        }, env);
       })
       .catch(e => console.error("Classification failed (non-fatal):", e))
   );
@@ -280,10 +267,18 @@ function scheduleClassifyAndTag(entryId: string, content: string, env: Env, ctx:
 
 export type CaptureResult =
   | { status: "blocked"; matchId: string; score: number }
-  | { status: "stored"; id: string; crossUserNote?: string }
-  | { status: "flagged"; id: string; matchId: string; score: number; crossUserNote?: string }
-  | { status: "contradiction"; id: string; resolvedConflict: string; reason?: string }
-  | { status: "contradiction_protected"; id: string; canonicalId: string; reason?: string }
+  | { status: "stored"; id: string; crossUserNote?: string; awareness?: AwarenessDelivery }
+  | {
+      status: "flagged";
+      id: string;
+      matchId: string;
+      score: number;
+      crossUserNote?: string;
+      mergeSkipped?: "target_not_owned" | "target_protected";
+      awareness?: AwarenessDelivery;
+    }
+  | { status: "contradiction"; id: string; resolvedConflict: string; reason?: string; awareness?: AwarenessDelivery }
+  | { status: "contradiction_protected"; id: string; canonicalId: string; reason?: string; awareness?: AwarenessDelivery }
   | { status: "merged"; id: string }
   | { status: "replaced"; id: string };
 
@@ -299,6 +294,11 @@ export async function captureEntry(
   const { cleanContent, hashtags } = extractHashtags(raw);
   const c = cleanContent || raw;
   const t = [...new Set([...tags.map(tag => tag.toLowerCase()), ...hashtags])];
+  const actorUserId = userId ?? await getSystemUserId(env);
+  const sourceUrl = /^https?:\/\//i.test(source) ? source : null;
+  const researchLike = sourceUrl !== null
+    || /^(research|paper|document)$/i.test(source)
+    || /^(#{1,4})\s+/m.test(rawContent);
 
   const { duplicate: dup, contradiction, mergeAction, neighbors, crossUserSimilar } = await checkDuplicateAndContradiction(c, env, userId);
 
@@ -310,117 +310,125 @@ export async function captureEntry(
     return { status: "blocked", matchId: dup.matchId, score: dup.score };
   }
 
+  let mergeSkipped: "target_not_owned" | "target_protected" | undefined;
+
   // ── Smart merge: replace/merge existing entry — no new entry inserted ────────
-  if (dup.status === "flagged" && mergeAction && mergeAction.action !== "keep_both") {
+  if (!researchLike && dup.status === "flagged" && mergeAction && mergeAction.action !== "keep_both") {
     const targetId = mergeAction.target_id;
     const newContent = mergeAction.action === "merge" ? mergeAction.merged_content : c;
 
     const targetRow = await env.DB.prepare(
-      `SELECT tags, source, vector_ids, importance_score, owner_user_id FROM entries WHERE id = ?`
+      `SELECT content, tags, source, importance_score, owner_user_id, revision
+       FROM entries WHERE id = ?`
     ).bind(targetId).first() as Record<string, any> | null;
 
     if (targetRow) {
-      // Ownership check: don't overwrite another user's entry
-      if (userId && targetRow.owner_user_id && targetRow.owner_user_id !== userId && targetRow.owner_user_id !== "") {
-        return { status: "flagged", id: crypto.randomUUID(), matchId: targetId, score: dup.score };
+      // A merge recommendation is never authority to mutate someone else's
+      // memory. Preserve the incoming statement through the normal versioned
+      // capture path below instead of returning a fabricated entry id.
+      if (targetRow.owner_user_id && targetRow.owner_user_id !== actorUserId) {
+        mergeSkipped = "target_not_owned";
+      } else {
+        const existingTags: string[] = JSON.parse(targetRow.tags ?? "[]");
+        const existingSource = targetRow.source as string;
+
+        // Protect high-importance or canonical memories from being silently
+        // overwritten. The new statement is retained as its own candidate.
+        const targetStatus = getStatus(existingTags);
+        if ((targetRow.importance_score as number) >= 4 || targetStatus === "canonical") {
+          mergeSkipped = "target_protected";
+        } else {
+          await commitEntryVersion({
+            kind: mergeAction.action,
+            actorUserId,
+            entryId: targetId,
+            expectedRevision: Number(targetRow.revision ?? 0),
+            rawContent,
+            materializedContent: newContent,
+            tags: existingTags,
+            source: existingSource,
+          }, env);
+
+          // Re-classify the merged/replaced content — updates importance_score + kind (and canonical if warranted) on the target.
+          scheduleClassifyAndTag(targetId, newContent, actorUserId, env, ctx);
+
+          return mergeAction.action === "merge"
+            ? { status: "merged", id: targetId }
+            : { status: "replaced", id: targetId };
+        }
       }
-
-      const existingTags: string[] = JSON.parse(targetRow.tags ?? "[]");
-      const existingSource = targetRow.source as string;
-      const oldVectorIds: string[] = JSON.parse(targetRow.vector_ids ?? "[]");
-
-      // Protect high-importance or canonical memories from being silently overwritten.
-      // Score ≥ 4 means the existing entry is critical; canonical = confirmed authoritative.
-      const targetStatus = getStatus(existingTags);
-      if ((targetRow.importance_score as number) >= 4 || targetStatus === "canonical") {
-        return { status: "flagged", id: crypto.randomUUID(), matchId: targetId, score: dup.score };
-      }
-
-      // Read old content once for episode + passages (before destructive merge)
-      const oldContentRow = await env.DB.prepare(`SELECT content, tags, source FROM entries WHERE id = ?`).bind(targetId).first() as Record<string, any> | null;
-      const oldContent = oldContentRow?.content as string ?? "";
-
-      // Snapshot: backup before destructive merge — fire-and-forget (non-fatal)
-      ctx.waitUntil(createSnapshot(env, targetId).catch(e => console.error("Snapshot creation failed (non-fatal):", e)));
-
-      // Episode: preserve old content before merge overwrite — fire-and-forget (non-fatal)
-      const mergeEpisodeId = crypto.randomUUID();
-      if (oldContent) {
-        ctx.waitUntil(
-          env.DB.prepare(
-            `INSERT INTO episodes (id, entry_id, content, content_type, source, created_at) VALUES (?, ?, ?, ?, ?, ?)`
-          ).bind(mergeEpisodeId, targetId, oldContent, "text", existingSource, Date.now()).run()
-            .catch(e => console.error("Episode creation failed (non-fatal):", e))
-        );
-      }
-
-      // Passages for old content — fire-and-forget (non-fatal)
-      if (oldContent) {
-        ctx.waitUntil(
-          createPassagesForEntry(targetId, mergeEpisodeId, oldContent, env, ctx, userId, existingTags.includes("private")).catch(e => console.error("Passage creation failed (non-fatal):", e))
-        );
-      }
-
-      // Step 1: Stage new vectors. Failure leaves the target untouched.
-      const targetOwnerId = targetRow.owner_user_id as string;
-      const newVectorIds = await stageEntryVectors(
-        env, targetId, newContent, existingTags, existingSource, Date.now(),
-        targetOwnerId || undefined, existingTags.includes("private"),
-      );
-
-      // Step 2: Commit content and vector references together.
-      await env.DB.prepare(`UPDATE entries SET content = ?, vector_ids = ? WHERE id = ?`)
-        .bind(newContent, JSON.stringify(newVectorIds), targetId).run();
-
-      // Step 3: Delete only stale vectors — ids reused by the re-embed must survive
-      try {
-        await deleteStaleVectors(env, oldVectorIds, newVectorIds);
-      } catch (e) { console.error("Old vector cleanup failed (non-fatal):", e); }
-
-      // Re-classify the merged/replaced content — updates importance_score + kind (and canonical if warranted) on the target.
-      scheduleClassifyAndTag(targetId, newContent, env, ctx);
-
-      return mergeAction.action === "merge"
-        ? { status: "merged", id: targetId }
-        : { status: "replaced", id: targetId };
     }
     // target not found in DB — fall through to normal insert
   }
 
-  const id = crypto.randomUUID();
-  const now = Date.now();
-  const baseTags = contradiction.detected ? [...t, "contradiction-resolved"] : t;
+  // A semantic contradiction is not proof that the incumbent stopped being
+  // true. Capture the competing statement as a draft and record the relation;
+  // only an explicit temporal-supersession action may close valid_to.
+  const baseTags = contradiction.detected
+    ? withStatus([...t, "contradiction-candidate"], "draft")
+    : t;
   const finalTags = dup.status === "flagged" ? [...baseTags, "duplicate-candidate"] : baseTags;
 
-  await env.DB.prepare(
-    `INSERT INTO entries (id, content, tags, source, created_at, vector_ids, owner_user_id, valid_from, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(id, c, JSON.stringify(finalTags), source, now, "[]", userId ?? "", now, now).run();
+  // The durable reconciliation intent is staged before the memory commit. If
+  // this write fails, capture aborts cleanly. Once capture succeeds, any event
+  // delivery failure is truthful in the response and retryable from this row.
+  const plannedEntryId = crypto.randomUUID();
+  let awarenessIntentId: string | null = null;
+  if (crossUserSimilar) {
+    awarenessIntentId = await stageOverlapAwarenessIntent(env, {
+      newEntryId: plannedEntryId,
+      newOwnerUserId: actorUserId,
+      matchedEntryId: crossUserSimilar.entryId,
+      matchedOwnerUserId: crossUserSimilar.ownerUserId,
+      similarity: crossUserSimilar.score,
+      newEntryIsPublic: !finalTags.includes("private"),
+    });
+  }
 
-  // Episode: immutable raw content ledger — fire-and-forget (non-fatal)
-  const newEpisodeId = crypto.randomUUID();
-  ctx.waitUntil(
-    (async () => {
+  let committed;
+  try {
+    committed = await commitEntryVersion({
+      kind: "capture",
+      actorUserId,
+      entryId: plannedEntryId,
+      rawContent: rawContent,
+      materializedContent: c,
+      tags: finalTags,
+      source,
+      sourceUrl,
+      contentType: researchLike ? "research" : "text",
+      epistemicStatus: "candidate",
+    }, env);
+  } catch (error) {
+    if (awarenessIntentId) {
       try {
-        await env.DB.prepare(
-          `INSERT INTO episodes (id, entry_id, content, content_type, source, created_at) VALUES (?, ?, ?, ?, ?, ?)`
-        ).bind(newEpisodeId, id, c, "text", source, now).run();
-      } catch (e) {
-        console.error("Episode creation failed (non-fatal):", e);
+        await discardOverlapAwarenessIntent(env, awarenessIntentId);
+      } catch (discardError) {
+        // A stranded intent is safe: reconciliation discards missing entries.
+        console.error("Overlap-awareness intent cleanup failed", discardError);
       }
-    })()
-  );
+    }
+    throw error;
+  }
+  const id = committed.entryId;
 
-  // Passages: chunk content for citation-level recall — fire-and-forget (non-fatal)
-  ctx.waitUntil(
-    createPassagesForEntry(id, newEpisodeId, c, env, ctx, userId, finalTags.includes("private")).catch(e => console.error("Passage creation failed (non-fatal):", e))
-  );
+  let awareness: AwarenessDelivery | undefined;
+  if (awarenessIntentId) {
+    try {
+      awareness = await reconcileOverlapAwarenessIntent(env, awarenessIntentId);
+    } catch (error) {
+      // The staged row remains the durable retry path even if the first read or
+      // event batch fails before the service can update its attempt metadata.
+      console.error("Overlap-awareness delivery deferred", error);
+      awareness = {
+        status: "pending_reconciliation",
+        eventCount: 0,
+        reconciliationId: awarenessIntentId,
+      };
+    }
+  }
 
-  ctx.waitUntil(
-    storeEntry(env, id, c, finalTags, source, now, userId, finalTags.includes("private"))
-      .catch(e => console.error("Vectorize insert failed (non-fatal):", e))
-  );
-
-  scheduleClassifyAndTag(id, c, env, ctx);
+  scheduleClassifyAndTag(id, c, actorUserId, env, ctx);
 
   if (contradiction.detected && contradiction.conflicting_id) {
     const conflictId = contradiction.conflicting_id;
@@ -430,52 +438,47 @@ export async function captureEntry(
     const conflictStatus = conflictRow ? getStatus(JSON.parse(conflictRow.tags ?? "[]")) : null;
 
     if (conflictStatus === "canonical") {
-      // Don't overwrite a canonical memory — keep it, demote the new entry to draft.
-      // Strip "contradiction-resolved" — that tag marks entries that WON a contradiction;
-      // this entry lost, so it must not carry that tag.
-      const draftTags = finalTags.filter(t => t !== "contradiction-resolved");
-      await env.DB.prepare(`UPDATE entries SET tags = ? WHERE id = ?`)
-        .bind(JSON.stringify(withStatus(draftTags, "draft")), id).run();
-      // Record the outcome: canonical incumbent survived (win), new draft lost (loss).
-      // Non-fatal — a failed count update must not abort capture.
       try {
-        await env.DB.prepare(`UPDATE entries SET contradiction_wins = contradiction_wins + 1 WHERE id = ?`).bind(conflictId).run();
-        await env.DB.prepare(`UPDATE entries SET contradiction_losses = contradiction_losses + 1 WHERE id = ?`).bind(id).run();
+        await createEdge(id, conflictId, "contradicts", {
+          provenance: "system",
+          confidence: 0.85,
+          actorKind: "system",
+          actorId: "_ingest_conflict_classifier",
+          mutationKind: "classifier-link",
+        }, env);
       } catch (e) {
-        console.error("Contradiction count update failed (non-fatal):", e);
+        console.error("Contradiction edge creation failed (non-fatal):", e);
       }
-      return { status: "contradiction_protected", id, canonicalId: conflictId, reason: contradiction.reason };
+      return {
+        status: "contradiction_protected",
+        id,
+        canonicalId: conflictId,
+        reason: contradiction.reason,
+        ...(awareness ? { awareness } : {}),
+      };
     }
 
-    // Non-canonical loser: the new entry wins; the incumbent loses and is deprecated
-    // (row kept for audit). Record the outcome before deprecating. Non-fatal.
+    // A non-canonical conflict is still a conflict, not an automatic temporal
+    // supersession. Keep both states and let governance decide any lifecycle
+    // transition explicitly.
     try {
-      await env.DB.prepare(`UPDATE entries SET contradiction_wins = contradiction_wins + 1 WHERE id = ?`).bind(id).run();
-      await env.DB.prepare(`UPDATE entries SET contradiction_losses = contradiction_losses + 1 WHERE id = ?`).bind(conflictId).run();
+      await createEdge(id, conflictId, "contradicts", {
+        provenance: "system",
+        confidence: 0.85,
+        actorKind: "system",
+        actorId: "_ingest_conflict_classifier",
+        mutationKind: "classifier-link",
+      }, env);
     } catch (e) {
-      console.error("Contradiction count update failed (non-fatal):", e);
+      console.error("Contradiction edge creation failed (non-fatal):", e);
     }
-    // Bitemporal: close the old entry's validity window (Ticket 05)
-    try {
-      await env.DB.prepare(`UPDATE entries SET valid_to = ? WHERE id = ?`).bind(Date.now(), conflictId).run();
-    } catch (e) {
-      console.error("Bitemporal valid_to update failed (non-fatal):", e);
-    }
-    try {
-      await deprecateEntry(conflictId, env);
-    } catch (e) {
-      console.error("Contradiction deprecation failed (non-fatal):", e);
-    }
-    // Project the lifecycle into the graph: the new entry supersedes the deprecated
-    // one (#16). Skip a redundant relates_to to the superseded node — the supersedes
-    // edge already captures that relationship — but still auto-link other neighbors.
-    try {
-      await createEdge(id, conflictId, "supersedes", { provenance: "system", weight: 1.0 }, env);
-    } catch (e) {
-      console.error("Supersedes edge creation failed (non-fatal):", e);
-    }
-    ctx.waitUntil(inferEdgesOnWrite(id, neighbors.filter(n => n.id !== conflictId), env).catch(e => console.error("Edge inference failed (non-fatal):", e)));
-    return { status: "contradiction", id, resolvedConflict: conflictId, reason: contradiction.reason };
+    return {
+      status: "contradiction",
+      id,
+      resolvedConflict: conflictId,
+      reason: contradiction.reason,
+      ...(awareness ? { awareness } : {}),
+    };
   }
 
   // Reached here without contradiction handling (flagged-new-row or stored) — both
@@ -483,10 +486,23 @@ export async function captureEntry(
   ctx.waitUntil(inferEdgesOnWrite(id, neighbors, env).catch(e => console.error("Edge inference failed (non-fatal):", e)));
 
   if (dup.status === "flagged") {
-    return { status: "flagged", id, matchId: dup.matchId, score: dup.score, crossUserNote };
+    return {
+      status: "flagged",
+      id,
+      matchId: dup.matchId,
+      score: dup.score,
+      crossUserNote,
+      ...(mergeSkipped ? { mergeSkipped } : {}),
+      ...(awareness ? { awareness } : {}),
+    };
   }
 
-  return { status: "stored", id, crossUserNote };
+  return {
+    status: "stored",
+    id,
+    crossUserNote,
+    ...(awareness ? { awareness } : {}),
+  };
 }
 
 // ─── Passage creation (Ticket 07) ───────────────────────────────────────────
@@ -557,41 +573,70 @@ export async function createPassagesForEntry(
   const { chunks, headers } = chunkIntoPassages(content);
   const now = Date.now();
 
-  // Create document hierarchy if content has headers (research content)
-  let sectionMap = new Map<string, string>(); // section title -> section id
-  if (headers.length > 0) {
-    const docId = crypto.randomUUID();
-    const title = headers[0]?.title ?? "Untitled Document";
-    try {
-      await env.DB.prepare(
-        `INSERT INTO documents (id, title, source_url, content_type, created_at) VALUES (?, ?, ?, ?, ?)`
-      ).bind(docId, title, null, "research", now).run();
+  // Compatibility helper: preserve the same one-document-per-episode contract
+  // as the canonical versioning service, even when no hierarchy is present.
+  const docId = crypto.randomUUID();
+  const sectionMap = new Map<string, string>(); // section title -> section id
+  const title = headers[0]?.title ?? "Untitled Memory";
+  try {
+    await env.DB.prepare(
+      `INSERT INTO documents (
+         id, title, source_url, content_type, created_at, episode_id,
+         owner_user_id, content_hash, version
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      docId,
+      title,
+      null,
+      headers.length > 0 ? "research" : "text",
+      now,
+      episodeId,
+      ownerUserId ?? "",
+      await sha256Hex(content),
+      "1",
+    ).run();
 
-      // Create sections from headers
-      for (let i = 0; i < headers.length; i++) {
-        const sectionId = crypto.randomUUID();
-        const parentTitle = findParentSection(headers, i);
-        const parentSectionId = parentTitle ? sectionMap.get(parentTitle) ?? null : null;
-        try {
-          await env.DB.prepare(
-            `INSERT INTO document_sections (id, document_id, parent_section_id, title, level, order_index, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
-          ).bind(sectionId, docId, parentSectionId, headers[i].title, headers[i].level, i, now).run();
-          sectionMap.set(headers[i].title, sectionId);
-        } catch (e) {
-          console.error("Document section insert failed (non-fatal):", e);
-        }
-      }
-    } catch (e) {
-      console.error("Document insert failed (non-fatal):", e);
+    for (let i = 0; i < headers.length; i++) {
+      const sectionId = crypto.randomUUID();
+      const parentTitle = findParentSection(headers, i);
+      const parentSectionId = parentTitle ? sectionMap.get(parentTitle) ?? null : null;
+      await env.DB.prepare(
+        `INSERT INTO document_sections (
+           id, document_id, parent_section_id, title, level, order_index,
+           created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind(sectionId, docId, parentSectionId, headers[i].title, headers[i].level, i, now).run();
+      sectionMap.set(headers[i].title, sectionId);
     }
+  } catch (e) {
+    console.error("Document hierarchy insert failed (non-fatal):", e);
+    return;
   }
 
   for (const chunk of chunks) {
     const passageId = crypto.randomUUID();
     try {
       await env.DB.prepare(
-        `INSERT INTO passages (id, entry_id, episode_id, content, section, start_offset, end_offset, vector_ids, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).bind(passageId, entryId, episodeId, chunk.text, chunk.section, chunk.startOffset, chunk.endOffset, "[]", now).run();
+        `INSERT INTO passages (
+           id, entry_id, episode_id, document_id, section_id, content,
+           section, page, page_end, start_offset, end_offset, vector_ids,
+           created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        passageId,
+        entryId,
+        episodeId,
+        docId,
+        chunk.section ? sectionMap.get(chunk.section) ?? null : null,
+        chunk.text,
+        chunk.section,
+        null,
+        null,
+        chunk.startOffset,
+        chunk.endOffset,
+        "[]",
+        now,
+      ).run();
     } catch (e) {
       console.error("Passage insert failed (non-fatal):", e);
       continue;

@@ -3,6 +3,7 @@ import { captureEntry } from "../../src/testing";
 import { makeTestDb, makeTestEnv, makeVectorizeMock } from "../helpers/make-env";
 import type { Env } from "../../src/testing";
 import { D1Mock } from "../helpers/d1-mock";
+import { TEST_USER_ID } from "../helpers/test-principal";
 
 // Collects waitUntil promises so we can await the fire-and-forget auto-link.
 function makeCtx() {
@@ -34,7 +35,16 @@ function match(id: string, score: number) {
 }
 
 function seedExisting(db: D1Mock, tags: string[] = []) {
-  db.entries.push({ id: "existing", content: "Existing memory", tags: JSON.stringify(tags), source: "api", created_at: 1, vector_ids: "[]" });
+  db.entries.push({
+    id: "existing",
+    content: "Existing memory",
+    tags: JSON.stringify(tags),
+    source: "api",
+    created_at: 1,
+    vector_ids: "[]",
+    owner_user_id: TEST_USER_ID,
+    visibility: "public",
+  });
 }
 
 describe("auto-link on write (issue #16)", () => {
@@ -52,7 +62,7 @@ describe("auto-link on write (issue #16)", () => {
     });
     const { ctx, drain } = makeCtx();
 
-    const result = await captureEntry("A related new memory", [], "api", env, ctx);
+    const result = await captureEntry("A related new memory", [], "api", env, ctx, TEST_USER_ID);
     await drain();
 
     expect(result.status).toBe("stored");
@@ -73,7 +83,7 @@ describe("auto-link on write (issue #16)", () => {
     });
     const { ctx, drain } = makeCtx();
 
-    const result = await captureEntry("Near-identical memory", [], "api", env, ctx);
+    const result = await captureEntry("Near-identical memory", [], "api", env, ctx, TEST_USER_ID);
     await drain();
 
     expect(result.status).toBe("blocked");
@@ -88,14 +98,14 @@ describe("auto-link on write (issue #16)", () => {
     });
     const { ctx, drain } = makeCtx();
 
-    const result = await captureEntry("Updated version", [], "api", env, ctx);
+    const result = await captureEntry("Updated version", [], "api", env, ctx, TEST_USER_ID);
     await drain();
 
     expect(result.status).toBe("replaced");
     expect(db.edges).toHaveLength(0);
   });
 
-  it("does NOT link a contradiction-protected draft (the new entry lost to a canonical)", async () => {
+  it("keeps a canonical incumbent and records a contradiction from the new draft", async () => {
     seedExisting(db, ["status:canonical"]);
     const env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({ query: vi.fn().mockResolvedValue({ matches: [match("existing", 0.9)] }) }),
@@ -103,14 +113,26 @@ describe("auto-link on write (issue #16)", () => {
     });
     const { ctx, drain } = makeCtx();
 
-    const result = await captureEntry("Conflicting claim", [], "api", env, ctx);
+    const result = await captureEntry("Conflicting claim", [], "api", env, ctx, TEST_USER_ID);
     await drain();
 
     expect(result.status).toBe("contradiction_protected");
-    expect(db.edges).toHaveLength(0);
+    if (result.status !== "contradiction_protected") throw new Error("expected protected contradiction");
+    expect(db.edges).toHaveLength(1);
+    expect(db.edges[0]).toMatchObject({
+      source_id: result.id,
+      target_id: "existing",
+      type: "contradicts",
+      provenance: "system",
+    });
+    const incumbent = db.entries.find((entry: any) => entry.id === "existing");
+    expect(JSON.parse(incumbent.tags)).toContain("status:canonical");
+    expect(incumbent.valid_to).toBeNull();
+    const candidate = db.entries.find((entry: any) => entry.id === result.id);
+    expect(JSON.parse(candidate.tags)).toEqual(expect.arrayContaining(["status:draft", "contradiction-candidate"]));
   });
 
-  it("projects a supersedes edge (not a redundant relates_to) when a new entry wins a contradiction", async () => {
+  it("keeps both non-canonical claims and records contradiction without supersession", async () => {
     seedExisting(db); // non-canonical incumbent
     const env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({ query: vi.fn().mockResolvedValue({ matches: [match("existing", 0.9)] }) }),
@@ -118,16 +140,19 @@ describe("auto-link on write (issue #16)", () => {
     });
     const { ctx, drain } = makeCtx();
 
-    const result = await captureEntry("The corrected fact", [], "api", env, ctx);
+    const result = await captureEntry("The corrected fact", [], "api", env, ctx, TEST_USER_ID);
     await drain();
 
     expect(result.status).toBe("contradiction");
     if (result.status !== "contradiction") throw new Error("expected contradiction");
     expect(db.edges).toHaveLength(1);
     const e = db.edges[0];
-    expect(e.type).toBe("supersedes"); // new supersedes the deprecated incumbent
+    expect(e.type).toBe("contradicts");
     expect(e.provenance).toBe("system");
     expect(e.source_id).toBe(result.id);
     expect(e.target_id).toBe("existing");
+    const incumbent = db.entries.find((entry: any) => entry.id === "existing");
+    expect(JSON.parse(incumbent.tags)).not.toContain("status:deprecated");
+    expect(incumbent.valid_to).toBeNull();
   });
 });

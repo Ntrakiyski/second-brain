@@ -4,6 +4,7 @@ import { makeTestEnv, makeTestDb, makeVectorizeMock } from "../helpers/make-env"
 import { req } from "../helpers/make-request";
 import type { Env } from "../../src/testing";
 import { D1Mock } from "../helpers/d1-mock";
+import { TEST_USER_ID } from "../helpers/test-principal";
 
 const ctx = { waitUntil: (_: Promise<any>) => {} } as any;
 
@@ -16,11 +17,12 @@ describe("Document hierarchy (Ticket 08)", () => {
     env = makeTestEnv(db);
   });
 
-  it("GET /entries/:id/hierarchy returns null sections when no hierarchy exists", async () => {
+  it("GET /entries/:id/hierarchy identifies legacy entries with no current episode", async () => {
     db.entries.push({
       id: "plain-entry", content: "Plain content", tags: "[]", source: "api",
       created_at: Date.now(), vector_ids: "[]", recall_count: 0, importance_score: 0,
-      contradiction_wins: 0, contradiction_losses: 0, owner_user_id: "",
+      contradiction_wins: 0, contradiction_losses: 0, owner_user_id: TEST_USER_ID,
+      visibility: "public", current_episode_id: null,
     });
     db.episodes = db.episodes || [];
     db.episodes.push({
@@ -34,7 +36,8 @@ describe("Document hierarchy (Ticket 08)", () => {
     );
     const data = await res.json() as any;
     expect(data.ok).toBe(true);
-    expect(data.sections).toEqual([]);
+    expect(data.hierarchy).toBeNull();
+    expect(data.legacy_lineage).toBe(true);
   });
 
   it("GET /entries/:id/hierarchy returns sections when document sections exist", async () => {
@@ -42,7 +45,8 @@ describe("Document hierarchy (Ticket 08)", () => {
     db.entries.push({
       id: "research-entry", content: "# Research\n## Methods\n## Results", tags: "[]",
       source: "api", created_at: now, vector_ids: "[]", recall_count: 0, importance_score: 0,
-      contradiction_wins: 0, contradiction_losses: 0, owner_user_id: "",
+      contradiction_wins: 0, contradiction_losses: 0, owner_user_id: TEST_USER_ID,
+      visibility: "public", current_episode_id: "ep-2",
     });
     db.episodes = db.episodes || [];
     db.episodes.push({
@@ -52,6 +56,7 @@ describe("Document hierarchy (Ticket 08)", () => {
     db.documents = db.documents || [];
     db.documents.push({
       id: "doc-1", title: "Research", source_url: null, content_type: "research", created_at: now,
+      episode_id: "ep-2", owner_user_id: TEST_USER_ID,
     });
     db.document_sections = db.document_sections || [];
     db.document_sections.push(
@@ -90,6 +95,7 @@ describe("Document hierarchy (Ticket 08)", () => {
       id: "hidden-entry", content: "Private content", tags: JSON.stringify(["private"]), source: "api",
       created_at: now, vector_ids: "[]", recall_count: 0, importance_score: 0,
       contradiction_wins: 0, contradiction_losses: 0, owner_user_id: "another-user",
+      visibility: "private",
     });
     db.episodes.push({
       id: "hidden-episode", entry_id: "hidden-entry", content: "Private content",

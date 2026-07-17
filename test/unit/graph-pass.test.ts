@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import worker, { runGraphPass } from "../../src/testing";
 import { makeTestDb, makeTestEnv, makeVectorizeMock } from "../helpers/make-env";
-import type { Env } from "../../src/testing";
 import { D1Mock } from "../helpers/d1-mock";
 
 function makeCtx() {
@@ -23,8 +22,8 @@ describe("runGraphPass", () => {
 
   it("backfills a relates_to edge for an unlinked entry to its nearest neighbor", async () => {
     db.entries.push(
-      { id: "lonely", content: "Unlinked memory", tags: "[]", source: "api", created_at: 2, vector_ids: "[]" },
-      { id: "neighbor", content: "Similar memory", tags: "[]", source: "api", created_at: 1, vector_ids: "[]" },
+      { id: "lonely", content: "Unlinked memory", tags: "[]", source: "api", created_at: 2, vector_ids: "[]", owner_user_id: "u1", visibility: "public" },
+      { id: "neighbor", content: "Similar memory", tags: "[]", source: "api", created_at: 1, vector_ids: "[]", owner_user_id: "u1", visibility: "public" },
     );
     const query = vi.fn().mockResolvedValue({ matches: [
       { id: "lonely", score: 1.0, metadata: { parentId: "lonely" } },
@@ -51,7 +50,7 @@ describe("runGraphPass", () => {
   });
 
   it("does not re-link entries that already have an edge", async () => {
-    db.entries.push({ id: "linked", content: "x", tags: "[]", source: "api", created_at: 1, vector_ids: "[]" });
+    db.entries.push({ id: "linked", content: "x", tags: "[]", source: "api", created_at: 1, vector_ids: "[]", owner_user_id: "u1", visibility: "public" });
     db.edges.push({ id: "e", source_id: "linked", target_id: "other", type: "relates_to", weight: 0.9, provenance: "explicit", metadata: "{}", created_at: 1, updated_at: 1 });
     const env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({ query: vi.fn().mockResolvedValue({ matches: [{ id: "z", score: 0.9, metadata: { parentId: "z" } }] }) }),
@@ -89,8 +88,8 @@ describe("runGraphPass", () => {
 
   it("creates cross-user edges only between public entries", async () => {
     db.entries.push(
-      { id: "pub-a", content: "User1 public", tags: "[]", source: "api", created_at: 2, vector_ids: "[]", owner_user_id: "u1" },
-      { id: "pub-b", content: "User2 public", tags: "[]", source: "api", created_at: 1, vector_ids: "[]", owner_user_id: "u2" },
+      { id: "pub-a", content: "User1 public", tags: "[]", source: "api", created_at: 2, vector_ids: "[]", owner_user_id: "u1", visibility: "public" },
+      { id: "pub-b", content: "User2 public", tags: "[]", source: "api", created_at: 1, vector_ids: "[]", owner_user_id: "u2", visibility: "public" },
     );
     const env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({
@@ -110,8 +109,8 @@ describe("runGraphPass", () => {
 
   it("does not create edges involving other users' private entries", async () => {
     db.entries.push(
-      { id: "priv-other", content: "Other private", tags: '["private"]', source: "api", created_at: 2, vector_ids: "[]", owner_user_id: "u2" },
-      { id: "pub-a", content: "My public", tags: "[]", source: "api", created_at: 1, vector_ids: "[]", owner_user_id: "u1" },
+      { id: "priv-other", content: "Other private", tags: '["private"]', source: "api", created_at: 2, vector_ids: "[]", owner_user_id: "u2", visibility: "private" },
+      { id: "pub-a", content: "My public", tags: "[]", source: "api", created_at: 1, vector_ids: "[]", owner_user_id: "u1", visibility: "public" },
     );
     const env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({
@@ -130,11 +129,11 @@ describe("runGraphPass", () => {
 
   it("links a private source only to same-owner private entries", async () => {
     db.entries.push(
-      { id: "source-private", content: "Private source", tags: '["private"]', source: "api", created_at: 10, vector_ids: "[]", owner_user_id: "u1" },
-      { id: "own-private", content: "Own private", tags: '["private"]', source: "api", created_at: 9, vector_ids: "[]", owner_user_id: "u1" },
-      { id: "own-public", content: "Own public", tags: "[]", source: "api", created_at: 8, vector_ids: "[]", owner_user_id: "u1" },
-      { id: "other-private", content: "Other private", tags: '["private"]', source: "api", created_at: 7, vector_ids: "[]", owner_user_id: "u2" },
-      { id: "other-public", content: "Other public", tags: "[]", source: "api", created_at: 6, vector_ids: "[]", owner_user_id: "u2" },
+      { id: "source-private", content: "Private source", tags: '["private"]', source: "api", created_at: 10, vector_ids: "[]", owner_user_id: "u1", visibility: "private" },
+      { id: "own-private", content: "Own private", tags: '["private"]', source: "api", created_at: 9, vector_ids: "[]", owner_user_id: "u1", visibility: "private" },
+      { id: "own-public", content: "Own public", tags: "[]", source: "api", created_at: 8, vector_ids: "[]", owner_user_id: "u1", visibility: "public" },
+      { id: "other-private", content: "Other private", tags: '["private"]', source: "api", created_at: 7, vector_ids: "[]", owner_user_id: "u2", visibility: "private" },
+      { id: "other-public", content: "Other public", tags: "[]", source: "api", created_at: 6, vector_ids: "[]", owner_user_id: "u2", visibility: "public" },
     );
     // Keep every candidate out of the source backfill batch so this assertion
     // isolates the partition applied to source-private.
@@ -170,7 +169,7 @@ describe("runGraphPass", () => {
   it("fails closed without embedding a source whose tags are not an array", async () => {
     db.entries.push({
       id: "malformed", content: "Do not inspect", tags: JSON.stringify("private"),
-      source: "api", created_at: 1, vector_ids: "[]", owner_user_id: "u1",
+      source: "api", created_at: 1, vector_ids: "[]", owner_user_id: "u1", visibility: "private",
     });
     const query = vi.fn().mockResolvedValue({ matches: [] });
     const env = makeTestEnv(db, { VECTORIZE: makeVectorizeMock({ query }) });
@@ -186,8 +185,8 @@ describe("scheduled handler", () => {
   it("runs the graph pass alongside nightly compression (wired, same cron)", async () => {
     const db = makeTestDb();
     db.entries.push(
-      { id: "lonely", content: "x", tags: "[]", source: "api", created_at: 2, vector_ids: "[]" },
-      { id: "neighbor", content: "y", tags: "[]", source: "api", created_at: 1, vector_ids: "[]" },
+      { id: "lonely", content: "x", tags: "[]", source: "api", created_at: 2, vector_ids: "[]", owner_user_id: "u1", visibility: "public" },
+      { id: "neighbor", content: "y", tags: "[]", source: "api", created_at: 1, vector_ids: "[]", owner_user_id: "u1", visibility: "public" },
     );
     const env = makeTestEnv(db, {
       VECTORIZE: makeVectorizeMock({

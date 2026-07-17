@@ -20,6 +20,8 @@ export interface VectorEntryScope {
   id: string;
   ownerUserId: string;
   tags: string[];
+  visibility: "private" | "public";
+  currentEpisodeId: string | null;
 }
 
 export interface VisibleVectorQueryResult {
@@ -49,7 +51,13 @@ function parseTags(raw: string): string[] | null {
 
 function isVisible(row: VectorEntryScope, userId: string | undefined): boolean {
   if (userId && row.ownerUserId === userId) return true;
-  return !row.tags.includes("private");
+  return row.visibility === "public";
+}
+
+function matchesCurrentEpisode(match: ScopedVectorMatch, row: VectorEntryScope): boolean {
+  const value = match.metadata?.episodeId ?? match.metadata?.episode_id;
+  const vectorEpisodeId = typeof value === "string" && value.length > 0 ? value : null;
+  return !row.currentEpisodeId || !vectorEpisodeId || vectorEpisodeId === row.currentEpisodeId;
 }
 
 /**
@@ -107,9 +115,10 @@ export async function queryVisibleVectors(
 
   const placeholders = parentIds.map(() => "?").join(", ");
   const { results } = await env.DB.prepare(
-    `SELECT id, tags, owner_user_id FROM entries WHERE id IN (${placeholders})`,
+    `SELECT id, tags, owner_user_id, visibility, current_episode_id
+     FROM entries WHERE id IN (${placeholders})`,
   ).bind(...parentIds).all() as {
-    results: { id: string; tags: string; owner_user_id: string | null }[];
+    results: { id: string; tags: string; owner_user_id: string | null; visibility: string; current_episode_id: string | null }[];
   };
 
   const entriesById = new Map<string, VectorEntryScope>();
@@ -117,14 +126,22 @@ export async function queryVisibleVectors(
     if (typeof row.id !== "string" || typeof row.owner_user_id !== "string") continue;
     const tags = parseTags(row.tags);
     if (!tags) continue;
-    const scoped = { id: row.id, ownerUserId: row.owner_user_id, tags };
+    if (row.visibility !== "private" && row.visibility !== "public") continue;
+    const scoped: VectorEntryScope = {
+      id: row.id,
+      ownerUserId: row.owner_user_id,
+      tags,
+      visibility: row.visibility,
+      currentEpisodeId: row.current_episode_id ?? null,
+    };
     if (isVisible(scoped, userId)) entriesById.set(scoped.id, scoped);
   }
 
   const matches = merged
     .filter(match => {
       const parentId = parentIdFor(match);
-      return parentId !== null && entriesById.has(parentId);
+      const entry = parentId === null ? undefined : entriesById.get(parentId);
+      return entry !== undefined && matchesCurrentEpisode(match, entry);
     })
     .slice(0, topK);
 

@@ -70,9 +70,14 @@ describe("createPassagesForEntry chunking (Ticket 07)", () => {
     expect(passages).toHaveLength(0);
   });
 
-  it("does not create documents for content without headers", async () => {
+  it("creates one document envelope for content without headers", async () => {
     await createPassagesForEntry("entry-5", "ep-5", "Just plain text with no headers.", env, ctx);
-    expect(db.documents.length).toBe(0);
+    expect(db.documents.length).toBe(1);
+    expect(db.documents[0]).toMatchObject({
+      episode_id: "ep-5",
+      content_type: "text",
+      title: "Untitled Memory",
+    });
     expect(db.document_sections.length).toBe(0);
   });
 });

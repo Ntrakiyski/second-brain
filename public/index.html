@@ -1637,6 +1637,8 @@
       #edit-sheet,
       #menu-sheet,
       #integrations-sheet,
+      #services-sheet,
+      #history-sheet,
       #view-sheet {
         display: none;
         position: fixed;
@@ -1656,6 +1658,8 @@
       #edit-sheet.open,
       #menu-sheet.open,
       #integrations-sheet.open,
+      #services-sheet.open,
+      #history-sheet.open,
       #view-sheet.open {
         display: flex;
         opacity: 1;
@@ -1774,6 +1778,7 @@
 
       .view-actions {
         display: flex;
+        flex-wrap: wrap;
         gap: 8px;
         margin-top: auto;
         flex-shrink: 0;
@@ -1781,8 +1786,11 @@
 
       .btn-view-append,
       .btn-view-edit,
+      .btn-view-reinforce,
+      .btn-view-visibility,
       .btn-view-forget {
         flex: 1;
+        min-width: 112px;
         padding: 13px;
         border: none;
         border-radius: 13px;
@@ -1803,12 +1811,16 @@
 
       .btn-view-append i,
       .btn-view-edit i,
+      .btn-view-reinforce i,
+      .btn-view-visibility i,
       .btn-view-forget i {
         font-size: 16px;
       }
 
       .btn-view-append:hover,
-      .btn-view-edit:hover {
+      .btn-view-edit:hover,
+      .btn-view-reinforce:hover,
+      .btn-view-visibility:hover {
         background: var(--surface-3);
       }
 
@@ -2271,6 +2283,407 @@
         font-weight: 500;
       }
 
+      .proposal-card {
+        background: var(--bg-card);
+        border: 0.5px solid var(--border-card);
+        border-radius: var(--radius-card);
+        padding: 12px;
+        margin-bottom: 9px;
+      }
+
+      .proposal-head,
+      .proposal-actions {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+      }
+
+      .proposal-head {
+        justify-content: space-between;
+        margin-bottom: 6px;
+      }
+
+      .proposal-type {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--accent-ink);
+      }
+
+      .proposal-risk {
+        font-size: 10px;
+        color: var(--text-tertiary);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
+      .proposal-reason {
+        font-size: 12px;
+        line-height: 1.45;
+        color: var(--text-secondary);
+        margin-bottom: 8px;
+      }
+
+      .proposal-meta {
+        margin: 8px 0;
+        display: grid;
+        gap: 4px;
+        font-size: 11px;
+        color: var(--text-secondary);
+        overflow-wrap: anywhere;
+      }
+
+      .proposal-review-details {
+        margin: 9px 0;
+        padding: 9px 10px;
+        border-radius: 9px;
+        background: var(--surface-2);
+        font-size: 11px;
+        color: var(--text-secondary);
+      }
+
+      .proposal-review-details summary {
+        cursor: pointer;
+        color: var(--text-primary);
+        font-weight: 600;
+      }
+
+      .proposal-review-label {
+        margin-top: 8px;
+        color: var(--text-tertiary);
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      .proposal-json {
+        margin: 4px 0 0;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        font-family: var(--font-mono);
+        font-size: 10.5px;
+        line-height: 1.45;
+        color: var(--text-primary);
+      }
+
+      .proposal-actions {
+        justify-content: flex-end;
+      }
+
+      .awareness-card {
+        background: var(--bg-card);
+        border: 0.5px solid var(--border-card);
+        border-radius: var(--radius-card);
+        padding: 12px;
+        margin-bottom: 9px;
+      }
+
+      .awareness-head,
+      .awareness-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .awareness-head {
+        justify-content: space-between;
+        margin-bottom: 7px;
+      }
+
+      .awareness-title {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--accent-ink);
+      }
+
+      .awareness-score,
+      .awareness-time {
+        font-size: 10px;
+        color: var(--text-tertiary);
+      }
+
+      .awareness-copy {
+        margin-bottom: 8px;
+        color: var(--text-secondary);
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      .awareness-memory {
+        display: block;
+        width: 100%;
+        margin: 5px 0;
+        padding: 8px 9px;
+        border: 0;
+        border-radius: 8px;
+        background: var(--surface-2);
+        color: var(--text-primary);
+        font: inherit;
+        font-size: 11.5px;
+        line-height: 1.4;
+        text-align: left;
+        cursor: pointer;
+      }
+
+      .awareness-memory:hover {
+        background: var(--accent-soft);
+      }
+
+      .awareness-memory strong {
+        color: var(--accent);
+      }
+
+      .awareness-actions {
+        justify-content: flex-end;
+        margin-top: 8px;
+      }
+
+      .card-citations {
+        display: grid;
+        gap: 5px;
+        margin: 10px 0 2px;
+        padding-top: 9px;
+        border-top: 0.5px solid var(--line-soft);
+      }
+
+      .card-citation {
+        color: var(--text-secondary);
+        font-size: 10.5px;
+        line-height: 1.4;
+        overflow-wrap: anywhere;
+      }
+
+      .card-citation a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+
+      .temporal-recall {
+        margin: 8px 18px 0;
+        color: var(--text-secondary);
+        font-size: 11px;
+      }
+
+      .temporal-recall summary {
+        cursor: pointer;
+        color: var(--accent);
+        font-weight: 600;
+      }
+
+      .temporal-recall-fields {
+        display: grid;
+        grid-template-columns: 1fr 1fr auto;
+        gap: 7px;
+        align-items: end;
+        padding-top: 8px;
+      }
+
+      .temporal-recall-fields label {
+        display: grid;
+        gap: 4px;
+      }
+
+      .temporal-recall-fields input {
+        min-width: 0;
+        padding: 7px 8px;
+        border: 0.5px solid var(--border-input);
+        border-radius: 8px;
+        background: var(--bg-card);
+        color: var(--text-primary);
+        font: inherit;
+      }
+
+      .history-card {
+        padding: 11px;
+        margin-bottom: 8px;
+        border: 0.5px solid var(--border-card);
+        border-radius: var(--radius-card);
+        background: var(--bg-card);
+      }
+
+      .history-card-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        color: var(--text-secondary);
+        font-size: 11px;
+      }
+
+      .history-preview {
+        margin: 7px 0;
+        color: var(--text-primary);
+        font-size: 12px;
+        line-height: 1.45;
+        overflow-wrap: anywhere;
+      }
+
+      @media (max-width: 520px) {
+        .temporal-recall-fields {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      .service-create-form,
+      .service-card,
+      .service-secret-panel {
+        background: var(--bg-card);
+        border: 0.5px solid var(--border-card);
+        border-radius: var(--radius-card);
+        padding: 13px;
+      }
+
+      .service-create-form {
+        display: grid;
+        gap: 10px;
+        margin: 12px 0 18px;
+      }
+
+      .service-field {
+        display: grid;
+        gap: 5px;
+        min-width: 0;
+      }
+
+      .service-field > span,
+      .service-scopes summary {
+        color: var(--text-secondary);
+        font-size: 11px;
+        font-weight: 600;
+      }
+
+      .service-field input,
+      .service-field select {
+        width: 100%;
+        min-width: 0;
+        padding: 9px 10px;
+        background: transparent;
+        border: 0.5px solid var(--border-input);
+        border-radius: 9px;
+        color: var(--text-primary);
+        font: inherit;
+        font-size: 13px;
+        outline: none;
+      }
+
+      .service-field input:focus,
+      .service-field select:focus {
+        border-color: var(--accent);
+      }
+
+      .service-form-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 9px;
+      }
+
+      .service-scopes summary {
+        cursor: pointer;
+        padding: 2px 0;
+      }
+
+      .service-scope-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 7px 10px;
+        margin-top: 9px;
+      }
+
+      .service-scope-option {
+        display: flex;
+        align-items: flex-start;
+        gap: 6px;
+        color: var(--text-secondary);
+        font-size: 11px;
+        overflow-wrap: anywhere;
+      }
+
+      .service-scope-option input {
+        accent-color: var(--accent);
+        margin-top: 1px;
+      }
+
+      .service-secret-panel {
+        margin-bottom: 16px;
+        border-color: var(--accent);
+      }
+
+      .service-secret-panel strong {
+        display: block;
+        color: var(--accent-ink);
+        font-size: 13px;
+        margin-bottom: 4px;
+      }
+
+      .service-secret-value {
+        margin: 9px 0;
+        padding: 9px;
+        background: var(--surface-2);
+        border-radius: 8px;
+        color: var(--text-primary);
+        font-family: var(--font-mono);
+        font-size: 11px;
+        line-height: 1.45;
+        overflow-wrap: anywhere;
+        user-select: all;
+      }
+
+      .service-card {
+        margin-bottom: 9px;
+      }
+
+      .service-card-head,
+      .service-card-actions {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+      }
+
+      .service-card-head {
+        justify-content: space-between;
+        margin-bottom: 7px;
+      }
+
+      .service-card-name {
+        color: var(--text-primary);
+        font-size: 13px;
+        font-weight: 600;
+        overflow-wrap: anywhere;
+      }
+
+      .service-status {
+        color: var(--good);
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+
+      .service-status.suspended,
+      .service-status.revoked {
+        color: var(--danger);
+      }
+
+      .service-card-meta {
+        display: grid;
+        gap: 4px;
+        color: var(--text-tertiary);
+        font-size: 11px;
+        line-height: 1.4;
+        overflow-wrap: anywhere;
+      }
+
+      .service-card-actions {
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        margin-top: 10px;
+      }
+
+      @media (max-width: 390px) {
+        .service-form-row,
+        .service-scope-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+
       /* ============ DESKTOP SIDEBAR ============ */
       #sidebar {
         width: 248px;
@@ -2453,6 +2866,8 @@
         #edit-sheet,
         #menu-sheet,
         #integrations-sheet,
+        #services-sheet,
+        #history-sheet,
         #view-sheet {
           align-items: center;
           justify-content: center;
@@ -2620,6 +3035,19 @@
                 </select>
               </div>
             </div>
+            <details class="temporal-recall" id="temporal-recall-controls">
+              <summary>Time-aware recall</summary>
+              <div class="temporal-recall-fields">
+                <label>World state at
+                  <input type="datetime-local" id="recall-as-of" aria-label="World state at" />
+                </label>
+                <label>Known by
+                  <input type="datetime-local" id="recall-known-at" aria-label="Known by" />
+                </label>
+                <button class="digest-btn" type="button" onclick="clearRecallTime()">Clear</button>
+              </div>
+              <p class="digest-note">World state asks what was true then. Known by asks what the team had learned by then.</p>
+            </details>
             <div class="suggestions-row">
               <button class="suggestion-pill" onclick="sendSuggestion('What am I working on?')">What am I working on?</button>
               <button class="suggestion-pill" onclick="sendSuggestion('What did I decide recently?')">What did I decide recently?</button>
@@ -2916,6 +3344,9 @@
         <div class="view-actions">
           <button class="btn-view-append" id="view-btn-append"><i class="ti ti-writing"></i> Append</button>
           <button class="btn-view-edit" id="view-btn-edit"><i class="ti ti-pencil"></i> Edit</button>
+          <button class="btn-view-reinforce" id="view-btn-reinforce"><i class="ti ti-sparkles"></i> Reinforce</button>
+          <button class="btn-view-history" id="view-btn-history"><i class="ti ti-history"></i> History</button>
+          <button class="btn-view-visibility" id="view-btn-visibility"><i class="ti ti-world"></i> Publish</button>
           <button class="btn-view-forget" id="view-btn-forget"><i class="ti ti-trash"></i> Forget</button>
         </div>
       </div>
@@ -2940,6 +3371,8 @@
             <div class="stats-tags" id="stats-tags"></div>
           </div>
         </div>
+        <div class="digest-section" id="awareness-section" style="display: none"></div>
+        <div class="digest-section" id="proposal-section" style="display: none"></div>
         <div class="digest-section" id="patterns-section" style="display: none"></div>
         <div class="digest-section" id="digest-section" style="display: none"></div>
         <div class="digest-section" id="vectorize-section" style="display: none"></div>
@@ -2962,6 +3395,9 @@
           <i class="ti ti-clock"></i> View all memories
         </button>
         <button class="menu-item" onclick="openIntegrations()"><i class="ti ti-plug"></i> Integrations</button>
+        <button class="menu-item" id="service-identities-menu-item" onclick="openServiceIdentities()" style="display: none">
+          <i class="ti ti-robot"></i> Service identities
+        </button>
         <button class="menu-item" onclick="exportMemories('json')"><i class="ti ti-download"></i> Export as JSON</button>
         <button class="menu-item" onclick="exportMemories('markdown')"><i class="ti ti-markdown"></i> Export as Markdown</button>
         <button class="menu-item danger" onclick="logout()"><i class="ti ti-logout"></i> Disconnect</button>
@@ -2982,6 +3418,83 @@
       </div>
     </div>
 
+    <div id="services-sheet">
+      <div class="menu-inner">
+        <div class="view-header">
+          <div style="display: flex; align-items: center; gap: 10px">
+            <button class="btn-close-icon" onclick="backToMenuFromServices()" title="Back to settings"><i class="ti ti-arrow-left"></i></button>
+            <h3 style="margin-bottom: 0">Service identities</h3>
+          </div>
+          <button class="btn-close-icon" onclick="closeServiceIdentities()"><i class="ti ti-x"></i></button>
+        </div>
+        <p class="digest-note">Give an agent its own governed identity. Keys are shown once and are never listed again.</p>
+
+        <div class="service-secret-panel" id="service-secret-panel" style="display: none" aria-live="polite">
+          <strong>Copy this key now</strong>
+          <p class="digest-note">This is the only time the full key will be visible. Store it securely before leaving this screen.</p>
+          <div class="service-secret-value" id="service-secret-value"></div>
+          <button class="digest-btn" id="service-secret-copy" type="button" onclick="copyServiceSecret()">Copy key</button>
+        </div>
+
+        <form class="service-create-form" id="service-create-form" onsubmit="createServiceIdentityFromForm(event)" autocomplete="off">
+          <div class="digest-section-label" style="margin-bottom: 0">Create identity</div>
+          <label class="service-field">
+            <span>Name</span>
+            <input id="service-name" name="name" maxlength="80" required placeholder="Hermes memory operator" />
+          </label>
+          <label class="service-field">
+            <span>Description <small>(optional)</small></span>
+            <input id="service-description" name="description" maxlength="240" placeholder="What this agent is responsible for" />
+          </label>
+          <div class="service-form-row">
+            <label class="service-field">
+              <span>Autonomy</span>
+              <select id="service-profile" name="autonomy_profile">
+                <option value="observe">Observe only</option>
+                <option value="draft">Draft privately</option>
+                <option value="propose" selected>Propose changes</option>
+                <option value="execute-approved">Execute approved</option>
+              </select>
+            </label>
+            <label class="service-field">
+              <span>Key expiry <small>(optional)</small></span>
+              <input id="service-expiry" name="expires_at" type="datetime-local" />
+            </label>
+          </div>
+          <details class="service-scopes">
+            <summary>Scopes (safe defaults)</summary>
+            <div class="service-scope-grid">
+              <label class="service-scope-option"><input type="checkbox" name="service_scope" value="memory:read" checked /> memory:read</label>
+              <label class="service-scope-option"><input type="checkbox" name="service_scope" value="memory:draft" checked /> memory:draft</label>
+              <label class="service-scope-option"><input type="checkbox" name="service_scope" value="memory:propose" checked /> memory:propose</label>
+              <label class="service-scope-option"><input type="checkbox" name="service_scope" value="proposal:read" checked /> proposal:read</label>
+              <label class="service-scope-option"><input type="checkbox" name="service_scope" value="proposal:create" checked /> proposal:create</label>
+              <label class="service-scope-option"><input type="checkbox" name="service_scope" value="audit:write" checked /> audit:write</label>
+              <label class="service-scope-option"><input type="checkbox" name="service_scope" value="run:write" checked /> run:write</label>
+              <label class="service-scope-option"><input type="checkbox" name="service_scope" value="memory:execute-approved" /> memory:execute-approved</label>
+              <label class="service-scope-option"><input type="checkbox" name="service_scope" value="proposal:execute-approved" /> proposal:execute-approved</label>
+            </div>
+          </details>
+          <div class="integration-error" id="service-create-error" style="display: none"></div>
+          <button class="digest-btn" id="service-create-button" type="submit">Create identity</button>
+        </form>
+
+        <div class="digest-section-label">Existing identities</div>
+        <div id="service-identities-list"><p class="digest-note">Loading&hellip;</p></div>
+      </div>
+    </div>
+
+    <div id="history-sheet">
+      <div class="menu-inner">
+        <div class="view-header">
+          <h3 style="margin-bottom: 0">Memory history</h3>
+          <button class="btn-close-icon" onclick="closeEntryHistory()"><i class="ti ti-x"></i></button>
+        </div>
+        <p class="digest-note">Every visible change keeps its prior state. Restoring creates a new private draft and never rewrites this history.</p>
+        <div id="history-list"><p class="digest-note">Loading&hellip;</p></div>
+      </div>
+    </div>
+
     <script src="utils.js"></script>
     <script>
       let WORKER_URL = '',
@@ -2999,6 +3512,9 @@
         selectedVisibility = ''
       let currentCount = 0
       let vectorizeGraceMs = 300000
+      let awarenessInboxEvents = []
+      let issuedServiceSecret = ''
+      let serviceIdentitiesCache = []
 
       function init() {
         applyTheme()
@@ -3259,6 +3775,9 @@
 
       function logout() {
         closeMenu()
+        closeServiceIdentities()
+        serviceIdentitiesCache = []
+        document.getElementById('service-identities-menu-item').style.display = 'none'
         localStorage.removeItem('sb_url')
         localStorage.removeItem('sb_token')
         localStorage.removeItem('sb_username')
@@ -3353,11 +3872,42 @@
         document.getElementById('recall-input').value = text
         sendRecall()
       }
+      function clearRecallTime() {
+        document.getElementById('recall-as-of').value = ''
+        document.getElementById('recall-known-at').value = ''
+      }
+
+      function appendRecallTimeParams(params) {
+        const asOfValue = document.getElementById('recall-as-of').value
+        const knownAtValue = document.getElementById('recall-known-at').value
+        if (asOfValue) {
+          const asOf = new Date(asOfValue).getTime()
+          if (Number.isFinite(asOf)) params.set('as_of', String(asOf))
+        }
+        if (knownAtValue) {
+          const knownAt = new Date(knownAtValue).getTime()
+          if (Number.isFinite(knownAt)) params.set('known_at', String(knownAt))
+        }
+      }
       function handleRecallKey(e) {
         if (e.key === 'Enter' && !e.shiftKey) {
           e.preventDefault()
           sendRecall()
         }
+      }
+
+      function formatRecallPassageForContext(passage) {
+        const citation = [
+          passage.documentTitle ? `title="${passage.documentTitle}"` : null,
+          passage.sourceUrl ? `url=${passage.sourceUrl}` : null,
+          passage.page != null ? `page=${passage.page}` : null,
+          passage.pageEnd != null ? `pageEnd=${passage.pageEnd}` : null,
+          passage.section ? `section="${passage.section}"` : null,
+          passage.startOffset != null ? `startOffset=${passage.startOffset}` : null,
+          passage.endOffset != null ? `endOffset=${passage.endOffset}` : null,
+        ].filter(Boolean)
+        const prefix = citation.length ? `[${citation.join('; ')}] ` : ''
+        return `- ${prefix}"${passage.content || ''}"`
       }
 
       async function sendRecall() {
@@ -3379,6 +3929,7 @@
           // always outrank expanded ones (worker applies a graph-distance penalty)
           const params = new URLSearchParams({ query, topK: '5', hops: '1' })
           if (selectedTag) params.set('tag', selectedTag)
+          appendRecallTimeParams(params)
           const recallRes = await fetch(`${WORKER_URL}/recall?${params}`, { headers: authHeaders() })
           const data = await recallRes.json()
           // Server/auth errors must not render as "no results" — let the catch handle them
@@ -3389,7 +3940,19 @@
           } else {
             // REST scores are already 0–100 (one decimal); map directly rather than via
             // normalizeEntry, whose 0–1 rescale heuristic would turn a 0.8% match into 80%
-            const entries = data.results.map((m) => ({ id: m.id, content: m.content, tags: m.tags || [], score: Math.min(100, Math.round(m.score)), hop: m.hop || 0 }))
+            const entries = data.results.map((m) => ({
+              id: m.id,
+              content: m.content,
+              tags: m.tags || [],
+              score: Math.min(100, Math.round(m.score)),
+              hop: m.hop || 0,
+              source: m.source,
+              created_at: m.created_at,
+              epistemic_status: m.epistemic_status,
+              passages: Array.isArray(m.passages) ? m.passages : [],
+              is_private: m.is_private,
+              is_owned: m.is_owned,
+            }))
             const answerBubble = document.createElement('div')
             answerBubble.className = 'ex-a-row'
             const answerEl = document.createElement('div')
@@ -3407,7 +3970,10 @@
                   const tagList = m.tags && m.tags.length ? ` [${m.tags.join(', ')}]` : ''
                   const src = m.source ? ` · ${m.source}` : ''
                   const related = m.hop > 0 ? ` [related, ${m.hop} hop${m.hop > 1 ? 's' : ''}]` : ''
-                  return `${i + 1}. [${date}${src}${tagList}] (${Math.min(100, Math.round(m.score))}% match)${m.updated ? ' [updated]' : ''}${related}\n${m.content}`
+                  const evidence = Array.isArray(m.passages) && m.passages.length
+                    ? `\nEVIDENCE:\n${m.passages.map(formatRecallPassageForContext).join('\n')}`
+                    : ''
+                  return `${i + 1}. [${date}${src}${tagList}] (${Math.min(100, Math.round(m.score))}% match)${m.updated ? ' [updated]' : ''}${related}\n${m.content}${evidence}`
                 })
                 .join('\n\n')
             const res = await fetch(`${WORKER_URL}/chat`, {
@@ -3469,6 +4035,29 @@
         const isSynthesized = entry.tags.includes('synthesized')
         const isRolledUp = entry.tags.includes('rolled-up')
         card.className = 'memory-card' + (isSynthesized ? ' card--synthesized' : '') + (isRolledUp ? ' card--rolled-up' : '')
+        const safeSourceUrl = (value) => {
+          try {
+            const parsed = new URL(String(value))
+            return parsed.protocol === 'https:' || parsed.protocol === 'http:' ? parsed.href : null
+          } catch { return null }
+        }
+        const citationHtml = Array.isArray(entry.passages) && entry.passages.length
+          ? `<div class="card-citations">${entry.passages.slice(0, 3).map((passage, index) => {
+              const location = [
+                passage.documentTitle,
+                passage.section ? `§ ${passage.section}` : null,
+                passage.page != null ? `p. ${passage.page}${passage.pageEnd != null && passage.pageEnd !== passage.page ? `–${passage.pageEnd}` : ''}` : null,
+              ].filter(Boolean).join(' · ') || `Evidence ${index + 1}`
+              const sourceUrl = safeSourceUrl(passage.sourceUrl)
+              const label = sourceUrl
+                ? `<a href="${escHtml(sourceUrl)}" target="_blank" rel="noopener noreferrer">${escHtml(location)}</a>`
+                : escHtml(location)
+              const offsets = passage.startOffset != null && passage.endOffset != null
+                ? ` · chars ${Number(passage.startOffset)}–${Number(passage.endOffset)}`
+                : ''
+              return `<div class="card-citation"><i class="ti ti-quote"></i> ${label}${escHtml(offsets)}</div>`
+            }).join('')}</div>`
+          : ''
         card.innerHTML = `
     <div class="match-line">
       <span class="match-pct">${entry.score}%</span>
@@ -3476,19 +4065,21 @@
       <div class="match-bar-bg"><div class="match-bar-fill" style="width:${entry.score}%"></div></div>
     </div>
     <div class="card-content" style="cursor: pointer;">${escHtml(entry.content)}</div>
+    ${citationHtml}
     <div class="card-footer">
       <div class="card-tags">${entry.tags.map((t) => `<span class="tag-chip${t === 'synthesized' ? ' tag-chip--synthesized' : ''}">${escHtml(t)}</span>`).join('')}</div>
       <div class="card-actions">
         ${
-          entry.id
+          entry.id && entry.is_owned
             ? `<button class="card-action-btn append-btn" type="button"><i class="ti ti-writing"></i> Append</button>
              <button class="card-action-btn forget-btn" type="button"><i class="ti ti-x"></i> Forget</button>`
-            : `<button class="card-action-btn append-btn" type="button"><i class="ti ti-writing"></i> Append</button>`
+            : !entry.id ? `<button class="card-action-btn append-btn" type="button"><i class="ti ti-writing"></i> Append</button>` : ''
         }
       </div>
     </div>`
         card.querySelector('.card-content').onclick = () => openView(entry, card)
-        card.querySelector('.append-btn').onclick = () => {
+        const appendButton = card.querySelector('.append-btn')
+        if (appendButton) appendButton.onclick = () => {
           if (entry.id) openAppend(entry.id, entry.content.slice(0, 80))
           else openAppendFromContent(entry.content)
         }
@@ -3631,17 +4222,25 @@
 <div class="card-footer">
   <div class="card-tags">${tags.map((t) => `<span class="tag-chip${t === 'synthesized' ? ' tag-chip--synthesized' : ''}">${escHtml(t)}</span>`).join('')}${vecChip}</div>
   <div class="card-meta-row">${privacyIcon}${ownerBadge}</div>
-  <div class="card-actions">
+  <div class="card-actions">${entry.is_owned ? `
     <button class="card-action-btn append-btn" type="button"><i class="ti ti-writing"></i> Append</button>
     <button class="card-action-btn edit-btn"><i class="ti ti-pencil"></i> Edit</button>
-    <button class="card-action-btn forget-btn" type="button"><i class="ti ti-x"></i> Forget</button>
+    <button class="card-action-btn forget-btn" type="button"><i class="ti ti-x"></i> Forget</button>` : ''}
   </div>
 </div>`
-        card.querySelector('.card-content').onclick = () => openView({ id: entry.id, content: entry.content, tags }, card)
-        card.querySelector('.append-btn').onclick = () => openAppend(entry.id, entry.content.slice(0, 80))
-        card.querySelector('.edit-btn').onclick = () => openEdit(entry.id, entry.content, tags)
+        card.querySelector('.card-content').onclick = () => openView({
+          id: entry.id,
+          content: entry.content,
+          tags,
+          is_private: entry.is_private,
+          is_owned: entry.is_owned,
+        }, card)
+        const appendBtn = card.querySelector('.append-btn')
+        const editBtn = card.querySelector('.edit-btn')
+        if (appendBtn) appendBtn.onclick = () => openAppend(entry.id, entry.content.slice(0, 80))
+        if (editBtn) editBtn.onclick = () => openEdit(entry.id, entry.content, tags)
         const forgetBtn = card.querySelector('.forget-btn')
-        forgetBtn.onclick = () => openConfirm(entry.id, forgetBtn)
+        if (forgetBtn) forgetBtn.onclick = () => openConfirm(entry.id, forgetBtn)
         return card
       }
 
@@ -3835,6 +4434,7 @@
       function openMenu() {
         document.getElementById('menu-sheet').classList.add('open')
         loadMenuStats()
+        probeServiceIdentityAccess()
       }
       function closeMenu() {
         document.getElementById('menu-sheet').classList.remove('open')
@@ -3853,6 +4453,262 @@
         openMenu()
       }
 
+      function clearIssuedServiceSecret() {
+        issuedServiceSecret = ''
+        const panel = document.getElementById('service-secret-panel')
+        const value = document.getElementById('service-secret-value')
+        const copy = document.getElementById('service-secret-copy')
+        panel.style.display = 'none'
+        value.textContent = ''
+        copy.textContent = 'Copy key'
+      }
+
+      async function readServiceResponse(res) {
+        try {
+          const data = await res.json()
+          return data && typeof data === 'object' ? data : {}
+        } catch {
+          return {}
+        }
+      }
+
+      function serviceResponseError(res, data, fallback) {
+        if (typeof data?.error === 'string' && data.error.trim()) return data.error
+        return res.status ? `${fallback} (${res.status})` : fallback
+      }
+
+      async function probeServiceIdentityAccess() {
+        const menuItem = document.getElementById('service-identities-menu-item')
+        try {
+          const res = await fetch(`${WORKER_URL}/api/service-identities`, { headers: authHeaders() })
+          const data = await readServiceResponse(res)
+          if (!res.ok || !Array.isArray(data.services)) {
+            menuItem.style.display = 'none'
+            return
+          }
+          serviceIdentitiesCache = data.services
+          menuItem.style.display = ''
+        } catch {
+          menuItem.style.display = 'none'
+        }
+      }
+
+      function openServiceIdentities() {
+        closeMenu()
+        clearIssuedServiceSecret()
+        document.getElementById('services-sheet').classList.add('open')
+        loadServiceIdentities()
+      }
+
+      function closeServiceIdentities() {
+        document.getElementById('services-sheet').classList.remove('open')
+        clearIssuedServiceSecret()
+      }
+
+      function backToMenuFromServices() {
+        closeServiceIdentities()
+        openMenu()
+      }
+
+      function parseServiceScopes(value) {
+        if (Array.isArray(value)) return value.filter((scope) => typeof scope === 'string')
+        if (typeof value !== 'string') return []
+        try {
+          const parsed = JSON.parse(value)
+          return Array.isArray(parsed) ? parsed.filter((scope) => typeof scope === 'string') : []
+        } catch {
+          return []
+        }
+      }
+
+      function formatServiceTime(value, fallback = 'Never') {
+        if (value == null || value === '') return fallback
+        const time = Number(value)
+        if (!Number.isFinite(time)) return fallback
+        const date = new Date(time)
+        return Number.isNaN(date.getTime()) ? fallback : date.toLocaleString()
+      }
+
+      function revealServiceSecret(key) {
+        if (typeof key !== 'string' || !key) return
+        issuedServiceSecret = key
+        document.getElementById('service-secret-value').textContent = key
+        document.getElementById('service-secret-copy').textContent = 'Copy key'
+        document.getElementById('service-secret-panel').style.display = ''
+      }
+
+      async function copyServiceSecret() {
+        if (!issuedServiceSecret) return
+        const btn = document.getElementById('service-secret-copy')
+        try {
+          if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(issuedServiceSecret)
+          } else {
+            const input = document.createElement('textarea')
+            input.value = issuedServiceSecret
+            input.setAttribute('readonly', '')
+            input.style.position = 'fixed'
+            input.style.opacity = '0'
+            document.body.appendChild(input)
+            input.select()
+            const copied = document.execCommand('copy')
+            input.remove()
+            if (!copied) throw new Error('Copy unavailable')
+          }
+          btn.textContent = 'Copied'
+        } catch {
+          btn.textContent = 'Select and copy manually'
+          const value = document.getElementById('service-secret-value')
+          const selection = window.getSelection()
+          const range = document.createRange()
+          range.selectNodeContents(value)
+          selection.removeAllRanges()
+          selection.addRange(range)
+        }
+      }
+
+      function renderServiceIdentities(services) {
+        const list = document.getElementById('service-identities-list')
+        if (!services.length) {
+          list.innerHTML = '<p class="digest-note">No service identities yet.</p>'
+          return
+        }
+        list.innerHTML = services.map((service) => {
+          const status = ['active', 'suspended', 'revoked'].includes(service.status) ? service.status : 'unknown'
+          const scopes = parseServiceScopes(service.scopes)
+          const expiry = formatServiceTime(service.expires_at)
+          const lastUsed = formatServiceTime(service.last_used_at)
+          const prefix = service.credential_prefix ? String(service.credential_prefix) : 'No active key'
+          let actions = ''
+          if (status === 'active') {
+            actions = `<button class="digest-btn service-action" type="button" data-action="rotate" data-id="${escHtml(service.id)}">Rotate key</button>
+              <button class="digest-btn service-action" type="button" data-action="suspend" data-id="${escHtml(service.id)}">Suspend</button>`
+          } else if (status === 'suspended') {
+            actions = `<button class="digest-btn service-action" type="button" data-action="resume" data-id="${escHtml(service.id)}">Resume</button>`
+          }
+          if (status !== 'revoked') {
+            actions += `<button class="digest-btn danger service-action" type="button" data-action="revoke" data-id="${escHtml(service.id)}">Revoke</button>`
+          }
+          return `<div class="service-card" data-service-id="${escHtml(service.id)}">
+            <div class="service-card-head">
+              <span class="service-card-name">${escHtml(service.name || 'Unnamed service')}</span>
+              <span class="service-status ${status === 'suspended' || status === 'revoked' ? status : ''}">${escHtml(status)}</span>
+            </div>
+            <div class="service-card-meta">
+              <span>Profile: ${escHtml(service.default_autonomy_profile || 'unknown')}</span>
+              <span>Scopes: ${scopes.length ? scopes.map((scope) => escHtml(scope)).join(', ') : 'None'}</span>
+              <span>Key: ${escHtml(prefix)} &middot; expires ${escHtml(expiry)}</span>
+              <span>Last used: ${escHtml(lastUsed)} &middot; ${Number(service.use_count || 0).toLocaleString()} uses</span>
+            </div>
+            ${actions ? `<div class="service-card-actions">${actions}</div>` : ''}
+          </div>`
+        }).join('')
+        list.querySelectorAll('.service-action').forEach((btn) => {
+          btn.onclick = () => runServiceIdentityAction(btn)
+        })
+      }
+
+      async function loadServiceIdentities() {
+        const list = document.getElementById('service-identities-list')
+        list.innerHTML = '<p class="digest-note">Loading&hellip;</p>'
+        try {
+          const res = await fetch(`${WORKER_URL}/api/service-identities`, { headers: authHeaders() })
+          const data = await readServiceResponse(res)
+          if (res.status === 403) {
+            document.getElementById('service-identities-menu-item').style.display = 'none'
+            closeServiceIdentities()
+            return
+          }
+          if (!res.ok || !Array.isArray(data.services)) {
+            throw new Error(serviceResponseError(res, data, 'Could not load service identities'))
+          }
+          serviceIdentitiesCache = data.services
+          renderServiceIdentities(serviceIdentitiesCache)
+        } catch (error) {
+          list.innerHTML = `<p class="integration-error">${escHtml(error instanceof Error ? error.message : 'Could not load service identities')}</p>`
+        }
+      }
+
+      async function createServiceIdentityFromForm(event) {
+        event.preventDefault()
+        const form = document.getElementById('service-create-form')
+        const btn = document.getElementById('service-create-button')
+        const errorEl = document.getElementById('service-create-error')
+        const scopes = [...form.querySelectorAll('input[name="service_scope"]:checked')].map((input) => input.value)
+        const expiryValue = document.getElementById('service-expiry').value
+        const expiresAt = expiryValue ? new Date(expiryValue).getTime() : null
+        errorEl.style.display = 'none'
+        if (!scopes.length) {
+          errorEl.textContent = 'Choose at least one scope.'
+          errorEl.style.display = ''
+          return
+        }
+        if (expiresAt !== null && (!Number.isFinite(expiresAt) || expiresAt <= Date.now())) {
+          errorEl.textContent = 'Key expiry must be in the future.'
+          errorEl.style.display = ''
+          return
+        }
+        btn.disabled = true
+        btn.textContent = 'Creating…'
+        try {
+          const res = await fetch(`${WORKER_URL}/api/service-identities`, {
+            method: 'POST',
+            headers: authHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({
+              name: document.getElementById('service-name').value.trim(),
+              description: document.getElementById('service-description').value.trim() || null,
+              autonomy_profile: document.getElementById('service-profile').value,
+              scopes,
+              expires_at: expiresAt,
+            }),
+          })
+          const data = await readServiceResponse(res)
+          if (!res.ok || !data.ok || typeof data.credential?.key !== 'string') {
+            throw new Error(serviceResponseError(res, data, 'Could not create service identity'))
+          }
+          form.reset()
+          revealServiceSecret(data.credential.key)
+          await loadServiceIdentities()
+        } catch (error) {
+          errorEl.textContent = error instanceof Error ? error.message : 'Could not create service identity'
+          errorEl.style.display = ''
+        } finally {
+          btn.disabled = false
+          btn.textContent = 'Create identity'
+        }
+      }
+
+      async function runServiceIdentityAction(btn) {
+        const action = btn.dataset.action
+        const id = btn.dataset.id
+        if (!id || !['rotate', 'suspend', 'resume', 'revoke'].includes(action)) return
+        if (action === 'rotate' && !confirm('Rotate this key? The current key will stop working immediately.')) return
+        if (action === 'suspend' && !confirm('Suspend this identity? Its key will stop working until resumed.')) return
+        if (action === 'revoke' && !confirm('Permanently revoke this identity and all of its keys? This cannot be undone.')) return
+        btn.disabled = true
+        try {
+          const options = { method: 'POST', headers: authHeaders() }
+          if (action === 'rotate') {
+            const service = serviceIdentitiesCache.find((item) => item.id === id)
+            const expiresAt = Number(service?.expires_at)
+            options.headers = authHeaders({ 'Content-Type': 'application/json' })
+            options.body = JSON.stringify({
+              scopes: parseServiceScopes(service?.scopes),
+              expires_at: Number.isFinite(expiresAt) && expiresAt > Date.now() ? expiresAt : null,
+            })
+          }
+          const res = await fetch(`${WORKER_URL}/api/service-identities/${encodeURIComponent(id)}/${action}`, options)
+          const data = await readServiceResponse(res)
+          if (!res.ok || !data.ok) throw new Error(serviceResponseError(res, data, `Could not ${action} service identity`))
+          if (action === 'rotate') revealServiceSecret(data.credential?.key)
+          await loadServiceIdentities()
+        } catch (error) {
+          alert(error instanceof Error ? error.message : `Could not ${action} service identity`)
+        } finally {
+          btn.disabled = false
+        }
+      }
+
       async function loadMenuStats() {
         try {
           const res = await fetch(`${WORKER_URL}/stats`, { headers: authHeaders() })
@@ -3867,8 +4723,208 @@
           renderDigestSection(data.digest_candidates ?? [])
           renderVectorizeSection(data.unvectorized ?? 0)
           renderClassifySection(data.unclassified ?? 0)
+          loadAwarenessEvents()
+          loadProposalInbox()
           loadPatterns()
         } catch {}
+      }
+
+      // ── Two-sided team overlap awareness ────────────────────────────────
+      async function loadAwarenessEvents() {
+        const el = document.getElementById('awareness-section')
+        try {
+          const res = await fetch(`${WORKER_URL}/awareness-events?unread=true&limit=20`, { headers: authHeaders() })
+          let data = null
+          try { data = await res.json() } catch {}
+          const events = data && Array.isArray(data.events) ? data.events : []
+          if (!res.ok || !events.length) {
+            awarenessInboxEvents = []
+            el.style.display = 'none'
+            el.innerHTML = ''
+            return
+          }
+          awarenessInboxEvents = events
+          el.style.display = ''
+          el.innerHTML = `
+            <div class="digest-section-label">Team overlaps</div>
+            <p class="digest-note">You and a teammate are working with closely related public knowledge. Both owners receive this notice.</p>
+            ${events.map((event) => {
+              const endpoints = Array.isArray(event.endpoints) ? event.endpoints.slice(0, 2) : []
+              const similarity = Math.round(Math.max(0, Math.min(1, Number(event.similarity) || 0)) * 100)
+              const created = Number(event.createdAt)
+              const when = Number.isFinite(created) ? new Date(created).toLocaleString() : ''
+              return `<div class="awareness-card" data-awareness-id="${escHtml(event.id)}">
+                <div class="awareness-head">
+                  <span class="awareness-title">Related work noticed</span>
+                  <span class="awareness-score">${similarity}% overlap</span>
+                </div>
+                <div class="awareness-copy">Open either memory to compare the context before coordinating with its owner.</div>
+                ${endpoints.map((endpoint) => `<button class="awareness-memory" type="button" data-event-id="${escHtml(event.id)}" data-entry-id="${escHtml(endpoint.entryId)}"><strong>@${escHtml(endpoint.ownerUsername || 'team member')}</strong> · ${escHtml(String(endpoint.content || '').slice(0, 120))}</button>`).join('')}
+                <div class="awareness-actions">
+                  <span class="awareness-time">${escHtml(when)}</span>
+                  <button class="digest-btn awareness-read" type="button" data-event-id="${escHtml(event.id)}">Mark read</button>
+                </div>
+              </div>`
+            }).join('')}`
+          el.querySelectorAll('.awareness-memory').forEach((btn) => {
+            btn.onclick = () => openAwarenessMemory(btn)
+          })
+          el.querySelectorAll('.awareness-read').forEach((btn) => {
+            btn.onclick = () => markAwarenessReadFromInbox(btn)
+          })
+        } catch {
+          awarenessInboxEvents = []
+          el.style.display = 'none'
+          el.innerHTML = ''
+        }
+      }
+
+      async function markAwarenessEventReadRequest(eventId) {
+        const res = await fetch(`${WORKER_URL}/awareness-events/${encodeURIComponent(eventId)}/read`, {
+          method: 'POST',
+          headers: authHeaders(),
+        })
+        let data = null
+        try { data = await res.json() } catch {}
+        if (!res.ok || !data || !data.ok) throw new Error(data && data.error ? data.error : 'Could not mark overlap as read')
+        return data.event
+      }
+
+      async function markAwarenessReadFromInbox(btn) {
+        if (!btn || btn.disabled) return
+        btn.disabled = true
+        try {
+          await markAwarenessEventReadRequest(btn.dataset.eventId)
+          await loadAwarenessEvents()
+        } catch (error) {
+          btn.disabled = false
+          alert(error instanceof Error ? error.message : 'Could not mark overlap as read')
+        }
+      }
+
+      async function openAwarenessMemory(btn) {
+        if (!btn || btn.disabled) return
+        const event = awarenessInboxEvents.find((item) => item.id === btn.dataset.eventId)
+        const endpoint = event && Array.isArray(event.endpoints)
+          ? event.endpoints.find((item) => item.entryId === btn.dataset.entryId)
+          : null
+        if (!endpoint) return
+        btn.disabled = true
+        try { await markAwarenessEventReadRequest(event.id) } catch {}
+        closeMenu()
+        await openNodeView({ id: endpoint.entryId, label: endpoint.content, tags: [] })
+      }
+
+      // ── Governed action proposal inbox ──────────────────────────────────
+      function proposalReviewDetails(proposal) {
+        const parseJson = (value, fallback) => {
+          try { return typeof value === 'string' ? JSON.parse(value) : (value ?? fallback) }
+          catch { return fallback }
+        }
+        const payload = parseJson(proposal.payloadJson, {})
+        const evidence = parseJson(proposal.evidenceJson, [])
+        const preconditions = parseJson(proposal.expectedPreconditions, {})
+        const targets = Array.isArray(proposal.targetIds) ? proposal.targetIds : []
+        const expires = proposal.expiresAt ? new Date(proposal.expiresAt).toLocaleString() : 'No expiry'
+        const proposer = `${proposal.proposerKind || 'unknown'} · ${proposal.proposerId || 'unknown'}`
+        return `<div class="proposal-meta">
+          <span><strong>Proposer:</strong> ${escHtml(proposer)}</span>
+          <span><strong>Targets:</strong> ${targets.length ? targets.map((id) => escHtml(id)).join(', ') : 'None'}</span>
+          <span><strong>Expected revision:</strong> ${proposal.expectedRevision == null ? 'Not applicable' : escHtml(String(proposal.expectedRevision))}</span>
+          <span><strong>Expires:</strong> ${escHtml(expires)}</span>
+        </div>
+        <details class="proposal-review-details" open>
+          <summary>Review payload and evidence</summary>
+          <div class="proposal-review-label">Payload</div>
+          <pre class="proposal-json">${escHtml(JSON.stringify(payload, null, 2))}</pre>
+          <div class="proposal-review-label">Preconditions</div>
+          <pre class="proposal-json">${escHtml(JSON.stringify(preconditions, null, 2))}</pre>
+          <div class="proposal-review-label">Evidence</div>
+          <pre class="proposal-json">${escHtml(JSON.stringify(evidence, null, 2))}</pre>
+        </details>`
+      }
+
+      async function loadProposalInbox() {
+        const el = document.getElementById('proposal-section')
+        try {
+          const res = await fetch(`${WORKER_URL}/action-proposals?status=pending&limit=20`, { headers: authHeaders() })
+          const data = await res.json()
+          const proposals = data.proposals || []
+          if (!res.ok || !proposals.length) {
+            el.style.display = 'none'
+            el.innerHTML = ''
+            return
+          }
+          el.style.display = ''
+          el.innerHTML = `
+            <div class="digest-section-label">Action proposals</div>
+            <p class="digest-note">Agents can suggest changes. A human reviews each proposal before anything consequential runs.</p>
+            ${proposals.map((proposal) => {
+              const reviewed = proposal.reviewerKind === 'human' && proposal.reviewedAt != null
+              const action = reviewed
+                ? `<button class="digest-btn proposal-execute" data-id="${escHtml(proposal.id)}">Execute approved</button>`
+                : `<button class="digest-btn proposal-approve" data-id="${escHtml(proposal.id)}">Approve</button>
+                   <button class="digest-btn danger proposal-reject" data-id="${escHtml(proposal.id)}">Reject</button>`
+              return `<div class="proposal-card" data-proposal-id="${escHtml(proposal.id)}">
+                <div class="proposal-head">
+                  <span class="proposal-type">${escHtml(proposal.actionType)}</span>
+                  <span class="proposal-risk">${escHtml(proposal.riskLevel)} risk${reviewed ? ' · approved' : ''}</span>
+                </div>
+                <div class="proposal-reason">${escHtml(proposal.reason || 'No reason supplied')}</div>
+                ${proposalReviewDetails(proposal)}
+                <div class="proposal-actions">${action}</div>
+              </div>`
+            }).join('')}`
+          el.querySelectorAll('.proposal-approve').forEach((btn) => {
+            btn.onclick = () => reviewActionProposalFromInbox(btn, 'approve')
+          })
+          el.querySelectorAll('.proposal-reject').forEach((btn) => {
+            btn.onclick = () => reviewActionProposalFromInbox(btn, 'reject')
+          })
+          el.querySelectorAll('.proposal-execute').forEach((btn) => {
+            btn.onclick = () => executeActionProposalFromInbox(btn)
+          })
+        } catch {
+          el.style.display = 'none'
+        }
+      }
+
+      async function reviewActionProposalFromInbox(btn, decision) {
+        const reason = prompt(`${decision === 'approve' ? 'Why is this safe to approve?' : 'Why should this be rejected?'}`)
+        if (!reason || !reason.trim()) return
+        btn.disabled = true
+        try {
+          const res = await fetch(`${WORKER_URL}/action-proposals/${encodeURIComponent(btn.dataset.id)}/review`, {
+            method: 'POST',
+            headers: authHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ decision, reason: reason.trim() }),
+          })
+          const data = await res.json()
+          if (!res.ok || !data.ok) throw new Error(data.error || 'Review failed')
+          await loadProposalInbox()
+        } catch (error) {
+          btn.disabled = false
+          alert(error.message || 'Review failed')
+        }
+      }
+
+      async function executeActionProposalFromInbox(btn) {
+        if (!confirm('Execute this approved action now? Policy and preconditions will be checked again.')) return
+        btn.disabled = true
+        try {
+          const res = await fetch(`${WORKER_URL}/action-proposals/${encodeURIComponent(btn.dataset.id)}/execute`, {
+            method: 'POST',
+            headers: authHeaders(),
+          })
+          const data = await res.json()
+          if (!res.ok || !data.ok) throw new Error(data.error || 'Execution failed')
+          await loadProposalInbox()
+          loadRecent()
+          updateStatus()
+        } catch (error) {
+          btn.disabled = false
+          alert(error.message || 'Execution failed')
+        }
       }
 
       // ── Patterns panel: system proposes, human ratifies ───────────────────────
@@ -4341,21 +5397,27 @@
         const relatedEl = document.getElementById('view-related')
         relatedEl.style.display = 'none'
         relatedEl.innerHTML = ''
-        if (entry.id) loadRelated(entry.id, relatedEl)
+        if (entry.id) loadRelated(entry.id, relatedEl, entry.is_owned === true)
         const appendBtn = document.getElementById('view-btn-append')
-        if (entry.id) {
+        if (entry.id && entry.is_owned === true) {
           appendBtn.onclick = () => {
             closeView()
             openAppend(entry.id, entry.content.slice(0, 80))
           }
+          appendBtn.style.display = 'flex'
         } else {
-          appendBtn.onclick = () => {
-            closeView()
-            openAppendFromContent(entry.content)
+          if (!entry.id) {
+            appendBtn.onclick = () => {
+              closeView()
+              openAppendFromContent(entry.content)
+            }
+            appendBtn.style.display = 'flex'
+          } else {
+            appendBtn.style.display = 'none'
           }
         }
         const forgetBtn = document.getElementById('view-btn-forget')
-        if (entry.id) {
+        if (entry.id && entry.is_owned === true) {
           forgetBtn.onclick = () => {
             closeView()
             openConfirm(entry.id, cardElement || null)
@@ -4365,7 +5427,7 @@
           forgetBtn.style.display = 'none'
         }
         const editBtn = document.getElementById('view-btn-edit')
-        if (entry.id) {
+        if (entry.id && entry.is_owned === true) {
           editBtn.onclick = () => {
             closeView()
             openEdit(entry.id, entry.content, entry.tags || [])
@@ -4374,14 +5436,156 @@
         } else {
           editBtn.style.display = 'none'
         }
+        const reinforceBtn = document.getElementById('view-btn-reinforce')
+        if (entry.id && entry.is_owned === true) {
+          reinforceBtn.innerHTML = '<i class="ti ti-sparkles"></i> Reinforce'
+          reinforceBtn.onclick = () => reinforceMemory(entry)
+          reinforceBtn.style.display = 'flex'
+        } else {
+          reinforceBtn.style.display = 'none'
+        }
+        const visibilityBtn = document.getElementById('view-btn-visibility')
+        if (entry.id && entry.is_owned === true && typeof entry.is_private === 'boolean') {
+          visibilityBtn.innerHTML = entry.is_private
+            ? '<i class="ti ti-world"></i> Publish'
+            : '<i class="ti ti-lock"></i> Make private'
+          visibilityBtn.onclick = () => setMemoryVisibility(entry)
+          visibilityBtn.style.display = 'flex'
+        } else {
+          visibilityBtn.style.display = 'none'
+        }
+        const historyBtn = document.getElementById('view-btn-history')
+        if (entry.id && entry.is_owned === true) {
+          historyBtn.onclick = () => {
+            closeView()
+            openEntryHistory(entry)
+          }
+          historyBtn.style.display = 'flex'
+        } else {
+          historyBtn.style.display = 'none'
+        }
         document.getElementById('view-sheet').classList.add('open')
       }
       function closeView() {
         document.getElementById('view-sheet').classList.remove('open')
       }
 
+      async function openEntryHistory(entry) {
+        const sheet = document.getElementById('history-sheet')
+        const list = document.getElementById('history-list')
+        sheet.dataset.entryId = entry.id
+        list.innerHTML = '<p class="digest-note">Loading&hellip;</p>'
+        sheet.classList.add('open')
+        try {
+          const res = await fetch(`${WORKER_URL}/entries/${encodeURIComponent(entry.id)}/history`, { headers: authHeaders() })
+          let data = null
+          try { data = await res.json() } catch {}
+          if (!res.ok || !data || !data.ok) throw new Error(data && data.error ? data.error : 'Could not load history')
+          const snapshots = Array.isArray(data.snapshots) ? data.snapshots : []
+          list.innerHTML = snapshots.length
+            ? snapshots.map((snapshot) => `<div class="history-card">
+                <div class="history-card-head">
+                  <strong>Revision ${Number(snapshot.revision ?? 0)}</strong>
+                  <span>${escHtml(new Date(Number(snapshot.recorded_at ?? snapshot.created_at)).toLocaleString())}</span>
+                </div>
+                <div class="history-preview">${escHtml(String(snapshot.content || '').slice(0, 240))}</div>
+                <div class="history-card-head">
+                  <span>${escHtml(snapshot.mutation_kind || 'version')}</span>
+                  <button class="digest-btn history-restore" type="button" data-snapshot-id="${escHtml(snapshot.id)}">Restore as private draft</button>
+                </div>
+              </div>`).join('')
+            : '<p class="digest-note">No earlier versions yet.</p>'
+          list.querySelectorAll('.history-restore').forEach((btn) => {
+            btn.onclick = () => restoreHistorySnapshot(btn)
+          })
+        } catch (error) {
+          list.innerHTML = `<p class="integration-error">${escHtml(error instanceof Error ? error.message : 'Could not load history')}</p>`
+        }
+      }
+
+      function closeEntryHistory() {
+        document.getElementById('history-sheet').classList.remove('open')
+      }
+
+      async function restoreHistorySnapshot(btn) {
+        const entryId = document.getElementById('history-sheet').dataset.entryId
+        if (!entryId || !btn || btn.disabled) return
+        if (!confirm('Create a new private draft from this version? The current memory and history stay unchanged.')) return
+        btn.disabled = true
+        try {
+          const res = await fetch(`${WORKER_URL}/restore`, {
+            method: 'POST',
+            headers: authHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ entry_id: entryId, snapshot_id: btn.dataset.snapshotId }),
+          })
+          let data = null
+          try { data = await res.json() } catch {}
+          if (!res.ok || !data || !data.ok) throw new Error(data && data.error ? data.error : 'Restore failed')
+          closeEntryHistory()
+          await loadRecent()
+        } catch (error) {
+          btn.disabled = false
+          alert(error instanceof Error ? error.message : 'Restore failed')
+        }
+      }
+
+      async function reinforceMemory(entry) {
+        const btn = document.getElementById('view-btn-reinforce')
+        if (!entry || !entry.id || entry.is_owned !== true || btn.disabled) return
+        btn.disabled = true
+        try {
+          // One click intentionally sends one request. Do not auto-retry: every
+          // successful request represents another explicit reinforcement.
+          const res = await fetch(`${WORKER_URL}/entries/${encodeURIComponent(entry.id)}/reinforce`, {
+            method: 'POST',
+            headers: authHeaders(),
+          })
+          let data = null
+          try { data = await res.json() } catch {}
+          if (!res.ok || !data || !data.ok) {
+            throw new Error(data && data.error ? data.error : 'Reinforcement failed')
+          }
+          entry.recall_count = data.recall_count
+          entry.last_recalled_at = data.last_recalled_at
+          entry.retention_score = data.retention_score
+          btn.innerHTML = `<i class="ti ti-check"></i> Reinforced · ${Number(data.recall_count)}`
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Reinforcement failed'
+          alert(message)
+        } finally {
+          btn.disabled = false
+        }
+      }
+
       // ── Related memories (issue #16) ──────────────────────────────────────────
-      async function loadRelated(id, el) {
+      async function setMemoryVisibility(entry) {
+        const target = entry.is_private ? 'public' : 'private'
+        const message = target === 'public'
+          ? 'Publish this memory to the team? Team members and approved agents will be able to recall it.'
+          : 'Make this memory private? Its relationship links will be removed so they cannot leak private context.'
+        if (!confirm(message)) return
+        const btn = document.getElementById('view-btn-visibility')
+        btn.disabled = true
+        try {
+          const res = await fetch(`${WORKER_URL}/entries/${encodeURIComponent(entry.id)}/visibility`, {
+            method: 'POST',
+            headers: authHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ visibility: target }),
+          })
+          const data = await res.json()
+          if (!res.ok || !data.ok) throw new Error(data.error || 'Visibility change failed')
+          entry.is_private = target === 'private'
+          closeView()
+          await loadRecent()
+          if (currentTab === 'graph') await loadGraph()
+        } catch (error) {
+          alert(error.message || 'Visibility change failed')
+        } finally {
+          btn.disabled = false
+        }
+      }
+
+      async function loadRelated(id, el, canMutate = false) {
         try {
           const res = await fetch(`${WORKER_URL}/connections?id=${encodeURIComponent(id)}`, {
             headers: authHeaders(),
@@ -4398,16 +5602,17 @@
             data.connections
               .map(
                 (c) =>
-                  `<div class="related-item" data-id="${escHtml(c.id)}" data-type="${escHtml(c.type)}"><button class="related-open"><span class="related-type">${escHtml(c.label)}</span>${escHtml((c.content || '').slice(0, 80))}</button><button class="related-unlink" title="Remove link"><i class="ti ti-unlink"></i></button></div>`,
+                  `<div class="related-item" data-id="${escHtml(c.id)}" data-type="${escHtml(c.type)}"><button class="related-open"><span class="related-type">${escHtml(c.label)}</span>${escHtml((c.content || '').slice(0, 80))}</button>${canMutate ? '<button class="related-unlink" title="Remove link"><i class="ti ti-unlink"></i></button>' : ''}</div>`,
               )
               .join('')
           el.style.display = 'block'
           el.querySelectorAll('.related-item').forEach((row) => {
             row.querySelector('.related-open').onclick = () => {
               const c = data.connections.find((x) => x.id === row.dataset.id)
-              if (c) openView({ id: c.id, content: c.content, tags: c.tags }, null)
+              if (c) openNodeView({ id: c.id, label: c.content, tags: c.tags })
             }
-            row.querySelector('.related-unlink').onclick = async () => {
+            const unlinkBtn = row.querySelector('.related-unlink')
+            if (unlinkBtn) unlinkBtn.onclick = async () => {
               if (!confirm('Remove this link? The memories stay; only the connection is deleted.')) return
               try {
                 await fetch(`${WORKER_URL}/unlink`, {
@@ -4416,7 +5621,7 @@
                   body: JSON.stringify({ source_id: id, target_id: row.dataset.id, type: row.dataset.type }),
                 })
               } catch {}
-              loadRelated(id, el)
+              loadRelated(id, el, canMutate)
             }
           })
         } catch {}
@@ -4433,7 +5638,13 @@
           const res = await fetch(`${WORKER_URL}/entry?id=${encodeURIComponent(node.id)}`, { headers: authHeaders() })
           const data = await res.json()
           if (data.ok && data.entry) {
-            openView({ id: data.entry.id, content: data.entry.content, tags: data.entry.tags }, null)
+            openView({
+              id: data.entry.id,
+              content: data.entry.content,
+              tags: data.entry.tags,
+              is_private: data.entry.is_private,
+              is_owned: data.entry.is_owned,
+            }, null)
             return
           }
           throw new Error('entry fetch failed')
@@ -5038,6 +6249,12 @@
       })
       document.getElementById('integrations-sheet').addEventListener('click', (e) => {
         if (e.target === document.getElementById('integrations-sheet')) closeIntegrations()
+      })
+      document.getElementById('services-sheet').addEventListener('click', (e) => {
+        if (e.target === document.getElementById('services-sheet')) closeServiceIdentities()
+      })
+      document.getElementById('history-sheet').addEventListener('click', (e) => {
+        if (e.target === document.getElementById('history-sheet')) closeEntryHistory()
       })
       document.getElementById('view-sheet').addEventListener('click', (e) => {
         if (e.target === document.getElementById('view-sheet')) closeView()

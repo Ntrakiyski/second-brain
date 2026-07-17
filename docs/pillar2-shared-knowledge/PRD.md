@@ -1,5 +1,14 @@
 # PRD: Shared Knowledge Base Enhancements (Pillar 2)
 
+**Status:** historical implementation plan — superseded by the implemented trust contract
+
+> This document describes the original `edge_proposals` design. Automated
+> contradiction findings now enter the actor-neutral `action_proposals` state
+> machine as `edge.publish` proposals. Similarity alone never asserts a
+> contradiction, service/system actors cannot review their own work, and
+> approval is followed by a fresh policy, visibility, revision, and
+> precondition check. See [System Architecture](../system-architecture.md).
+
 ## Problem Statement
 
 The shared knowledge base has typed relations and a `confidence` column on edges, but confidence is buried — it defaults to 0.5 for everything, isn't exposed in graph view/connections/export, and doesn't flow through the recall scoring properly. Cross-user contradictions (where user A's entry conflicts with user B's public entry) go undetected — the existing contradiction pipeline only checks within one user's own entries. There is no way to see what the team is capturing in real time.

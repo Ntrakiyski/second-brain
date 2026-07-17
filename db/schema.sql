@@ -57,21 +57,107 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE INDEX IF NOT EXISTS idx_users_normalized_username ON users(normalized_username);
 
 CREATE TABLE IF NOT EXISTS edges (
-  id          TEXT PRIMARY KEY,
-  source_id   TEXT NOT NULL,
-  target_id   TEXT NOT NULL,
-  type        TEXT NOT NULL DEFAULT 'relates_to',
-  weight      REAL NOT NULL DEFAULT 0.5,
-  provenance  TEXT NOT NULL DEFAULT 'inferred',
-  metadata    TEXT NOT NULL DEFAULT '{}',
-  confidence  REAL NOT NULL DEFAULT 1.0,
-  created_at  INTEGER NOT NULL,
-  updated_at  INTEGER NOT NULL,
+  id                 TEXT PRIMARY KEY,
+  source_id          TEXT NOT NULL,
+  target_id          TEXT NOT NULL,
+  type               TEXT NOT NULL DEFAULT 'relates_to',
+  weight             REAL NOT NULL DEFAULT 0.5,
+  provenance         TEXT NOT NULL DEFAULT 'inferred',
+  metadata           TEXT NOT NULL DEFAULT '{}',
+  confidence         REAL NOT NULL DEFAULT 1.0,
+  created_at         INTEGER NOT NULL,
+  updated_at         INTEGER NOT NULL,
+  revision           INTEGER NOT NULL DEFAULT 1,
+  last_actor_kind    TEXT NOT NULL DEFAULT 'system',
+  last_actor_id      TEXT NOT NULL DEFAULT '_migration',
+  last_mutation_kind TEXT NOT NULL DEFAULT 'legacy',
+  last_mutation_id   TEXT,
   UNIQUE(source_id, target_id, type)
 );
 
 CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(source_id);
 CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target_id);
+
+CREATE TABLE IF NOT EXISTS edge_versions (
+  id              TEXT PRIMARY KEY,
+  edge_id         TEXT NOT NULL,
+  source_id       TEXT NOT NULL,
+  target_id       TEXT NOT NULL,
+  type            TEXT NOT NULL,
+  weight          REAL NOT NULL,
+  provenance      TEXT NOT NULL,
+  metadata        TEXT NOT NULL,
+  confidence      REAL NOT NULL,
+  edge_created_at INTEGER NOT NULL,
+  edge_updated_at INTEGER NOT NULL,
+  revision        INTEGER NOT NULL,
+  is_deleted      INTEGER NOT NULL DEFAULT 0,
+  mutation_kind   TEXT NOT NULL,
+  mutation_id     TEXT,
+  actor_kind      TEXT NOT NULL,
+  actor_id        TEXT NOT NULL,
+  recorded_at     INTEGER NOT NULL,
+  UNIQUE(edge_id, revision)
+);
+
+CREATE INDEX IF NOT EXISTS idx_edge_versions_edge_revision
+  ON edge_versions(edge_id, revision DESC);
+CREATE INDEX IF NOT EXISTS idx_edge_versions_relationship
+  ON edge_versions(source_id, target_id, type, revision DESC);
+
+CREATE TRIGGER IF NOT EXISTS edge_versions_after_insert
+  AFTER INSERT ON edges
+  BEGIN
+    INSERT OR IGNORE INTO edge_versions (
+      id, edge_id, source_id, target_id, type, weight, provenance,
+      metadata, confidence, edge_created_at, edge_updated_at,
+      revision, is_deleted, mutation_kind, mutation_id, actor_kind,
+      actor_id, recorded_at
+    ) VALUES (
+      'edge-version:' || NEW.id || ':' || NEW.revision,
+      NEW.id, NEW.source_id, NEW.target_id, NEW.type, NEW.weight,
+      NEW.provenance, NEW.metadata, NEW.confidence, NEW.created_at,
+      NEW.updated_at, NEW.revision, 0, NEW.last_mutation_kind,
+      NEW.last_mutation_id, NEW.last_actor_kind, NEW.last_actor_id,
+      NEW.updated_at
+    );
+  END;
+
+CREATE TRIGGER IF NOT EXISTS edge_versions_after_update
+  AFTER UPDATE ON edges
+  BEGIN
+    INSERT OR IGNORE INTO edge_versions (
+      id, edge_id, source_id, target_id, type, weight, provenance,
+      metadata, confidence, edge_created_at, edge_updated_at,
+      revision, is_deleted, mutation_kind, mutation_id, actor_kind,
+      actor_id, recorded_at
+    ) VALUES (
+      'edge-version:' || NEW.id || ':' || NEW.revision,
+      NEW.id, NEW.source_id, NEW.target_id, NEW.type, NEW.weight,
+      NEW.provenance, NEW.metadata, NEW.confidence, NEW.created_at,
+      NEW.updated_at, NEW.revision, 0, NEW.last_mutation_kind,
+      NEW.last_mutation_id, NEW.last_actor_kind, NEW.last_actor_id,
+      NEW.updated_at
+    );
+  END;
+
+CREATE TRIGGER IF NOT EXISTS edge_versions_after_delete
+  AFTER DELETE ON edges
+  BEGIN
+    INSERT OR IGNORE INTO edge_versions (
+      id, edge_id, source_id, target_id, type, weight, provenance,
+      metadata, confidence, edge_created_at, edge_updated_at,
+      revision, is_deleted, mutation_kind, mutation_id, actor_kind,
+      actor_id, recorded_at
+    ) VALUES (
+      'edge-version:' || OLD.id || ':' || (OLD.revision + 1),
+      OLD.id, OLD.source_id, OLD.target_id, OLD.type, OLD.weight,
+      OLD.provenance, OLD.metadata, OLD.confidence, OLD.created_at,
+      OLD.updated_at, OLD.revision + 1, 1, OLD.last_mutation_kind,
+      OLD.last_mutation_id, OLD.last_actor_kind, OLD.last_actor_id,
+      CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)
+    );
+  END;
 
 CREATE TABLE IF NOT EXISTS episodes (
   id           TEXT PRIMARY KEY,
@@ -106,7 +192,8 @@ CREATE TABLE IF NOT EXISTS entry_snapshots (
   valid_from       INTEGER,
   valid_to         INTEGER,
   epistemic_status TEXT,
-  revision         INTEGER
+  revision         INTEGER,
+  visibility       TEXT NOT NULL DEFAULT 'private'
 );
 
 CREATE INDEX IF NOT EXISTS idx_snapshots_entry_id ON entry_snapshots(entry_id);
@@ -141,6 +228,9 @@ CREATE TABLE IF NOT EXISTS documents (
   content_hash TEXT,
   version      TEXT
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_episode_unique
+  ON documents(episode_id) WHERE episode_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS document_sections (
   id                TEXT PRIMARY KEY,
@@ -277,6 +367,30 @@ CREATE TABLE IF NOT EXISTS agent_events (
 CREATE INDEX IF NOT EXISTS idx_agent_events_run_id ON agent_events(run_id);
 CREATE INDEX IF NOT EXISTS idx_agent_events_tool_name ON agent_events(tool_name);
 CREATE INDEX IF NOT EXISTS idx_agent_events_created_at ON agent_events(created_at DESC);
+
+-- A reservation is created atomically with every governed audit request. The
+-- post-mutation path stages only redacted terminal metadata here before writing
+-- the normal run/event projection, so a partial completion can be reconciled.
+CREATE TABLE IF NOT EXISTS audit_completion_reconciliation (
+  run_id                    TEXT PRIMARY KEY,
+  outcome                   TEXT
+    CHECK (outcome IS NULL OR outcome IN ('succeeded', 'failed', 'indeterminate')),
+  redacted_result_summary   TEXT,
+  result_hash               TEXT,
+  failure_name              TEXT,
+  error_code                TEXT,
+  status                    TEXT NOT NULL DEFAULT 'reserved'
+    CHECK (status IN ('reserved', 'ready', 'completed', 'dead_letter')),
+  attempts                  INTEGER NOT NULL DEFAULT 0,
+  last_error                TEXT,
+  created_at                INTEGER NOT NULL,
+  updated_at                INTEGER NOT NULL,
+  ready_at                  INTEGER,
+  completed_at              INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_completion_reconciliation_status
+  ON audit_completion_reconciliation(status, updated_at, run_id);
 
 CREATE TABLE IF NOT EXISTS service_identities (
   id                       TEXT PRIMARY KEY,
@@ -427,6 +541,48 @@ CREATE TRIGGER IF NOT EXISTS proposal_events_no_delete
   BEGIN
     SELECT RAISE(ABORT, 'proposal_events are append-only');
   END;
+
+CREATE TABLE IF NOT EXISTS awareness_events (
+  id                TEXT PRIMARY KEY,
+  event_type        TEXT NOT NULL DEFAULT 'cross_user_overlap'
+    CHECK (event_type IN ('cross_user_overlap')),
+  recipient_user_id TEXT NOT NULL,
+  entry_a_id        TEXT NOT NULL,
+  entry_b_id        TEXT NOT NULL,
+  trigger_entry_id  TEXT NOT NULL,
+  similarity        REAL NOT NULL CHECK (similarity >= 0 AND similarity <= 1),
+  created_at        INTEGER NOT NULL,
+  read_at           INTEGER,
+  CHECK (entry_a_id < entry_b_id),
+  UNIQUE(event_type, recipient_user_id, entry_a_id, entry_b_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_awareness_events_recipient_created
+  ON awareness_events(recipient_user_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_awareness_events_recipient_unread
+  ON awareness_events(recipient_user_id, read_at, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_awareness_events_pair
+  ON awareness_events(entry_a_id, entry_b_id);
+
+CREATE TABLE IF NOT EXISTS overlap_awareness_reconciliation (
+  id                             TEXT PRIMARY KEY,
+  new_entry_id                   TEXT NOT NULL,
+  matched_entry_id               TEXT NOT NULL,
+  expected_new_owner_user_id     TEXT NOT NULL,
+  expected_matched_owner_user_id TEXT NOT NULL,
+  similarity                     REAL NOT NULL CHECK (similarity >= 0 AND similarity <= 1),
+  status                         TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'completed', 'discarded', 'failed')),
+  attempts                       INTEGER NOT NULL DEFAULT 0,
+  last_error                     TEXT,
+  created_at                     INTEGER NOT NULL,
+  updated_at                     INTEGER NOT NULL,
+  completed_at                   INTEGER,
+  UNIQUE(new_entry_id, matched_entry_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_overlap_reconciliation_status_updated
+  ON overlap_awareness_reconciliation(status, updated_at, id);
 
 CREATE TABLE IF NOT EXISTS vector_cleanup_queue (
   id         TEXT PRIMARY KEY,

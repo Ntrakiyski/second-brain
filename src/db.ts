@@ -863,6 +863,241 @@ const MIGRATIONS: readonly Migration[] = [
       return statements;
     },
   },
+  {
+    version: 7,
+    name: "overlap_awareness",
+    statements: sql(
+      `CREATE TABLE IF NOT EXISTS awareness_events (
+        id TEXT PRIMARY KEY,
+        event_type TEXT NOT NULL DEFAULT 'cross_user_overlap'
+          CHECK (event_type IN ('cross_user_overlap')),
+        recipient_user_id TEXT NOT NULL,
+        entry_a_id TEXT NOT NULL,
+        entry_b_id TEXT NOT NULL,
+        trigger_entry_id TEXT NOT NULL,
+        similarity REAL NOT NULL CHECK (similarity >= 0 AND similarity <= 1),
+        created_at INTEGER NOT NULL,
+        read_at INTEGER,
+        CHECK (entry_a_id < entry_b_id),
+        UNIQUE(event_type, recipient_user_id, entry_a_id, entry_b_id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_awareness_events_recipient_created
+         ON awareness_events(recipient_user_id, created_at DESC, id DESC)`,
+      `CREATE INDEX IF NOT EXISTS idx_awareness_events_recipient_unread
+         ON awareness_events(recipient_user_id, read_at, created_at DESC)`,
+      `CREATE INDEX IF NOT EXISTS idx_awareness_events_pair
+         ON awareness_events(entry_a_id, entry_b_id)`,
+      `CREATE TABLE IF NOT EXISTS overlap_awareness_reconciliation (
+        id TEXT PRIMARY KEY,
+        new_entry_id TEXT NOT NULL,
+        matched_entry_id TEXT NOT NULL,
+        expected_new_owner_user_id TEXT NOT NULL,
+        expected_matched_owner_user_id TEXT NOT NULL,
+        similarity REAL NOT NULL CHECK (similarity >= 0 AND similarity <= 1),
+        status TEXT NOT NULL DEFAULT 'pending'
+          CHECK (status IN ('pending', 'completed', 'discarded', 'failed')),
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        UNIQUE(new_entry_id, matched_entry_id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_overlap_reconciliation_status_updated
+         ON overlap_awareness_reconciliation(status, updated_at, id)`,
+    ),
+  },
+  {
+    version: 8,
+    name: "episode_document_invariant",
+    statements: sql(
+      `INSERT INTO documents (
+           id, title, source_url, content_type, created_at, episode_id,
+           owner_user_id, content_hash, version
+         )
+         SELECT 'doc_' || lower(hex(randomblob(16))),
+                COALESCE(NULLIF(episode.source_url, ''), 'Memory episode'),
+                episode.source_url,
+                COALESCE(NULLIF(episode.content_type, ''), 'text'),
+                episode.created_at,
+                episode.id,
+                COALESCE(NULLIF(episode.owner_user_id, ''), entry.owner_user_id, ''),
+                episode.content_hash,
+                COALESCE(CAST(entry.revision AS TEXT), '1')
+         FROM episodes AS episode
+         LEFT JOIN entries AS entry ON entry.id = episode.entry_id
+         WHERE NOT EXISTS (
+           SELECT 1 FROM documents AS document
+           WHERE document.episode_id = episode.id
+         )`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_episode_unique
+         ON documents(episode_id) WHERE episode_id IS NOT NULL`,
+    ),
+  },
+  {
+    version: 9,
+    name: "snapshot_visibility_history",
+    statements: async (db) => {
+      const snapshots = await tableColumns(db, "entry_snapshots");
+      const statements: string[] = [];
+
+      addColumnIfMissing(
+        statements,
+        snapshots,
+        "entry_snapshots",
+        "visibility",
+        "TEXT NOT NULL DEFAULT 'private'",
+      );
+      // Visibility became an authoritative field in v5. Historical rows from
+      // before this migration only have the synchronized private tag, so use
+      // that legacy projection once to seed explicit versioned visibility.
+      // Malformed tags fail closed.
+      statements.push(
+        `UPDATE entry_snapshots
+         SET visibility = CASE
+           WHEN json_valid(tags) = 0 THEN 'private'
+           WHEN json_type(tags) <> 'array' THEN 'private'
+           WHEN EXISTS (
+             SELECT 1 FROM json_each(entry_snapshots.tags)
+             WHERE json_each.type <> 'text'
+           ) THEN 'private'
+           WHEN EXISTS (
+             SELECT 1 FROM json_each(entry_snapshots.tags)
+             WHERE json_each.type = 'text' AND json_each.value = 'private'
+           ) THEN 'private'
+           ELSE 'public'
+         END
+         WHERE visibility IS NULL
+            OR visibility NOT IN ('private', 'public')`,
+      );
+      return statements;
+    },
+  },
+  {
+    version: 10,
+    name: "audit_and_edge_history",
+    statements: async (db) => {
+      const edges = await tableColumns(db, "edges");
+      const statements: string[] = [];
+
+      addColumnIfMissing(statements, edges, "edges", "revision", "INTEGER NOT NULL DEFAULT 1");
+      addColumnIfMissing(statements, edges, "edges", "last_actor_kind", "TEXT NOT NULL DEFAULT 'system'");
+      addColumnIfMissing(statements, edges, "edges", "last_actor_id", "TEXT NOT NULL DEFAULT '_migration'");
+      addColumnIfMissing(statements, edges, "edges", "last_mutation_kind", "TEXT NOT NULL DEFAULT 'legacy'");
+      addColumnIfMissing(statements, edges, "edges", "last_mutation_id", "TEXT");
+
+      statements.push(
+        `CREATE TABLE IF NOT EXISTS audit_completion_reconciliation (
+          run_id TEXT PRIMARY KEY,
+          outcome TEXT
+            CHECK (outcome IS NULL OR outcome IN ('succeeded', 'failed', 'indeterminate')),
+          redacted_result_summary TEXT,
+          result_hash TEXT,
+          failure_name TEXT,
+          error_code TEXT,
+          status TEXT NOT NULL DEFAULT 'reserved'
+            CHECK (status IN ('reserved', 'ready', 'completed', 'dead_letter')),
+          attempts INTEGER NOT NULL DEFAULT 0,
+          last_error TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          ready_at INTEGER,
+          completed_at INTEGER
+        )`,
+        `CREATE INDEX IF NOT EXISTS idx_audit_completion_reconciliation_status
+           ON audit_completion_reconciliation(status, updated_at, run_id)`,
+        `CREATE TABLE IF NOT EXISTS edge_versions (
+          id TEXT PRIMARY KEY,
+          edge_id TEXT NOT NULL,
+          source_id TEXT NOT NULL,
+          target_id TEXT NOT NULL,
+          type TEXT NOT NULL,
+          weight REAL NOT NULL,
+          provenance TEXT NOT NULL,
+          metadata TEXT NOT NULL,
+          confidence REAL NOT NULL,
+          edge_created_at INTEGER NOT NULL,
+          edge_updated_at INTEGER NOT NULL,
+          revision INTEGER NOT NULL,
+          is_deleted INTEGER NOT NULL DEFAULT 0,
+          mutation_kind TEXT NOT NULL,
+          mutation_id TEXT,
+          actor_kind TEXT NOT NULL,
+          actor_id TEXT NOT NULL,
+          recorded_at INTEGER NOT NULL,
+          UNIQUE(edge_id, revision)
+        )`,
+        `CREATE INDEX IF NOT EXISTS idx_edge_versions_edge_revision
+           ON edge_versions(edge_id, revision DESC)`,
+        `CREATE INDEX IF NOT EXISTS idx_edge_versions_relationship
+           ON edge_versions(source_id, target_id, type, revision DESC)`,
+        `INSERT OR IGNORE INTO edge_versions (
+           id, edge_id, source_id, target_id, type, weight, provenance,
+           metadata, confidence, edge_created_at, edge_updated_at, revision,
+           is_deleted, mutation_kind, mutation_id, actor_kind, actor_id,
+           recorded_at
+         )
+         SELECT 'edge-version:' || id || ':1', id, source_id, target_id, type,
+                weight, provenance, metadata, confidence, created_at, updated_at,
+                revision, 0, last_mutation_kind, last_mutation_id,
+                last_actor_kind, last_actor_id, updated_at
+         FROM edges`,
+        `CREATE TRIGGER IF NOT EXISTS edge_versions_after_insert
+           AFTER INSERT ON edges
+           BEGIN
+             INSERT OR IGNORE INTO edge_versions (
+               id, edge_id, source_id, target_id, type, weight, provenance,
+               metadata, confidence, edge_created_at, edge_updated_at,
+               revision, is_deleted, mutation_kind, mutation_id, actor_kind,
+               actor_id, recorded_at
+             ) VALUES (
+               'edge-version:' || NEW.id || ':' || NEW.revision,
+               NEW.id, NEW.source_id, NEW.target_id, NEW.type, NEW.weight,
+               NEW.provenance, NEW.metadata, NEW.confidence, NEW.created_at,
+               NEW.updated_at, NEW.revision, 0, NEW.last_mutation_kind,
+               NEW.last_mutation_id, NEW.last_actor_kind, NEW.last_actor_id,
+               NEW.updated_at
+             );
+           END`,
+        `CREATE TRIGGER IF NOT EXISTS edge_versions_after_update
+           AFTER UPDATE ON edges
+           BEGIN
+             INSERT OR IGNORE INTO edge_versions (
+               id, edge_id, source_id, target_id, type, weight, provenance,
+               metadata, confidence, edge_created_at, edge_updated_at,
+               revision, is_deleted, mutation_kind, mutation_id, actor_kind,
+               actor_id, recorded_at
+             ) VALUES (
+               'edge-version:' || NEW.id || ':' || NEW.revision,
+               NEW.id, NEW.source_id, NEW.target_id, NEW.type, NEW.weight,
+               NEW.provenance, NEW.metadata, NEW.confidence, NEW.created_at,
+               NEW.updated_at, NEW.revision, 0, NEW.last_mutation_kind,
+               NEW.last_mutation_id, NEW.last_actor_kind, NEW.last_actor_id,
+               NEW.updated_at
+             );
+           END`,
+        `CREATE TRIGGER IF NOT EXISTS edge_versions_after_delete
+           AFTER DELETE ON edges
+           BEGIN
+             INSERT OR IGNORE INTO edge_versions (
+               id, edge_id, source_id, target_id, type, weight, provenance,
+               metadata, confidence, edge_created_at, edge_updated_at,
+               revision, is_deleted, mutation_kind, mutation_id, actor_kind,
+               actor_id, recorded_at
+             ) VALUES (
+               'edge-version:' || OLD.id || ':' || (OLD.revision + 1),
+               OLD.id, OLD.source_id, OLD.target_id, OLD.type, OLD.weight,
+               OLD.provenance, OLD.metadata, OLD.confidence, OLD.created_at,
+               OLD.updated_at, OLD.revision + 1, 1, OLD.last_mutation_kind,
+               OLD.last_mutation_id, OLD.last_actor_kind, OLD.last_actor_id,
+               CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)
+             );
+           END`,
+      );
+
+      return statements;
+    },
+  },
 ] as const;
 
 async function ensureMigrationTable(db: D1Database): Promise<void> {
@@ -930,7 +1165,12 @@ async function validateCurrentSchema(db: D1Database): Promise<void> {
       epistemic_status, current_episode_id, revision, created_by_user_id,
       visibility, vector_sync_pending, updated_at FROM entries LIMIT 0`,
     `SELECT id, source_id, target_id, type, weight, provenance, metadata,
-      confidence, created_at, updated_at FROM edges LIMIT 0`,
+      confidence, created_at, updated_at, revision, last_actor_kind,
+      last_actor_id, last_mutation_kind, last_mutation_id FROM edges LIMIT 0`,
+    `SELECT id, edge_id, source_id, target_id, type, weight, provenance,
+      metadata, confidence, edge_created_at, edge_updated_at, revision,
+      is_deleted, mutation_kind, mutation_id, actor_kind, actor_id,
+      recorded_at FROM edge_versions LIMIT 0`,
     `SELECT id, username, normalized_username, auth_key_hash, auth_key_prefix,
       status, created_at, last_used_at, role FROM users LIMIT 0`,
     `SELECT id, entry_id, content, content_type, source, created_at,
@@ -939,7 +1179,7 @@ async function validateCurrentSchema(db: D1Database): Promise<void> {
       FROM episodes LIMIT 0`,
     `SELECT id, entry_id, content, tags, source, created_at, episode_id,
       mutation_id, mutation_kind, recorded_at, valid_from, valid_to,
-      epistemic_status, revision FROM entry_snapshots LIMIT 0`,
+      epistemic_status, revision, visibility FROM entry_snapshots LIMIT 0`,
     `SELECT id, entry_id, episode_id, document_id, section_id, content,
       section, page, page_end, start_offset, end_offset, vector_ids, created_at
       FROM passages LIMIT 0`,
@@ -968,6 +1208,10 @@ async function validateCurrentSchema(db: D1Database): Promise<void> {
       requested_scopes, granted_scopes, decision_reason, proposal_id,
       target_ids, redacted_input_summary, redacted_output_summary, input_hash,
       output_hash, error_code FROM agent_events LIMIT 0`,
+    `SELECT run_id, outcome, redacted_result_summary, result_hash,
+      failure_name, error_code, status, attempts, last_error, created_at,
+      updated_at, ready_at, completed_at
+      FROM audit_completion_reconciliation LIMIT 0`,
     `SELECT id, name, description, owner_user_id, status,
       default_autonomy_profile, created_by_user_id, created_at, updated_at,
       revoked_at FROM service_identities LIMIT 0`,
@@ -989,6 +1233,13 @@ async function validateCurrentSchema(db: D1Database): Promise<void> {
       error_message, created_at, updated_at FROM action_proposals LIMIT 0`,
     `SELECT id, proposal_id, sequence, event_type, actor_kind, actor_id,
       data_json, data_hash, created_at FROM proposal_events LIMIT 0`,
+    `SELECT id, event_type, recipient_user_id, entry_a_id, entry_b_id,
+      trigger_entry_id, similarity, created_at, read_at
+      FROM awareness_events LIMIT 0`,
+    `SELECT id, new_entry_id, matched_entry_id,
+      expected_new_owner_user_id, expected_matched_owner_user_id,
+      similarity, status, attempts, last_error, created_at, updated_at,
+      completed_at FROM overlap_awareness_reconciliation LIMIT 0`,
     `SELECT id, vector_ids, reason, attempts, last_error, created_at, updated_at
       FROM vector_cleanup_queue LIMIT 0`,
   ];

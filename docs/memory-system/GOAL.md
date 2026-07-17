@@ -1,5 +1,16 @@
 # Goal: Memory Pillar — The Foundation
 
+**Status:** implemented; this file preserves the original planning sequence.
+
+> The canonical implemented contract is [VISION.md](../VISION.md),
+> [System Architecture](../system-architecture.md), and the versioning service.
+> Later trust decisions supersede several planning assumptions below: episode,
+> provenance, citation, and snapshot writes are synchronous and fail closed;
+> every episode has one document envelope; recall is read-only and only an
+> explicit owner reinforcement updates retention metadata; contradiction never
+> implies supersession; and runtime migrations/backfills are allowed when they
+> are required to establish an invariant safely.
+
 Build the next-level memory system that everything else stands on. Provenance, temporality, lifecycle, citations, decay — the foundation that makes every claim citable, every fact time-aware, and every memory naturally decaying.
 
 ## Why

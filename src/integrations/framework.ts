@@ -1,68 +1,52 @@
 /**
- * Second Brain — integration framework.
+ * Provider-agnostic integration contracts and tenant-scoped KV persistence.
  *
- * Provider-agnostic machinery for mirroring external sources into memory.
- * Each provider (src/integrations/<provider>.ts) supplies an
- * IntegrationProvider; the registry in src/integrations/index.ts wires them
- * together so the Worker's routes, cron, and settings UI never hardcode a
- * provider.
- *
- * Design notes:
- * - All integration state (token, account info, item↔entry map) lives in
- *   OAUTH_KV under `integrations:<provider>` — one JSON blob per provider. KV
- *   is deliberate: the namespace is already provisioned in every deployment,
- *   so shipping a provider is a pure code deploy with no schema migration, and
- *   the access pattern (read once at sync start, write once at the end) is
- *   exactly what KV wants.
- * - Synced items are MIRRORS: the external tool is the source of truth. Every
- *   sync replaces a mirrored entry's content wholesale, dedupe is by external
- *   item id (the itemMap), and an item that disappears upstream deletes its
- *   mirror. Mirrors therefore bypass captureEntry's duplicate/contradiction
- *   pipeline — MirrorStore below is the narrow write surface a sync needs,
- *   implemented by index.ts.
- * - Sync work per call is bounded (Workers subrequest limits, especially on
- *   the free plan). Outcomes report `remaining` so callers loop until it hits
- *   0 — same pattern as POST /vectorize-pending.
+ * Integration credentials and mirror maps are private user data. Normal code
+ * can only address a record with an explicit user id and provider id; there is
+ * no deployment-global fallback key.
  */
 
 export interface IntegrationEnv {
   OAUTH_KV: KVNamespace;
 }
 
-// ─── Provider interface ───────────────────────────────────────────────────────
-// The whole contract a new provider must implement. Deliberately thin: how a
-// provider lists changes, fetches content, and detects deletions is private to
-// it — sync semantics differ too much between APIs (Notion: full listing +
-// completeness-gated deletion sweep; cursor-native APIs: incremental exports)
-// to abstract further from one data point.
+export type IntegrationVisibility = "private" | "public";
+
+export interface IntegrationConfig {
+  defaultVisibility: IntegrationVisibility;
+  [key: string]: unknown;
+}
 
 export interface IntegrationProvider {
-  id: string;   // registry key, entry `source` value, and URL segment (/integrations/<id>/…)
-  name: string; // display name for the settings UI
-  // Validate a pasted token against the provider's API; returns an account /
-  // workspace label for the UI's "Connected to …" confirmation. Throws with a
-  // user-presentable message when the token is rejected.
+  id: string;
+  name: string;
   validateToken(token: string): Promise<string>;
-  // Run one bounded sync batch against the stored record.
-  sync(env: IntegrationEnv, store: MirrorStore): Promise<SyncOutcome>;
+  sync(env: IntegrationEnv, userId: string, store: MirrorStore): Promise<SyncOutcome>;
 }
 
 export type SyncOutcome =
-  | { ok: true; created: number; updated: number; deleted: number; failed: number; remaining: number; total: number }
+  | {
+      ok: true;
+      created: number;
+      updated: number;
+      deleted: number;
+      failed: number;
+      remaining: number;
+      total: number;
+    }
   | { ok: false; error: string };
 
-// ─── Integration record (the KV blob) ─────────────────────────────────────────
-
 export interface ItemMapEntry {
-  entryId: string; // the mirrored entry's id in D1
-  version: string; // the item's change marker (e.g. Notion's last_edited_time) when mirrored
+  entryId: string;
+  version: string;
 }
 
 export interface IntegrationRecord {
   provider: string;
-  authKind: "token"; // "oauth2" reserved for future providers that require it
+  ownerUserId: string;
+  authKind: "token";
   credentials: { token: string };
-  config: Record<string, unknown>; // escape hatch for future per-provider options
+  config: IntegrationConfig;
   status: "connected" | "error";
   workspaceName: string | null;
   lastSyncedAt: number | null;
@@ -72,45 +56,169 @@ export interface IntegrationRecord {
   updatedAt: number;
 }
 
-// Prefixed so integration keys coexist with workers-oauth-provider's own
-// token:/grant:/client: keys in the same namespace.
-const INTEGRATIONS_KEY_PREFIX = "integrations:";
+export interface MirrorEntryVersion {
+  externalItemId: string;
+  version: string;
+  content: string;
+  tags: string[];
+  sourceUrl?: string | null;
+  title?: string;
+}
 
-export async function loadIntegration(env: IntegrationEnv, provider: string): Promise<IntegrationRecord | null> {
-  const raw = await env.OAUTH_KV.get(`${INTEGRATIONS_KEY_PREFIX}${provider}`);
+export interface MirrorStore {
+  createEntry(input: MirrorEntryVersion): Promise<string>;
+  updateEntry(entryId: string, input: MirrorEntryVersion): Promise<boolean>;
+  /** Non-destructive source removal used by unattended sync. */
+  archiveEntry(externalItemId: string, entryId: string): Promise<boolean>;
+  /** Human-requested compliance purge used only by explicit disconnect+purge. */
+  deleteEntry(externalItemId: string, entryId: string): Promise<boolean>;
+}
+
+const INTEGRATIONS_KEY_PREFIX = "integrations:v2:";
+const LEGACY_INTEGRATIONS_KEY_PREFIX = "integrations:";
+
+function requireKeyPart(label: string, value: unknown): string {
+  if (typeof value !== "string") throw new Error(`${label} is required`);
+  const normalized = value.trim();
+  if (!normalized) throw new Error(`${label} is required`);
+  if (normalized.includes(":")) throw new Error(`${label} cannot contain ':'`);
+  return normalized;
+}
+
+export function integrationKey(userId: string, provider: string): string {
+  return `${INTEGRATIONS_KEY_PREFIX}${requireKeyPart("userId", userId)}:${requireKeyPart("provider", provider)}`;
+}
+
+function normalizeItemMap(value: unknown): Record<string, ItemMapEntry> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).flatMap(([externalId, raw]) => {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+      const candidate = raw as Record<string, unknown>;
+      if (typeof candidate.entryId !== "string" || !candidate.entryId) return [];
+      const version = typeof candidate.version === "string"
+        ? candidate.version
+        : typeof candidate.lastEdited === "string"
+          ? candidate.lastEdited
+          : "";
+      return [[externalId, { entryId: candidate.entryId, version }]];
+    }),
+  );
+}
+
+function normalizeConfig(value: unknown): IntegrationConfig {
+  const config = value && typeof value === "object" && !Array.isArray(value)
+    ? { ...(value as Record<string, unknown>) }
+    : {};
+  return {
+    ...config,
+    defaultVisibility: config.defaultVisibility === "public" ? "public" : "private",
+  };
+}
+
+function normalizeRecord(
+  value: unknown,
+  userId: string,
+  provider: string,
+  allowOwnerless: boolean,
+): IntegrationRecord | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = value as Record<string, any>;
+  if (raw.provider !== provider) return null;
+  if (!allowOwnerless && raw.ownerUserId !== userId) return null;
+  if (allowOwnerless && raw.ownerUserId && raw.ownerUserId !== userId) return null;
+  if (raw.authKind !== "token" || typeof raw.credentials?.token !== "string") return null;
+
+  return {
+    provider,
+    ownerUserId: userId,
+    authKind: "token",
+    credentials: { token: raw.credentials.token },
+    config: normalizeConfig(raw.config),
+    status: raw.status === "connected" ? "connected" : "error",
+    workspaceName: typeof raw.workspaceName === "string" ? raw.workspaceName : null,
+    lastSyncedAt: typeof raw.lastSyncedAt === "number" ? raw.lastSyncedAt : null,
+    lastSyncError: typeof raw.lastSyncError === "string" ? raw.lastSyncError : null,
+    itemMap: normalizeItemMap(raw.itemMap ?? raw.pageMap),
+    createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
+    updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : Date.now(),
+  };
+}
+
+export async function loadIntegration(
+  env: IntegrationEnv,
+  userId: string,
+  provider: string,
+): Promise<IntegrationRecord | null> {
+  const raw = await env.OAUTH_KV.get(integrationKey(userId, provider));
   if (!raw) return null;
   try {
-    const record = JSON.parse(raw) as any;
-    // Migrate pre-registry blobs (first Notion release): pageMap/lastEdited →
-    // itemMap/version. Persisted back on the next save; losing the map would
-    // duplicate every mirror on the following sync.
-    if (record.pageMap && !record.itemMap) {
-      record.itemMap = Object.fromEntries(
-        Object.entries(record.pageMap as Record<string, any>).map(([id, v]) => [
-          id,
-          { entryId: v.entryId, version: v.version ?? v.lastEdited ?? "" },
-        ])
-      );
-      delete record.pageMap;
-    }
-    record.itemMap ??= {};
-    return record as IntegrationRecord;
+    return normalizeRecord(JSON.parse(raw), userId, provider, false);
   } catch {
     return null;
   }
 }
 
-export async function saveIntegration(env: IntegrationEnv, record: IntegrationRecord): Promise<void> {
-  await env.OAUTH_KV.put(`${INTEGRATIONS_KEY_PREFIX}${record.provider}`, JSON.stringify(record));
+export async function saveIntegration(
+  env: IntegrationEnv,
+  userId: string,
+  record: IntegrationRecord,
+): Promise<void> {
+  requireKeyPart("userId", userId);
+  requireKeyPart("provider", record.provider);
+  if (record.ownerUserId !== userId) {
+    throw new Error("Integration owner does not match the requested user");
+  }
+  const normalized = normalizeRecord(record, userId, record.provider, false);
+  if (!normalized) throw new Error("Integration record is invalid");
+  await env.OAUTH_KV.put(
+    integrationKey(userId, record.provider),
+    JSON.stringify(normalized),
+  );
 }
 
-export async function deleteIntegration(env: IntegrationEnv, provider: string): Promise<void> {
-  await env.OAUTH_KV.delete(`${INTEGRATIONS_KEY_PREFIX}${provider}`);
+export async function deleteIntegration(
+  env: IntegrationEnv,
+  userId: string,
+  provider: string,
+): Promise<void> {
+  await env.OAUTH_KV.delete(integrationKey(userId, provider));
 }
 
-// Connection status for the settings UI. Never exposes credentials — the token
-// is write-only from the dashboard's perspective.
-export function integrationStatus(provider: Pick<IntegrationProvider, "id" | "name">, record: IntegrationRecord | null) {
+/**
+ * Explicit one-time ownership claim for a pre-v2 deployment-global record.
+ * Normal loads never inspect legacy keys. The legacy blob is removed only
+ * after the user-scoped copy has been stored successfully.
+ */
+export async function claimLegacyIntegration(
+  env: IntegrationEnv,
+  userId: string,
+  provider: string,
+): Promise<IntegrationRecord | null> {
+  requireKeyPart("userId", userId);
+  const normalizedProvider = requireKeyPart("provider", provider);
+  if (await loadIntegration(env, userId, normalizedProvider)) {
+    throw new Error("User already has an integration record for this provider");
+  }
+  const legacyKey = `${LEGACY_INTEGRATIONS_KEY_PREFIX}${normalizedProvider}`;
+  const raw = await env.OAUTH_KV.get(legacyKey);
+  if (!raw) return null;
+  let record: IntegrationRecord | null;
+  try {
+    record = normalizeRecord(JSON.parse(raw), userId, normalizedProvider, true);
+  } catch {
+    record = null;
+  }
+  if (!record) return null;
+  await saveIntegration(env, userId, record);
+  await env.OAUTH_KV.delete(legacyKey);
+  return record;
+}
+
+export function integrationStatus(
+  provider: Pick<IntegrationProvider, "id" | "name">,
+  record: IntegrationRecord | null,
+) {
   return {
     provider: provider.id,
     name: provider.name,
@@ -123,17 +231,12 @@ export function integrationStatus(provider: Pick<IntegrationProvider, "id" | "na
   };
 }
 
-// ─── Mirror store ─────────────────────────────────────────────────────────────
-// The write primitives a sync needs against the memory store. Implemented by
-// index.ts (which owns storeEntry/forgetEntry); injected so this module never
-// imports from index.ts (no circular dependency).
-
-export interface MirrorStore {
-  // Insert a new entry and return its id.
-  createEntry(content: string, tags: string[], source: string): Promise<string>;
-  // Replace an entry's content wholesale (re-embed). False if the entry no
-  // longer exists — the caller re-creates the mirror.
-  updateEntry(entryId: string, content: string): Promise<boolean>;
-  // Permanently delete an entry and its vectors.
-  deleteEntry(entryId: string): Promise<void>;
+/** Keep provider/status errors bounded and strip credentials before storage. */
+export function redactIntegrationError(error: unknown, secrets: readonly string[] = []): string {
+  let message = error instanceof Error ? error.message : String(error);
+  message = message.replace(/Bearer\s+[^\s,;]+/gi, "Bearer [redacted]");
+  for (const secret of secrets) {
+    if (secret) message = message.split(secret).join("[redacted]");
+  }
+  return message.slice(0, 500);
 }

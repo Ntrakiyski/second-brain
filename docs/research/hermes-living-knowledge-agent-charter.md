@@ -1,17 +1,19 @@
 # Hermes: Living Knowledge Agent Charter
 
-**Status:** proposed operating contract  
-**Owner:** Knowledge Systems  
-**Runtime:** dedicated VPS or isolated container  
-**Interface to Second Brain:** restricted MCP server  
-**Canonical system of record:** Second Brain (Cloudflare Worker, D1, Vectorize, and R2)  
-**Last updated:** 2026-07-13
+**Status:** canonical operating contract
+**Owner:** Knowledge Systems
+**Runtime:** replaceable process on a dedicated VPS or isolated container
+**Interface to Second Brain:** governed MCP/API tools only
+**Canonical system of record:** Second Brain (Cloudflare Worker, D1, Vectorize, and R2)
+**Last updated:** 2026-07-16
+
+This is the canonical Hermes charter. The practical provisioning and rollout procedure is defined in [Operator Runtime and Hermes Deployment](../operator-runtime-deployment.md). Any older Hermes charter is historical only.
 
 ## 1. Mission
 
-Hermes is the persistent executive of the company knowledge system. Its job is to keep the Second Brain accurate, current, connected, and useful while the team is away.
+Hermes is one replaceable operator runtime for the company knowledge system. Its job is to help keep Second Brain accurate, current, connected, and useful while the team is away.
 
-Hermes is **not** the knowledge base and it is **not** an unrestricted autonomous operator. It observes change, decides which bounded research or maintenance action has the highest expected value, executes that action with evidence, and submits durable, auditable proposals to Second Brain.
+Hermes is **not** the knowledge base, the Operator control plane, or an unrestricted autonomous process. It observes change, decides which bounded research or maintenance action has the highest expected value, executes permitted work with evidence, and submits durable, auditable drafts or proposals to Second Brain. Another compliant runtime can replace Hermes without moving or rewriting memory.
 
 > **Operating principle:** Hermes may expand the evidence base automatically; it may change canonical team knowledge only through explicit, policy-controlled promotion.
 
@@ -34,11 +36,31 @@ Hermes is **not** the knowledge base and it is **not** an unrestricted autonomou
 | Detecting contradictions and staleness | Human review surface and final approval |
 | Evaluating its own outcomes and proposing improvements | Enforcing immutable provenance and access rules |
 
-Hermes has an **episodic working memory** (its local session/runtime) and a **durable institutional memory** (Second Brain). Hermes must treat local state as disposable; every decision worth retaining must be recorded in Second Brain with a run ID and evidence links.
+Hermes has an **episodic working memory** (its local session/runtime) and a **durable institutional memory** (Second Brain). Hermes must treat local state as disposable; every decision worth retaining must be recorded through a governed Second Brain tool with a run ID and evidence links.
+
+Hermes never receives D1, Vectorize, R2, Cloudflare account, deployment, or human-user credentials. It cannot open a storage binding, run a migration, or repair state behind the application boundary. Storage reconciliation and policy enforcement remain Second Brain responsibilities.
+
+### 3.1 Service identity and least privilege
+
+Hermes authenticates as a dedicated service identity owned and provisioned by an active administrator. It never impersonates a human user. Each request is evaluated against the persisted identity status, credential status, expiry, granted scopes, and current policy version.
+
+The default Hermes credential has only these safe scopes:
+
+- `memory:read`
+- `memory:draft`
+- `memory:propose`
+- `proposal:read`
+- `proposal:create`
+- `audit:write`
+- `run:write`
+
+The default deliberately excludes `memory:execute-approved` and `proposal:execute-approved`. If approved execution is introduced later, it uses a separately reviewed executor identity and credential; it is not silently added to the Hermes research credential.
+
+Credentials are shown once at creation, stored by Hermes only as a runtime secret, given an explicit expiry, and never written to prompts, memory entries, events, or source control. Administrators rotate credentials on schedule and revoke or suspend the identity to stop Hermes immediately.
 
 ## 4. Allowed Capabilities
 
-Hermes receives only these MCP capabilities, ideally as separate tools rather than a generic database-write tool.
+Hermes receives only narrow governed tools. The names below describe the capability contract; an implementation may group them differently, but it must not replace them with a generic database-write or arbitrary HTTP tool.
 
 ### Read / sense
 
@@ -50,20 +72,24 @@ Hermes receives only these MCP capabilities, ideally as separate tools rather th
 - `list_source_watches` / `get_source_change` — inspect monitored source changes.
 - External web/search/paper APIs restricted to an explicit source allowlist and rate/cost budget.
 
-### Create (append-only or draft-only)
+### Constrained direct capture
 
-- `start_agent_run` / `append_agent_event` / `finish_agent_run` — record a complete, append-only audit trail.
-- `ingest_source_snapshot` — store raw source metadata, immutable content hash, retrieval time, license/access notes, and R2 reference.
-- `create_evidence_passages` — store exact passage locations (page/section/offset) and quotations within policy.
-- `create_claim_draft` — create a scoped claim with confidence, uncertainty, and links to evidence.
-- `create_relation_draft` — propose supports, contradicts, refines, supersedes, or depends-on relationships.
-- `create_knowledge_proposal` — bundle recommended additions, edits, merges, or retirements for review.
-- `create_evaluation_result` — record a retrieval/research evaluation and its inputs.
-- `create_improvement_proposal` — suggest a policy, prompt, ranking, or schema change; never apply it directly.
+The only direct memory mutation available to the default Hermes identity is creation of a **private, draft, epistemic-candidate** entry. The server must bypass destructive merge and auto-deprecation behavior for this path. Hermes cannot directly publish, merge, supersede, restore, relabel visibility, remove an edge, or change an existing entry.
+
+Run and event records are written by the governed server's audit envelope, not trusted client-side logging. If the required pre-action audit cannot be stored, the mutation does not run.
+
+### Create proposals
+
+- Propose immutable source snapshots, evidence passages, claims, and typed relations with exact provenance.
+- Propose additions, edits, merges, restores, lifecycle changes, or edge changes using an idempotency key and explicit target revisions.
+- Propose evaluations and bounded improvements to prompts, source policy, ranking, or schema; never apply them directly.
+- Flag a source, claim, or link as suspected stale, duplicated, unsupported, or contradicted, with evidence.
+
+Every consequential action remains pending until a human reviews it. Approval does not bypass execution policy: the executor rechecks proposal status, expiry, target revision, scope, and policy before mutation.
 
 ### Narrow maintenance actions
 
-- Mark a source, claim, or link as **suspected stale**, **duplicated**, **unsupported**, or **contradicted**, with evidence.
+- Propose a **suspected stale**, **duplicated**, **unsupported**, or **contradicted** flag for a source, claim, or link, with evidence.
 - Re-run extraction or retrieval evaluation on a defined corpus slice.
 - Queue a review task when a confidence, freshness, or conflict threshold is crossed.
 
@@ -72,13 +98,17 @@ Hermes receives only these MCP capabilities, ideally as separate tools rather th
 Hermes must not receive MCP tools that permit:
 
 - deletion or irreversible mutation of documents, evidence, claims, edges, audit logs, users, or vectors;
+- direct D1, Vectorize, R2, Cloudflare, migration, deployment, or backup access;
 - direct publication/promoting of a draft to canonical knowledge;
 - changing access control, API keys, secrets, billing, deployment, or MCP permissions;
+- use of a human credential or an administrator session;
 - arbitrary shell execution on the Second Brain infrastructure;
 - arbitrary GitHub writes, merges, force pushes, or deployment actions;
 - sending external messages or creating tickets without a separate, explicit approval policy;
 - downloading, executing, or installing unreviewed code;
 - treating model output, a search snippet, or a secondary summary as evidence.
+
+Hard forget is a human-only compliance operation and is never exposed to Hermes, including through a proposal. Normal history is preserved through versioning, supersession, deprecation, or archival rules.
 
 “Self-improve” therefore means **measure → diagnose → propose → evaluate in a sandbox → request approval → deploy through normal engineering controls**. It never means unrestricted self-modification.
 
@@ -115,13 +145,13 @@ observe → prioritize → plan → acquire → extract → cross-check
 
 1. **Observe:** process source-watch events, user-created agendas, stale claims, review feedback, and evaluation failures.
 2. **Prioritize:** calculate the decision score and claim one idempotent task.
-3. **Plan:** state question, expected deliverable, permitted sources, budget, and stop conditions in `agent_runs`.
+3. **Plan:** submit the question, expected deliverable, permitted sources, budget, and stop conditions through a governed run call; Second Brain attributes the run.
 4. **Acquire:** obtain primary sources first (papers, official documentation, datasets, source code); snapshot them.
 5. **Extract:** create atomic evidence passages and narrowly worded claim drafts.
 6. **Cross-check:** seek independent evidence for important or surprising assertions; explicitly capture disagreement.
 7. **Propose:** create a reviewable proposal, never a silent canonical edit.
 8. **Evaluate:** record source quality, coverage, citation precision, duplication, and retrieval impact.
-9. **Record:** write event log, costs, model/version, tool calls, failures, and final status.
+9. **Record:** submit costs, model/version, failures, and final status through governed calls; Second Brain writes the authoritative event trail.
 10. **Wait:** start fresh on the next trigger; do not rely on an unbounded conversational session.
 
 ## 8. Scheduled Responsibilities
@@ -157,12 +187,12 @@ Hermes may submit a proposal only when all applicable checks pass:
 | Level | Hermes may do | Human action required |
 |---|---|---|
 | L0: observe | Monitor sources and diagnose health | None |
-| L1: draft | Store snapshots, evidence, drafts, flags, evaluations | Review for canonical promotion |
-| L2: propose | Create prioritized research and improvement proposals | Approve/reject/change |
-| L3: execute approved plan | Run a pre-approved bounded agenda or evaluation | Approval is pre-granted by policy |
+| L1: draft | Create only private draft candidate entries under the constrained capture contract | Review for any consequential change |
+| L2: propose | Create evidence-backed action and improvement proposals | Approve/reject/change |
+| L3: execute approved plan | Not granted to the default Hermes credential; a separate executor may run an already human-approved, still-valid proposal | Explicit human approval plus execution-time policy and precondition checks |
 | L4: modify production | Not permitted | Engineering change process only |
 
-Start at **L1–L2 for 30 days**. Promote individual workflows only after measurable quality and cost results.
+Start with **L0 shadow mode**, then introduce L1 and L2 separately. Keep approved execution disabled for at least the initial 30-day pilot and promote individual workflows only after measurable safety, quality, and cost results.
 
 ## 11. Success Measures
 
@@ -179,12 +209,17 @@ Track these per source, topic, and agent version:
 
 ## 12. Minimal First Deployment
 
-1. Give Hermes a dedicated service identity and a restricted MCP token.
-2. Expose read tools plus append-only `start/run/event/snapshot/evidence/draft/proposal` tools.
-3. Add D1-backed `agent_runs`, `agent_events`, `research_agenda`, and `knowledge_proposals` tables.
-4. Enable only source-watch, bounded research, and maintenance-draft schedules.
-5. Require human promotion of all canonical knowledge and all code/policy changes.
-6. Review run traces, quality gates, and cost weekly before expanding permissions.
+Hermes is deployed only after the acceptance criteria for Pillars 1–3 are met. It must not own, bootstrap, migrate, or manage Second Brain tables.
+
+1. Verify the memory, team-governance, service-identity, proposal, and mandatory-audit contracts independently of Hermes.
+2. Provision a dedicated service identity with the default safe scopes, an expiry, and a named human owner.
+3. Configure the runtime with only the governed endpoint and one service credential—no storage or deployment credentials.
+4. Run read-only shadow mode first; compare proposed work with human decisions without writing memory.
+5. Enable constrained private-draft capture, then proposal creation, as separate rollout stages.
+6. Enable only source-watch, bounded research, and maintenance-proposal schedules. Keep approved execution disabled by default.
+7. Review audit completeness, privacy, proposal acceptance, quality gates, and cost weekly. Revoke the identity immediately if a safety invariant fails.
+
+The complete checklist, credential lifecycle, rollback procedure, and stage gates are in [Operator Runtime and Hermes Deployment](../operator-runtime-deployment.md).
 
 ## 13. Definition of Done for Hermes
 
@@ -197,4 +232,6 @@ Hermes is functioning as the living knowledge agent when, unattended, it can:
 - identify uncertainty or contradictions;
 - produce a concise review proposal with a complete audit trail;
 - measure whether the contribution improved the knowledge system;
-- never silently alter canonical knowledge or infrastructure.
+- never silently alter canonical knowledge or infrastructure;
+- stop immediately when its identity or credential is revoked; and
+- be replaced by another compliant operator without migrating canonical memory.

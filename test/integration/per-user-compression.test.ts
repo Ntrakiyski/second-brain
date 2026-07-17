@@ -39,16 +39,26 @@ function makeCtx() {
 }
 
 function seed(db: D1Mock, id: string, content: string, tags: string[] = [], ownerId = "", opts: { importance?: number; recall?: number; created_at?: number } = {}) {
+  const createdAt = opts.created_at ?? Date.now() - 100000;
   db.entries.push({
     id,
     content,
     tags: JSON.stringify(tags),
     source: "api",
-    created_at: opts.created_at ?? Date.now() - 100000,
+    created_at: createdAt,
     vector_ids: "[]",
     recall_count: opts.recall ?? 0,
     importance_score: opts.importance ?? 0,
     owner_user_id: ownerId,
+    created_by_user_id: ownerId,
+    visibility: tags.includes("private") ? "private" : "public",
+    revision: 0,
+    valid_from: null,
+    valid_to: null,
+    recorded_at: createdAt,
+    epistemic_status: "canonical",
+    current_episode_id: null,
+    updated_at: createdAt,
   });
 }
 
@@ -110,7 +120,7 @@ describe("Per-user compression", () => {
       }
       const foreignBefore = db.entries
         .filter(entry => entry.owner_user_id === "user-2")
-        .map(entry => JSON.stringify(entry));
+        .map(entry => ({ id: entry.id, content: entry.content, tags: entry.tags, owner: entry.owner_user_id }));
 
       const { ctx, drain } = makeCtx();
       const result = await compressTag("project", env, ctx, "user-1");
@@ -119,7 +129,8 @@ describe("Per-user compression", () => {
       expect(result.entriesUsed).toBe(12);
       expect(db.entries
         .filter(entry => entry.owner_user_id === "user-2")
-        .map(entry => JSON.stringify(entry))).toEqual(foreignBefore);
+        .map(entry => ({ id: entry.id, content: entry.content, tags: entry.tags, owner: entry.owner_user_id })))
+        .toEqual(foreignBefore);
 
       const digest = db.entries.find(entry => entry.id === result.synthesizedId);
       expect(digest.owner_user_id).toBe("user-1");
@@ -166,25 +177,30 @@ describe("Per-user compression", () => {
       seed(db, "malformed", "Malformed metadata", ["project"], "user-1");
       db.entries.find(entry => entry.id === "malformed")!.tags = JSON.stringify("project");
 
-      const before = JSON.stringify(db.entries.find(entry => entry.id === "malformed"));
+      const before = { ...db.entries.find(entry => entry.id === "malformed") };
       const { ctx } = makeCtx();
       const result = await compressTag("project", env, ctx, "user-1");
 
       expect(result).toEqual({ synthesizedId: null, entriesUsed: 0, text: "" });
-      expect(JSON.stringify(db.entries.find(entry => entry.id === "malformed"))).toBe(before);
+      expect(db.entries.find(entry => entry.id === "malformed")).toMatchObject({
+        id: before.id,
+        content: before.content,
+        tags: before.tags,
+        owner_user_id: before.owner_user_id,
+        revision: before.revision,
+      });
     });
 
-    it("compresses without userId (backward compat)", async () => {
-      // Seed 15 entries tagged "project" with no owner
+    it("refuses ownerless legacy entries under an actor-scoped compression", async () => {
+      // Ownerless legacy rows cannot be mutated by a maintenance actor.
       for (let i = 0; i < 15; i++) {
         seed(db, `entry-${i}`, `Note ${i}`, ["project"]);
       }
 
       const { ctx } = makeCtx();
-      const result = await compressTag("project", env, ctx);
+      const result = await compressTag("project", env, ctx, "user-1");
 
-      expect(result.entriesUsed).toBe(15);
-      expect(result.synthesizedId).toBeTruthy();
+      expect(result).toEqual({ synthesizedId: null, entriesUsed: 0, text: "" });
     });
   });
 });

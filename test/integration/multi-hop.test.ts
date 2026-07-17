@@ -14,7 +14,7 @@ function makeCtx() {
 }
 
 function seed(db: D1Mock, id: string, content: string, tags: string[] = []) {
-  db.entries.push({ id, content, tags: JSON.stringify(tags), source: "api", created_at: 1000, vector_ids: "[]", recall_count: 0, importance_score: 0, owner_user_id: TEST_USER_ID });
+  db.entries.push({ id, content, tags: JSON.stringify(tags), source: "api", created_at: 1000, vector_ids: "[]", recall_count: 0, importance_score: 0, owner_user_id: TEST_USER_ID, visibility: "public" });
 }
 
 function pushEdge(db: D1Mock, source_id: string, target_id: string, weight = 0.8) {
@@ -71,7 +71,7 @@ describe("multi-hop recall (issue #16)", () => {
     expect(res.matches.map(m => m.id)).toEqual(["seed"]);
   });
 
-  it("bumps recall_count for direct seeds only, not graph-expanded neighbors", async () => {
+  it("does not mutate recall counters for direct or graph-expanded matches", async () => {
     seed(db, "seed", "Direct match");
     seed(db, "neighbor", "Related context");
     pushEdge(db, "seed", "neighbor");
@@ -81,7 +81,7 @@ describe("multi-hop recall (issue #16)", () => {
     await recallEntries({ query: "direct", topK: 5, hops: 1, userId: TEST_USER_ID }, env, ctx);
     await drain();
 
-    expect(db.entries.find((e: any) => e.id === "seed").recall_count).toBe(1);
+    expect(db.entries.find((e: any) => e.id === "seed").recall_count).toBe(0);
     expect(db.entries.find((e: any) => e.id === "neighbor").recall_count).toBe(0);
   });
 

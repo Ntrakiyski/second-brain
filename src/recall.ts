@@ -49,10 +49,10 @@ import {
   CHUNK_OVERLAP_CHARS,
   STALENESS_RECALL_PENALTY,
 } from "./config";
-import { getStatus, withKind, withStatus, buildVisibilityClause } from "./tags";
+import { buildVisibilityClause } from "./tags";
 import { expandGraph } from "./graph";
 import { inferQueryTags, extractHashtags } from "./classification";
-import { synthesizeInsight, derivePattern } from "./lifecycle";
+import { synthesizeInsight } from "./lifecycle";
 import { queryVisibleVectors, vectorMatchParentId } from "./vector-access";
 
 // ─── Time-decay reranking ─────────────────────────────────────────────────────
@@ -185,9 +185,23 @@ export interface RecallMatch {
   isUpdate: boolean;
   hop: number; // 0 = direct match; ≥1 = surfaced via graph expansion (issue #16)
   crossUserMention?: { entryId: string; ownerUsername: string; similarity: number };
-  passages?: { id: string; content: string; section: string | null; startOffset: number | null; endOffset: number | null }[];
+  passages?: {
+    id: string;
+    content: string;
+    section: string | null;
+    documentId?: string | null;
+    sectionId?: string | null;
+    sourceUrl?: string | null;
+    documentTitle?: string | null;
+    page?: number | null;
+    pageEnd?: number | null;
+    startOffset: number | null;
+    endOffset: number | null;
+  }[];
   relations?: { type: string; confidence: number; targetId: string; targetContent?: string }[];
   epistemicStatus?: string;
+  ownerUserId?: string;
+  visibility?: "private" | "public";
 }
 
 export interface RecallSearchResult {
@@ -214,7 +228,21 @@ export function renderRecallText(matches: RecallMatch[], insight: string): strin
     const hopLabel = m.hop > 0 ? ` [related · ${m.hop} hop${m.hop > 1 ? "s" : ""}]` : "";
     const crossUserLabel = m.crossUserMention ? ` · also by ${m.crossUserMention.ownerUsername}` : "";
     const epistemicLabel = m.epistemicStatus && m.epistemicStatus !== "canonical" ? ` [${m.epistemicStatus}]` : "";
-    const passageLabel = m.passages?.length ? `\nEVIDENCE: ${m.passages.map(p => p.section ? `"${p.section}"` : `"${p.content.slice(0, 80)}..."`).join("; ")}` : "";
+    const passageLabel = m.passages?.length
+      ? `\nEVIDENCE:\n${m.passages.map(p => {
+          const citation = [
+            p.documentTitle ? `title="${p.documentTitle}"` : null,
+            p.sourceUrl ? `url=${p.sourceUrl}` : null,
+            p.page != null ? `page=${p.page}` : null,
+            p.pageEnd != null ? `pageEnd=${p.pageEnd}` : null,
+            p.section ? `section="${p.section}"` : null,
+            p.startOffset != null ? `startOffset=${p.startOffset}` : null,
+            p.endOffset != null ? `endOffset=${p.endOffset}` : null,
+          ].filter((value): value is string => value !== null);
+          const excerpt = p.content.length > 160 ? `${p.content.slice(0, 157)}...` : p.content;
+          return `- ${citation.length ? `[${citation.join("; ")}] ` : ""}"${excerpt}"`;
+        }).join("\n")}`
+      : "";
     const relationLabel = m.relations?.length ? `\nLINKS: ${m.relations.slice(0, 3).map(r => `${r.type}(${(r.confidence * 100).toFixed(0)}%)→${r.targetId.slice(0, 8)}`).join(", ")}` : "";
     return `${i + 1}. [${date}${src}${tagList}] (${score}% match)${updateLabel}${hopLabel}${crossUserLabel}${epistemicLabel}\nID: ${m.id}\n${m.content}${passageLabel}${relationLabel}`;
   }).join("\n\n");
@@ -230,6 +258,27 @@ interface KeywordRow {
   source: string;
   created_at: number;
   owner_user_id: string;
+  visibility: "private" | "public";
+  current_visibility?: "private" | "public";
+  historical_state?: number;
+  episode_id?: string | null;
+  vector_ids?: string;
+}
+
+interface EntryStateRow {
+  id: string;
+  content: string;
+  tags: string;
+  source: string;
+  created_at: number;
+  owner_user_id: string;
+  current_episode_id: string | null;
+  valid_from: number | null;
+  valid_to: number | null;
+  recorded_at: number | null;
+  epistemic_status: string;
+  revision: number;
+  visibility: "private" | "public";
 }
 
 function parseStringArray(raw: unknown): string[] | null {
@@ -242,27 +291,239 @@ function parseStringArray(raw: unknown): string[] | null {
   }
 }
 
-function isVisibleEntryRow(row: { tags: string; owner_user_id: string }, userId?: string): boolean {
+function isVisibleEntryRow(
+  row: { visibility: unknown; owner_user_id: string },
+  userId?: string,
+): boolean {
   if (typeof row.owner_user_id !== "string" || !row.owner_user_id) return false;
-  const tags = parseStringArray(row.tags);
-  if (!tags) return false;
-  return (!!userId && row.owner_user_id === userId) || !tags.includes("private");
+  if (row.visibility !== "private" && row.visibility !== "public") return false;
+  return (!!userId && row.owner_user_id === userId) || row.visibility === "public";
+}
+
+function isVisibleKeywordRow(row: KeywordRow, userId?: string): boolean {
+  if (typeof row.owner_user_id !== "string" || !row.owner_user_id) return false;
+  if (userId && row.owner_user_id === userId) return true;
+  const currentVisibility = row.current_visibility ?? row.visibility;
+  return currentVisibility === "public" && row.visibility === "public";
+}
+
+function vectorEpisodeId(match: VectorizeMatch): string | null {
+  const metadata = match.metadata as Record<string, unknown> | undefined;
+  const value = metadata?.episode_id ?? metadata?.episodeId;
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function vectorMatchesState(match: VectorizeMatch, state: EntryStateRow): boolean {
+  // Legacy entries and legacy vectors did not carry version lineage. Preserve
+  // them, but once both sides identify an episode the vector must be for the
+  // selected state. This drops stale version-scoped entry and passage vectors.
+  const vectorEpisode = vectorEpisodeId(match);
+  return !state.current_episode_id || !vectorEpisode || vectorEpisode === state.current_episode_id;
 }
 
 // Keyword candidates: entries whose content contains any query token, bounded by
 // KEYWORD_CANDIDATE_LIMIT. Relevance ranking happens in fuseDenseAndKeyword.
-async function keywordSearch(tokens: string[], env: Env, userId?: string): Promise<KeywordRow[]> {
+async function keywordSearch(
+  tokens: string[],
+  env: Env,
+  userId?: string,
+  knownAt?: number,
+  asOf?: number,
+): Promise<KeywordRow[]> {
   if (!tokens.length) return [];
+  if (knownAt !== undefined || asOf !== undefined) {
+    // Build the bitemporal projection before applying the keyword predicate.
+    // knownAt bounds transaction time; asOf selects versions whose world-valid
+    // interval contains the requested instant. Among eligible versions, the
+    // most recently recorded state is the team's best knowledge projection.
+    const where = tokens.map(() => "content LIKE ?").join(" OR ");
+    const visibilitySql = userId
+      ? `(owner_user_id = ? OR (current_visibility = 'public' AND visibility = 'public'))`
+      : `(current_visibility = 'public' AND visibility = 'public')`;
+    const temporalPredicates: string[] = [];
+    const bindings: (string | number)[] = [];
+    if (knownAt !== undefined) {
+      temporalPredicates.push(`COALESCE(recorded_at, version_created_at) <= ?`);
+      bindings.push(knownAt);
+    }
+    if (asOf !== undefined) {
+      temporalPredicates.push(`(valid_from IS NULL OR valid_from <= ?)`);
+      temporalPredicates.push(`(valid_to IS NULL OR valid_to > ?)`);
+      bindings.push(asOf, asOf);
+    }
+    bindings.push(...tokens.map(token => `%${token}%`));
+    if (userId) bindings.push(userId);
+    bindings.push(KEYWORD_CANDIDATE_LIMIT);
+
+    const { results } = await env.DB.prepare(
+      `WITH version_candidates AS (
+         SELECT e.id, e.content, e.tags, e.source, e.created_at,
+                e.owner_user_id, e.visibility,
+                e.visibility AS current_visibility, 0 AS historical_state,
+                e.current_episode_id AS episode_id, e.vector_ids,
+                e.recorded_at, e.created_at AS version_created_at,
+                e.valid_from, e.valid_to, e.revision, e.id AS version_id
+         FROM entries e
+         UNION ALL
+         SELECT e.id, s.content, s.tags, s.source, e.created_at,
+                e.owner_user_id,
+                CASE WHEN s.visibility = 'public' THEN 'public' ELSE 'private' END AS visibility,
+                e.visibility AS current_visibility, 1 AS historical_state,
+                s.episode_id, '[]' AS vector_ids,
+                s.recorded_at, s.created_at AS version_created_at,
+                s.valid_from, s.valid_to, COALESCE(s.revision, 0), s.id AS version_id
+         FROM entry_snapshots s
+         JOIN entries e ON e.id = s.entry_id
+       ),
+       ranked_versions AS (
+         SELECT *,
+                ROW_NUMBER() OVER (
+                  PARTITION BY id
+                  ORDER BY COALESCE(recorded_at, version_created_at) DESC,
+                           revision DESC, historical_state ASC, version_id DESC
+                ) AS version_rank
+         FROM version_candidates
+         WHERE ${temporalPredicates.join(" AND ")}
+       )
+       SELECT id, content, tags, source, created_at, owner_user_id,
+              visibility, current_visibility, historical_state, episode_id, vector_ids
+       FROM ranked_versions
+       WHERE version_rank = 1 AND (${where}) AND ${visibilitySql}
+       ORDER BY created_at DESC
+       LIMIT ?`
+    ).bind(...bindings).all();
+    return (results as unknown as KeywordRow[]).filter(row => isVisibleKeywordRow(row, userId));
+  }
+
   const where = tokens.map(() => "content LIKE ?").join(" OR ");
-  const visClause = userId ? buildVisibilityClause(userId) : null;
-  const fullWhere = visClause ? `(${where}) AND ${visClause.sql}` : where;
+  const visClause = userId ? buildVisibilityClause(userId) : { sql: "visibility = 'public'", bind: [] as unknown[] };
+  const fullWhere = `(${where}) AND ${visClause.sql}`;
   const bindValues = visClause
     ? [...tokens.map(t => `%${t}%`), ...visClause.bind]
     : tokens.map(t => `%${t}%`);
   const { results } = await env.DB.prepare(
-    `SELECT id, content, tags, source, created_at, owner_user_id FROM entries WHERE ${fullWhere} ORDER BY created_at DESC LIMIT ?`
+    `SELECT id, content, tags, source, created_at, owner_user_id, visibility FROM entries WHERE ${fullWhere} ORDER BY created_at DESC LIMIT ?`
   ).bind(...bindValues, KEYWORD_CANDIDATE_LIMIT).all();
-  return (results as unknown as KeywordRow[]).filter(row => isVisibleEntryRow(row, userId));
+  return (results as unknown as KeywordRow[]).filter(row => isVisibleKeywordRow(row, userId));
+}
+
+async function loadEntryStates(
+  entryIds: string[],
+  env: Env,
+  userId?: string,
+  knownAt?: number,
+  asOf?: number,
+): Promise<Map<string, EntryStateRow>> {
+  const ids = [...new Set(entryIds.filter(id => typeof id === "string" && id.length > 0))];
+  const currentRows: Record<string, any>[] = [];
+  for (let i = 0; i < ids.length; i += D1_MAX_BOUND_PARAMS) {
+    const batch = ids.slice(i, i + D1_MAX_BOUND_PARAMS);
+    const placeholders = batch.map(() => "?").join(", ");
+    const { results } = await env.DB.prepare(
+      `SELECT id, content, tags, source, created_at, owner_user_id,
+              current_episode_id, valid_from, valid_to, recorded_at,
+              epistemic_status, revision, visibility
+       FROM entries
+       WHERE id IN (${placeholders})`
+    ).bind(...batch).all() as { results: Record<string, any>[] };
+    // Some lightweight D1-compatible adapters project only their legacy
+    // recall columns even when newer columns are requested. Re-read only those
+    // incomplete rows; real D1 returns every named column in the query above.
+    for (const row of results) {
+      if (Object.prototype.hasOwnProperty.call(row, "current_episode_id") &&
+          Object.prototype.hasOwnProperty.call(row, "valid_from")) continue;
+      const complete = await env.DB.prepare(
+        `SELECT * FROM entries WHERE id = ?`
+      ).bind(row.id).first<Record<string, any>>();
+      if (complete) Object.assign(row, complete);
+    }
+    currentRows.push(...results);
+  }
+
+  const currentById = new Map(currentRows.map(row => [row.id as string, row]));
+  const snapshotsByEntry = new Map<string, Record<string, any>[]>();
+  if (knownAt !== undefined || asOf !== undefined) {
+    const snapshotCandidateIds = currentRows.map(row => row.id as string);
+    const knowledgeCutoff = knownAt ?? Number.MAX_SAFE_INTEGER;
+    const batchSize = Math.max(1, D1_MAX_BOUND_PARAMS - 1);
+    for (let i = 0; i < snapshotCandidateIds.length; i += batchSize) {
+      const batch = snapshotCandidateIds.slice(i, i + batchSize);
+      const placeholders = batch.map(() => "?").join(", ");
+      const { results } = await env.DB.prepare(
+        `SELECT id, entry_id, content, tags, source, created_at, episode_id,
+                recorded_at, valid_from, valid_to, epistemic_status, revision,
+                visibility
+         FROM entry_snapshots
+         WHERE entry_id IN (${placeholders})
+           AND recorded_at IS NOT NULL
+           AND recorded_at <= ?
+         ORDER BY recorded_at DESC, created_at DESC, id DESC`
+      ).bind(...batch, knowledgeCutoff).all() as { results: Record<string, any>[] };
+      for (const row of results) {
+        const entryId = row.entry_id as string;
+        if (typeof entryId !== "string") continue;
+        const snapshots = snapshotsByEntry.get(entryId) ?? [];
+        snapshots.push(row);
+        snapshotsByEntry.set(entryId, snapshots);
+      }
+    }
+  }
+
+  const states = new Map<string, EntryStateRow>();
+  for (const id of ids) {
+    const current = currentById.get(id);
+    if (!current || typeof current.owner_user_id !== "string" || !current.owner_user_id) continue;
+    if (current.visibility !== "private" && current.visibility !== "public") continue;
+    const isOwner = !!userId && current.owner_user_id === userId;
+    // Current D1 visibility is the revocation boundary: privatizing a memory
+    // must immediately suppress every historical public projection.
+    if (!isOwner && current.visibility !== "public") continue;
+
+    const versionRecordedAt = (version: Record<string, any>): number =>
+      Number(version.recorded_at ?? version.created_at);
+    const validAt = (version: Record<string, any>): boolean => {
+      if (asOf === undefined) return true;
+      const validFrom = version.valid_from == null ? null : Number(version.valid_from);
+      const validTo = version.valid_to == null ? null : Number(version.valid_to);
+      return (validFrom === null || validFrom <= asOf) && (validTo === null || validTo > asOf);
+    };
+    const candidates = [current, ...(snapshotsByEntry.get(id) ?? [])]
+      .filter(version => knownAt === undefined || versionRecordedAt(version) <= knownAt)
+      .filter(validAt)
+      .sort((left, right) =>
+        versionRecordedAt(right) - versionRecordedAt(left) ||
+        Number(right.revision ?? 0) - Number(left.revision ?? 0) ||
+        (right === current ? 1 : 0) - (left === current ? 1 : 0) ||
+        String(right.id ?? "").localeCompare(String(left.id ?? ""))
+      );
+    const selected = candidates[0];
+    const useCurrent = selected === current;
+    if (!selected || typeof selected.content !== "string" || !parseStringArray(selected.tags)) continue;
+    const selectedVisibility = useCurrent ? current.visibility : selected.visibility;
+    // A later publication cannot authorize a projection selected from before
+    // that publication's transaction time.
+    if (selectedVisibility !== "private" && selectedVisibility !== "public") continue;
+    if (!isOwner && selectedVisibility !== "public") continue;
+
+    states.set(id, {
+      id,
+      content: selected.content,
+      tags: selected.tags,
+      source: typeof selected.source === "string" ? selected.source : "api",
+      // created_at is the identity's creation time. recorded_at below identifies
+      // when this particular state entered the system.
+      created_at: Number(current.created_at),
+      owner_user_id: current.owner_user_id,
+      current_episode_id: (useCurrent ? current.current_episode_id : selected.episode_id) ?? null,
+      valid_from: selected.valid_from == null ? null : Number(selected.valid_from),
+      valid_to: selected.valid_to == null ? null : Number(selected.valid_to),
+      recorded_at: selected.recorded_at == null ? null : Number(selected.recorded_at),
+      epistemic_status: typeof selected.epistemic_status === "string" ? selected.epistemic_status : "canonical",
+      revision: Number.isFinite(Number(selected.revision)) ? Number(selected.revision) : 0,
+      visibility: selectedVisibility,
+    });
+  }
+  return states;
 }
 
 // Reciprocal Rank Fusion. Dense candidates contribute 1/(k+rank); keyword candidates
@@ -319,13 +580,14 @@ function fuseDenseAndKeyword(
 }
 
 export async function recallEntries(
-  params: { query: string; topK: number; tag?: string; after?: number; before?: number; kind?: MemoryKind; hops?: number; userId?: string; asOf?: number },
+  params: { query: string; topK: number; tag?: string; after?: number; before?: number; kind?: MemoryKind; hops?: number; userId?: string; asOf?: number; knownAt?: number },
   env: Env,
   ctx: ExecutionContext
 ): Promise<RecallSearchResult> {
   const { query, topK } = params;
   let { tag, after, before, kind } = params;
   const asOf = params.asOf;
+  const knownAt = params.knownAt;
   const hops = Math.max(0, Math.min(GRAPH_MAX_HOPS, params.hops ?? 0));
   const userId = params.userId;
   const now = Date.now();
@@ -347,17 +609,17 @@ export async function recallEntries(
 
   let keywordRows: KeywordRow[] = [];
   let results: { matches: VectorizeMatch[] };
-  if (tag) {
+  if (tag && knownAt === undefined && asOf === undefined) {
     // Tag path: score the tag's own vectors directly. An unconstrained Vectorize
     // query caps at 50 candidates, silently dropping tagged entries whose global
     // semantic rank falls outside the top 50 (issue #141). D1 is the source of
     // truth for tags and already stores each entry's vector_ids.
     const { results: tagRows } = await env.DB.prepare(
-      `SELECT id, vector_ids, content, tags, source, created_at, owner_user_id FROM entries WHERE tags LIKE ?`
+      `SELECT id, vector_ids, content, tags, source, created_at, owner_user_id, visibility FROM entries WHERE tags LIKE ?`
     ).bind(`%"${escapeLikePattern(tag)}"%`).all();
     if (!tagRows.length) return { matches: [], insight: "", semanticUnavailable, proposed_edges: [] };
 
-    // D1 is authoritative for visibility. Invalid ownership/tags fail closed.
+    // D1 is authoritative for visibility. Invalid ownership/visibility fails closed.
     const visibleTagRows = (tagRows as unknown as (KeywordRow & { vector_ids: string })[])
       .filter(row => isVisibleEntryRow(row, userId));
     if (!visibleTagRows.length) return { matches: [], insight: "", semanticUnavailable, proposed_edges: [] };
@@ -403,7 +665,10 @@ export async function recallEntries(
         return { matches: [] as VectorizeMatch[] };
       }
     };
-    const [denseResults, kwRows] = await Promise.all([denseQuery(), keywordSearch(tokens, env, userId)]);
+    const [denseResults, kwRows] = await Promise.all([
+      denseQuery(),
+      keywordSearch(tokens, env, userId, knownAt, asOf),
+    ]);
     results = denseResults;
     keywordRows = kwRows;
 
@@ -419,27 +684,33 @@ export async function recallEntries(
     }
   }
 
+  // Resolve the authoritative state *before* collapsing vector chunks by parent.
+  // Otherwise a higher-scoring stale vector can displace the current vector and
+  // cause the whole parent entry to disappear after version filtering.
+  const rawCandidateParentIds = [...new Set([
+    ...results.matches.map(match => ((match.metadata as any)?.parentId ?? match.id) as string),
+    ...keywordRows.map(row => row.id),
+  ])];
+  const stateByEntry = await loadEntryStates(rawCandidateParentIds, env, userId, knownAt, asOf);
+  const versionAuthorizedDense = results.matches.filter(match => {
+    const parentId = ((match.metadata as any)?.parentId ?? match.id) as string;
+    const state = stateByEntry.get(parentId);
+    return !!state && vectorMatchesState(match, state);
+  });
+  const authorizedKeywordRows = keywordRows.filter(row => stateByEntry.has(row.id));
+
   // Always-on hybrid retrieval: fuse dense + keyword candidates via RRF. On the tag path
   // keyword is a re-ranking signal only (allowKeywordOnly=false); on the default path it can
   // also surface exact-identifier matches the dense top-K missed entirely.
-  const fusedMatches = fuseDenseAndKeyword(results.matches as VectorizeMatch[], keywordRows, tokens, !tag || semanticUnavailable);
+  const fusedMatches = fuseDenseAndKeyword(versionAuthorizedDense, authorizedKeywordRows, tokens, !tag || semanticUnavailable);
   if (!fusedMatches.length) return { matches: [], insight: "", semanticUnavailable, proposed_edges: [] };
 
-  // Re-authorize the fused candidate set against D1. Vector metadata and SQL
-  // LIKE filtering are candidate reductions only; missing or malformed rows fail closed.
-  const candidateParentIds = [...new Set(fusedMatches.map(m => (m.metadata as any)?.parentId ?? m.id))] as string[];
-  const visibleCandidateIds = new Set<string>();
-  for (let i = 0; i < candidateParentIds.length; i += D1_MAX_BOUND_PARAMS) {
-    const batch = candidateParentIds.slice(i, i + D1_MAX_BOUND_PARAMS);
-    const visPlaceholders = batch.map(() => "?").join(", ");
-    const { results: visRows } = await env.DB.prepare(
-      `SELECT id, owner_user_id, tags FROM entries WHERE id IN (${visPlaceholders})`
-    ).bind(...batch).all() as { results: { id: string; owner_user_id: string; tags: string }[] };
-    for (const row of visRows) {
-      if (isVisibleEntryRow(row, userId)) visibleCandidateIds.add(row.id);
-    }
-  }
-  const visibleFusedMatches = fusedMatches.filter(m => visibleCandidateIds.has((m.metadata as any)?.parentId ?? m.id));
+  // State loading re-authorized every parent against D1 and selected the current
+  // or historical projection. Missing/malformed rows fail closed.
+  const visibleFusedMatches = fusedMatches.filter(match => {
+    const parentId = ((match.metadata as any)?.parentId ?? match.id) as string;
+    return stateByEntry.has(parentId) && vectorMatchesState(match, stateByEntry.get(parentId)!);
+  });
   if (!visibleFusedMatches.length) return { matches: [], insight: "", semanticUnavailable, proposed_edges: [] };
 
   // Fetch recall_count, importance_score, and last_recalled_at for all candidates.
@@ -460,8 +731,6 @@ export async function recallEntries(
   const contradictionWins = new Map(rcRows.map(r => [r.id, r.contradiction_wins ?? 0]));
   const contradictionLosses = new Map(rcRows.map(r => [r.id, r.contradiction_losses ?? 0]));
   const retentionScores = new Map(rcRows.map(r => [r.id, getRetentionScore(r.last_recalled_at ?? null, r.created_at, now)]));
-  const epistemicStatuses = new Map(rcRows.map(r => [r.id, r.epistemic_status ?? "canonical"]));
-
   const reranked = rerankWithTimeDecay(visibleFusedMatches, recallCounts, importanceScores, queryTags, contradictionWins, contradictionLosses, retentionScores);
 
   const seen = new Set<string>();
@@ -492,41 +761,29 @@ export async function recallEntries(
     }));
   }
 
-  // Fetch full content from D1 for seeds + expanded nodes, applying filters: auto-pattern
-  // exclusion, status:deprecated exclusion, optional kind match, and optional after/before range
+  // Hydrate seeds and graph-expanded nodes through the same current/historical
+  // projection, then apply valid-time and content filters to that selected state.
   const allParentIds = [...seedParentIds, ...expandedScored.map(e => e.parentId)];
-  const placeholders = allParentIds.map(() => "?").join(", ");
-  const d1Bindings: (string | number)[] = [...allParentIds];
-  let d1Sql = `SELECT id, content, tags, source, created_at, owner_user_id FROM entries WHERE id IN (${placeholders}) AND tags NOT LIKE '%"auto-pattern"%' AND tags NOT LIKE '%"status:deprecated"%'`;
-  if (userId) {
-    const vis = buildVisibilityClause(userId);
-    d1Sql += ` AND ${vis.sql}`;
-    d1Bindings.push(...vis.bind);
-  }
-  if (kind && (KIND_VALUES as readonly string[]).includes(kind)) {
-    // Safe to interpolate: `kind` is validated against the KIND_VALUES enum just above,
-    // so only "episodic"/"semantic" can reach the string. Kept as a literal (not a bound
-    // param) so it doesn't shift the positional after/before bindings below.
-    d1Sql += ` AND tags LIKE '%"kind:${kind}"%'`;
-  }
-  if (after !== undefined) { d1Sql += ` AND created_at >= ?`; d1Bindings.push(after); }
-  if (before !== undefined) { d1Sql += ` AND created_at <= ?`; d1Bindings.push(before); }
-  if (asOf !== undefined) { d1Sql += ` AND (valid_from IS NULL OR valid_from <= ?) AND (valid_to IS NULL OR valid_to > ?)`; d1Bindings.push(asOf, asOf); }
-  const { results: d1Rows } = await env.DB.prepare(d1Sql).bind(...d1Bindings).all() as { results: Record<string, any>[] };
+  const expandedStates = await loadEntryStates(allParentIds, env, userId, knownAt, asOf);
+  for (const [id, state] of expandedStates) stateByEntry.set(id, state);
 
-  const d1Map = new Map(d1Rows.map((r) => [r.id as string, r]));
+  const d1Rows = allParentIds.flatMap(id => {
+    const state = stateByEntry.get(id);
+    if (!state) return [];
+    const tags = parseStringArray(state.tags);
+    if (!tags || tags.includes("auto-pattern") || tags.includes("status:deprecated")) return [];
+    if (tag && !tags.includes(tag)) return [];
+    if (kind && (KIND_VALUES as readonly string[]).includes(kind) && !tags.includes(`kind:${kind}`)) return [];
+    if (after !== undefined && state.created_at < after) return [];
+    if (before !== undefined && state.created_at > before) return [];
+    if (asOf !== undefined) {
+      if (state.valid_from !== null && state.valid_from > asOf) return [];
+      if (state.valid_to !== null && state.valid_to <= asOf) return [];
+    }
+    return [state];
+  });
 
-  // Increment recall_count and update last_recalled_at for the DIRECT seeds shown —
-  // never for graph-expanded neighbors, or well-connected nodes would inflate their
-  // own ranking (feedback loop). last_recalled_at drives retention score decay.
-  const seedIdSet = new Set(seedParentIds);
-  ctx.waitUntil(
-    Promise.all(
-      [...d1Map.keys()].filter(id => seedIdSet.has(id)).map(id =>
-        env.DB.prepare(`UPDATE entries SET recall_count = recall_count + 1, last_recalled_at = ? WHERE id = ?`).bind(now, id).run()
-      )
-    ).catch(e => console.error("recall_count update failed (non-fatal):", e))
-  );
+  const d1Map = new Map(d1Rows.map(row => [row.id, row]));
 
   const seedMatches: RecallMatch[] = deduped.flatMap((m) => {
     const meta = m.metadata as Record<string, any>;
@@ -536,7 +793,7 @@ export async function recallEntries(
       // D1 row not found — either filtered out (e.g. status:deprecated) or genuinely missing
       return [];
     }
-    const stalePenalty = (epistemicStatuses.get(parentId) ?? "canonical") === "stale" ? STALENESS_RECALL_PENALTY : 1.0;
+    const stalePenalty = row.epistemic_status === "stale" ? STALENESS_RECALL_PENALTY : 1.0;
     return [{
       id: parentId,
       content: row.content as string,
@@ -546,7 +803,9 @@ export async function recallEntries(
       source: row.source as string,
       isUpdate: !!meta?.isUpdate,
       hop: 0,
-      epistemicStatus: epistemicStatuses.get(parentId) ?? "canonical",
+      epistemicStatus: row.epistemic_status,
+      ownerUserId: row.owner_user_id,
+      visibility: row.visibility,
     }];
   });
 
@@ -562,6 +821,9 @@ export async function recallEntries(
       source: row.source as string,
       isUpdate: false,
       hop: e.hop,
+      epistemicStatus: row.epistemic_status,
+      ownerUserId: row.owner_user_id,
+      visibility: row.visibility,
     }];
   });
 
@@ -589,22 +851,14 @@ export async function recallEntries(
     // suppress missing/invisible targets so a public match cannot disclose the
     // id of another user's private memory through a legacy edge.
     let visibleRelationIds: Set<string> | null = null;
-    if (userId && edgeRows.length) {
+    if (edgeRows.length) {
       const relationIds = [...new Set(edgeRows.flatMap((edge) => [edge.source_id, edge.target_id]))];
       const relationPlaceholders = relationIds.map(() => "?").join(", ");
       const { results: relationRows } = await env.DB.prepare(
-        `SELECT id, tags, owner_user_id FROM entries WHERE id IN (${relationPlaceholders})`
-      ).bind(...relationIds).all() as { results: { id: string; tags: string; owner_user_id: string }[] };
+        `SELECT id, owner_user_id, visibility FROM entries WHERE id IN (${relationPlaceholders})`
+      ).bind(...relationIds).all() as { results: { id: string; owner_user_id: string; visibility: string }[] };
       visibleRelationIds = new Set(relationRows.flatMap((row) => {
-        if (row.owner_user_id === userId) return [row.id];
-        try {
-          const tags = JSON.parse(row.tags ?? "[]");
-          return Array.isArray(tags) && tags.every((tag) => typeof tag === "string") && !tags.includes("private")
-            ? [row.id]
-            : [];
-        } catch {
-          return [];
-        }
+        return (userId && row.owner_user_id === userId) || row.visibility === "public" ? [row.id] : [];
       }));
     }
 
@@ -623,26 +877,162 @@ export async function recallEntries(
     }
   }
 
-  // ── Passage retrieval (Ticket 07): fetch top passages for each result ──────
-  const matchIds = matches.map(m => m.id);
-  if (matchIds.length) {
-    const placeholders = matchIds.map(() => "?").join(", ");
+  // ── Citation hydration: independently fetch at most five passages per result ──
+  // A single global LIMIT lets one long document starve every other match. Each
+  // query is constrained to the selected episode and validates the document /
+  // section linkage before exposing citation metadata.
+  await Promise.all(matches.map(async match => {
+    const state = stateByEntry.get(match.id);
+    if (!state) return;
+    const selectedEpisodeId = state.current_episode_id;
     const { results: passageRows } = await env.DB.prepare(
-      `SELECT id, entry_id, content, section, start_offset, end_offset FROM passages WHERE entry_id IN (${placeholders}) ORDER BY created_at DESC LIMIT 100`
-    ).bind(...matchIds).all() as { results: { id: string; entry_id: string; content: string; section: string | null; start_offset: number | null; end_offset: number | null }[] };
-    const passageMap = new Map<string, typeof passageRows>();
-    for (const p of passageRows) {
-      if (!passageMap.has(p.entry_id)) passageMap.set(p.entry_id, []);
-      const list = passageMap.get(p.entry_id)!;
-      if (list.length < 5) list.push(p);
+      `SELECT passages.id,
+              passages.entry_id,
+              passages.episode_id,
+              passages.document_id,
+              passages.section_id,
+              passages.content,
+              COALESCE(
+                passages.section,
+                (SELECT ds.title
+                 FROM document_sections ds
+                 WHERE ds.id = passages.section_id
+                   AND ds.document_id = passages.document_id
+                 LIMIT 1)
+              ) AS section,
+              (SELECT d.source_url
+               FROM documents d
+               WHERE d.id = passages.document_id
+                 AND (d.episode_id IS NULL OR d.episode_id = passages.episode_id)
+                 AND (d.owner_user_id = '' OR d.owner_user_id = ?)
+               LIMIT 1) AS source_url,
+              (SELECT d.title
+               FROM documents d
+               WHERE d.id = passages.document_id
+                 AND (d.episode_id IS NULL OR d.episode_id = passages.episode_id)
+                 AND (d.owner_user_id = '' OR d.owner_user_id = ?)
+               LIMIT 1) AS document_title,
+              COALESCE(
+                passages.page,
+                (SELECT ds.page_start
+                 FROM document_sections ds
+                 WHERE ds.id = passages.section_id
+                   AND ds.document_id = passages.document_id
+                 LIMIT 1)
+              ) AS page,
+              COALESCE(
+                passages.page_end,
+                (SELECT ds.page_end
+                 FROM document_sections ds
+                 WHERE ds.id = passages.section_id
+                   AND ds.document_id = passages.document_id
+                 LIMIT 1),
+                passages.page
+              ) AS page_end,
+              COALESCE(
+                passages.start_offset,
+                (SELECT ds.start_offset
+                 FROM document_sections ds
+                 WHERE ds.id = passages.section_id
+                   AND ds.document_id = passages.document_id
+                 LIMIT 1)
+              ) AS start_offset,
+              COALESCE(
+                passages.end_offset,
+                (SELECT ds.end_offset
+                 FROM document_sections ds
+                 WHERE ds.id = passages.section_id
+                   AND ds.document_id = passages.document_id
+                 LIMIT 1)
+              ) AS end_offset
+       FROM passages
+       WHERE entry_id = ?
+         AND (? IS NULL OR episode_id = ?)
+         AND (
+           document_id IS NULL OR EXISTS (
+             SELECT 1
+             FROM documents d
+             WHERE d.id = passages.document_id
+               AND (d.episode_id IS NULL OR d.episode_id = passages.episode_id)
+               AND (d.owner_user_id = '' OR d.owner_user_id = ?)
+           )
+         )
+         AND (
+           section_id IS NULL OR EXISTS (
+             SELECT 1
+             FROM document_sections ds
+             WHERE ds.id = passages.section_id
+               AND ds.document_id = passages.document_id
+           )
+         )
+       ORDER BY created_at DESC, start_offset ASC, id ASC
+       LIMIT 5`
+    ).bind(
+      state.owner_user_id,
+      state.owner_user_id,
+      match.id,
+      selectedEpisodeId,
+      selectedEpisodeId,
+      state.owner_user_id,
+    ).all() as { results: Record<string, any>[] };
+
+    const selectedPassages = passageRows
+      .filter(row => !selectedEpisodeId || !row.episode_id || row.episode_id === selectedEpisodeId)
+      .slice(0, 5);
+    if (selectedPassages.length) {
+      match.passages = selectedPassages.map(row => ({
+        id: row.id as string,
+        content: row.content as string,
+        section: row.section ?? null,
+        documentId: row.document_id ?? null,
+        sectionId: row.section_id ?? null,
+        sourceUrl: row.source_url ?? null,
+        documentTitle: row.document_title ?? null,
+        page: row.page == null ? null : Number(row.page),
+        pageEnd: row.page_end == null ? null : Number(row.page_end),
+        startOffset: row.start_offset == null ? null : Number(row.start_offset),
+        endOffset: row.end_offset == null ? null : Number(row.end_offset),
+      }));
+      return;
     }
-    for (const m of matches) {
-      const psgs = passageMap.get(m.id);
-      if (psgs?.length) {
-        m.passages = psgs.map(p => ({ id: p.id, content: p.content, section: p.section, startOffset: p.start_offset, endOffset: p.end_offset }));
-      }
-    }
-  }
+
+    // Conversational notes intentionally have no passage children, but every
+    // version still has a 1:1 document envelope. Cite the immutable raw episode
+    // so every non-legacy recalled fact retains a resolvable provenance anchor.
+    if (!selectedEpisodeId) return;
+    const episode = await env.DB.prepare(
+      `SELECT episode.id, episode.content,
+              document.id AS document_id,
+              document.title AS document_title,
+              document.source_url
+       FROM episodes AS episode
+       JOIN documents AS document ON document.episode_id = episode.id
+       WHERE episode.id = ?
+         AND episode.entry_id = ?
+         AND episode.owner_user_id = ?
+         AND (document.owner_user_id = '' OR document.owner_user_id = ?)
+       LIMIT 1`,
+    ).bind(
+      selectedEpisodeId,
+      match.id,
+      state.owner_user_id,
+      state.owner_user_id,
+    ).first<Record<string, any>>();
+    if (!episode) return;
+    match.passages = [{
+      id: episode.id as string,
+      content: episode.content as string,
+      section: null,
+      documentId: episode.document_id as string,
+      sectionId: null,
+      sourceUrl: episode.source_url ?? null,
+      documentTitle: episode.document_title ?? null,
+      page: null,
+      pageEnd: null,
+      startOffset: 0,
+      endOffset: String(episode.content ?? "").length,
+    }];
+  }));
 
   // ── Cross-user mentions: flag high-similarity public entries from other users ──
   if (userId) {
@@ -675,68 +1065,15 @@ export async function recallEntries(
     }
   }
 
-  // ── Cross-user contradiction detection (S05) ─────────────────────────────
-  // For each cross-user match, embed it and query Vectorize for similar entries
-  // owned by the caller. If cosine ≥ 0.85, create a proposal in edge_proposals.
+  // Recall is a read operation. Contradiction proposal generation belongs to
+  // the explicit scheduled maintenance/proposal pipeline, never this query.
   const proposed_edges: { source_id: string; target_id: string; type: string; reason: string }[] = [];
-  if (userId) {
-    const crossUserMatches = matches
-      .filter(m => {
-        const ownerId = (d1Map.get(m.id) as any)?.owner_user_id;
-        return ownerId && ownerId !== userId;
-      })
-      .slice(0, 5); // Limit to 5 cross-user results for latency
-
-    for (const crossMatch of crossUserMatches) {
-      try {
-        const crossVec = await embed(crossMatch.content, env);
-        // Query the visible candidate set, then retain only caller-owned rows
-        // using the helper's authoritative D1 ownership map.
-        const callerResults = await queryVisibleVectors(crossVec, env, { topK: 3, userId });
-
-        for (const callerMatch of callerResults.matches) {
-          const callerEntryId = vectorMatchParentId(callerMatch);
-          if (callerResults.entriesById.get(callerEntryId)?.ownerUserId !== userId) continue;
-          if (callerEntryId === crossMatch.id) continue;
-          if ((callerMatch.score ?? 0) >= 0.85) {
-            // Dedup: check if proposal already exists for this pair
-            const existing = await env.DB.prepare(
-              `SELECT id FROM edge_proposals WHERE source_id = ? AND target_id = ? AND type = 'contradicts' AND status = 'pending'`
-            ).bind(callerEntryId, crossMatch.id).first();
-            if (!existing) {
-              const proposalId = crypto.randomUUID();
-              const now = Date.now();
-              await env.DB.prepare(
-                `INSERT INTO edge_proposals (id, source_id, target_id, type, reason, proposed_by, status, created_at) VALUES (?, ?, ?, 'contradicts', ?, ?, 'pending', ?)`
-              ).bind(proposalId, callerEntryId, crossMatch.id, `Auto-detected contradiction during recall (similarity: ${(callerMatch.score * 100).toFixed(0)}%)`, userId, now).run();
-              proposed_edges.push({
-                source_id: callerEntryId,
-                target_id: crossMatch.id,
-                type: "contradicts",
-                reason: `Auto-detected contradiction (similarity: ${(callerMatch.score * 100).toFixed(0)}%)`,
-              });
-            }
-            break; // Only one proposal per cross-user match
-          }
-        }
-      } catch (e) {
-        console.error("Cross-user contradiction detection failed (non-fatal):", e);
-      }
-    }
-  }
 
   // Synthesize over exactly what's shown (seeds + any surfaced neighbors) so the
   // insight stays grounded in the returned results.
   const insight = matches.length > 1
     ? await synthesizeInsight(embedQuery, matches.map(m => ({ id: m.id, content: m.content })), env)
     : "";
-
-  if (d1Rows.length >= 5) {
-    ctx.waitUntil(
-      derivePattern(d1Rows as { id: string; content: string }[], env, ctx)
-        .catch(e => console.error("derivePattern failed (non-fatal):", e))
-    );
-  }
 
   return { matches, insight, semanticUnavailable, proposed_edges };
 }

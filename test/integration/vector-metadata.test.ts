@@ -4,6 +4,7 @@ import { makeTestEnv, makeTestDb, makeVectorizeMock } from "../helpers/make-env"
 import { req } from "../helpers/make-request";
 import type { Env } from "../../src/testing";
 import { D1Mock } from "../helpers/d1-mock";
+import { TEST_USER_ID } from "../helpers/test-principal";
 
 function makeCtx() {
   const promises: Promise<any>[] = [];
@@ -168,7 +169,7 @@ describe("Vector Metadata & Filtering", () => {
 
   it("POST /vectorize-pending?reindex=true triggers re-index", async () => {
     db.entries.push(
-      { id: "re-1", content: "Re-index me", tags: '[]', source: "api", created_at: 1000, vector_ids: '["old-v1"]', owner_user_id: "", recall_count: 0, importance_score: 0, contradiction_wins: 0, contradiction_losses: 0 },
+      { id: "re-1", content: "Re-index me", tags: '[]', source: "api", created_at: 1000, vector_ids: '["old-v1"]', owner_user_id: TEST_USER_ID, visibility: "public", recall_count: 0, importance_score: 0, contradiction_wins: 0, contradiction_losses: 0 },
     );
 
     const { ctx } = makeCtx();

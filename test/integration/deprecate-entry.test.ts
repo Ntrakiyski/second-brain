@@ -3,6 +3,7 @@ import { deprecateEntry } from "../../src/testing";
 import { makeTestEnv, makeTestDb, makeVectorizeMock } from "../helpers/make-env";
 import type { Env } from "../../src/testing";
 import { D1Mock } from "../helpers/d1-mock";
+import { TEST_USER_ID } from "../helpers/test-principal";
 
 describe("deprecateEntry()", () => {
   let db: D1Mock;
@@ -26,6 +27,8 @@ describe("deprecateEntry()", () => {
       source: "api",
       created_at: Date.now(),
       vector_ids: JSON.stringify(["v1", "v2"]),
+      owner_user_id: TEST_USER_ID,
+      visibility: "public",
     });
 
     const result = await deprecateEntry("entry-1", env);

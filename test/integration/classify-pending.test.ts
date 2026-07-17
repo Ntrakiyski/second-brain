@@ -4,6 +4,11 @@ import { makeTestEnv, makeTestDb } from "../helpers/make-env";
 import { req } from "../helpers/make-request";
 import type { Env } from "../../src/testing";
 import { D1Mock } from "../helpers/d1-mock";
+import {
+  TEST_USER_AUTH_HASH,
+  TEST_USER_ID,
+  TEST_USERNAME,
+} from "../helpers/test-principal";
 
 const ctx = { waitUntil: (_: Promise<any>) => {} } as any;
 
@@ -17,6 +22,8 @@ function unclassifiedEntry(id: string, tags: string[] = ["work"]) {
     vector_ids: '["v"]',
     recall_count: 0,
     importance_score: 0,
+    owner_user_id: TEST_USER_ID,
+    visibility: "public",
   };
 }
 
@@ -46,6 +53,16 @@ describe("POST /classify-pending", () => {
 
   beforeEach(() => {
     db = makeTestDb();
+    db.users.push({
+      id: TEST_USER_ID,
+      username: TEST_USERNAME,
+      normalized_username: TEST_USERNAME,
+      auth_key_hash: TEST_USER_AUTH_HASH,
+      auth_key_prefix: "sbu_test-princi",
+      status: "active",
+      created_at: 1,
+      role: "admin",
+    });
     env = makeTestEnv(db);
   });
 
@@ -63,7 +80,7 @@ describe("POST /classify-pending", () => {
     expect(data.remaining).toBe(0);
   });
 
-  it("processes unclassified entries, writes tags, and drains remaining to 0", async () => {
+  it("processes the caller's unclassified entries as drafts and drains remaining to 0", async () => {
     env = makeTestEnv(db, { AI: makeClassifyingAIMock({ importance: 4, canonical: true, kind: "semantic" }) });
     db.entries.push(unclassifiedEntry("e1"), unclassifiedEntry("e2"));
     const res = await worker.fetch(req("POST", "/classify-pending"), env, ctx);
@@ -74,7 +91,7 @@ describe("POST /classify-pending", () => {
     for (const id of ["e1", "e2"]) {
       const tags: string[] = JSON.parse(db.entries.find((e: any) => e.id === id).tags);
       expect(tags).toContain("kind:semantic");
-      expect(tags).toContain("status:canonical");
+      expect(tags).toContain("status:draft");
     }
   });
 
@@ -103,20 +120,17 @@ describe("POST /classify-pending", () => {
     expect(data2.remaining).toBe(0);
   });
 
-  it("leaves an entry untagged and still 'remaining' when classification is inconclusive", async () => {
-    // Known, spec-accepted edge case: idempotency is defined by tag *presence*, not
-    // a separate "attempted" marker. If classifyEntry can't resolve a kind/canonical
-    // signal (default mock here returns neither), the row gets no tag and is
-    // reselected on the next call — this documents that behavior rather than hiding it.
+  it("records an inconclusive classification as a draft so maintenance is resumable", async () => {
     db.entries.push(unclassifiedEntry("ambiguous"));
     const res = await worker.fetch(req("POST", "/classify-pending"), env, ctx);
     const data = await res.json() as any;
     expect(data.processed).toBe(1);
-    expect(data.remaining).toBe(1);
-    expect(JSON.parse(db.entries.find((e: any) => e.id === "ambiguous").tags)).toEqual(["work"]);
+    expect(data.remaining).toBe(0);
+    expect(JSON.parse(db.entries.find((e: any) => e.id === "ambiguous").tags))
+      .toEqual(["work", "status:draft"]);
   });
 
-  it("promotes canonical status and writes kind for a fully unclassified entry", async () => {
+  it("writes a draft status and kind for a fully unclassified entry", async () => {
     env = makeTestEnv(db, { AI: makeClassifyingAIMock({ importance: 5, canonical: true, kind: "episodic" }) });
     // An entry that already carries kind: (but no status:) is excluded by the WHERE
     // clause entirely — the "skips" test above covers that. This one has neither
@@ -124,7 +138,9 @@ describe("POST /classify-pending", () => {
     db.entries.push(unclassifiedEntry("neither", ["work"]));
     await worker.fetch(req("POST", "/classify-pending"), env, ctx);
     const neither = JSON.parse(db.entries.find((e: any) => e.id === "neither").tags);
-    expect(neither).toContain("status:canonical");
+    // Maintenance may classify content, but canonical promotion is a separate
+    // governed human decision.
+    expect(neither).toContain("status:draft");
     expect(neither).toContain("kind:episodic");
   });
 

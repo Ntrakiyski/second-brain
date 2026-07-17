@@ -45,7 +45,7 @@ export function withKind(tags: string[], kind: MemoryKind): string[] {
 // Users see their own private entries + all public entries, never others' private entries.
 export function buildVisibilityClause(userId: string): { sql: string; bind: string[] } {
   return {
-    sql: `(owner_user_id = ? OR tags NOT LIKE '%\"private\"%')`,
+    sql: `(owner_user_id = ? OR visibility = 'public')`,
     bind: [userId],
   };
 }
@@ -73,9 +73,9 @@ export function buildEntryFilterQuery(params: {
     bindings.push(params.user);
   }
   if (params.visibility === 'public') {
-    conds.push(`tags NOT LIKE '%\"private\"%'`);
+    conds.push(`visibility = 'public'`);
   } else if (params.visibility === 'private' && params.userId) {
-    conds.push(`owner_user_id = ? AND tags LIKE '%\"private\"%'`);
+    conds.push(`owner_user_id = ? AND visibility = 'private'`);
     bindings.push(params.userId);
   } else if (params.userId) {
     const vis = buildVisibilityClause(params.userId);
@@ -83,7 +83,9 @@ export function buildEntryFilterQuery(params: {
     bindings.push(...vis.bind);
   }
 
-  let sql = `SELECT id, content, tags, source, created_at, vector_ids, owner_user_id FROM entries`;
+  let sql = `SELECT id, content, tags, source, created_at, vector_ids,
+                    owner_user_id, created_by_user_id, visibility, revision
+             FROM entries`;
   if (conds.length) sql += ` WHERE ` + conds.join(` AND `);
   sql += ` ORDER BY created_at DESC LIMIT ?`;
   bindings.push(params.n);

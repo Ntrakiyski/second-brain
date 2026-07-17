@@ -67,10 +67,10 @@ export interface RecallMatch {
 
 export type CaptureResult =
   | { status: "blocked"; matchId: string; score: number }
-  | { status: "stored"; id: string; crossUserNote?: string }
-  | { status: "flagged"; id: string; matchId: string; score: number; crossUserNote?: string }
-  | { status: "contradiction"; id: string; resolvedConflict: string; reason?: string }
-  | { status: "contradiction_protected"; id: string; canonicalId: string; reason?: string }
+  | { status: "stored"; id: string; crossUserNote?: string; awareness?: AwarenessDelivery }
+  | { status: "flagged"; id: string; matchId: string; score: number; crossUserNote?: string; awareness?: AwarenessDelivery }
+  | { status: "contradiction"; id: string; resolvedConflict: string; reason?: string; awareness?: AwarenessDelivery }
+  | { status: "contradiction_protected"; id: string; canonicalId: string; reason?: string; awareness?: AwarenessDelivery }
   | { status: "contradiction_resolved"; id: string; replacedId?: string; mergedInto?: string; keptBoth?: boolean; reason?: string };
 
 // ─── Memory Pillar: Episodes, Snapshots, Passages ────────────────────────────
@@ -86,6 +86,7 @@ export const ENTRY_MUTATION_KINDS = [
   "compress",
   "status",
   "validity",
+  "visibility",
 ] as const;
 export type EntryMutationKind = (typeof ENTRY_MUTATION_KINDS)[number];
 
@@ -206,6 +207,47 @@ export interface UserDeactivation {
   completedAt: number | null;
 }
 
+export const AWARENESS_EVENT_TYPES = ["cross_user_overlap"] as const;
+export type AwarenessEventType = (typeof AWARENESS_EVENT_TYPES)[number];
+
+export interface AwarenessEventEndpoint {
+  entryId: string;
+  ownerUserId: string;
+  ownerUsername: string;
+  content: string;
+  createdAt: number;
+}
+
+/**
+ * A recipient-scoped signal that two currently-public team memories overlap.
+ * Endpoint content is populated only after a live D1 visibility check.
+ */
+export interface AwarenessEvent {
+  id: string;
+  eventType: AwarenessEventType;
+  recipientUserId: string;
+  triggerEntryId: string;
+  similarity: number;
+  endpoints: readonly [AwarenessEventEndpoint, AwarenessEventEndpoint];
+  createdAt: number;
+  readAt: number | null;
+}
+
+export const OVERLAP_RECONCILIATION_STATUSES = [
+  "pending",
+  "completed",
+  "discarded",
+  "failed",
+] as const;
+export type OverlapReconciliationStatus =
+  (typeof OVERLAP_RECONCILIATION_STATUSES)[number];
+
+export type AwarenessDelivery =
+  | { status: "not_applicable"; eventCount: 0 }
+  | { status: "ready"; eventCount: 2; reconciliationId: string }
+  | { status: "discarded"; eventCount: 0; reconciliationId: string }
+  | { status: "pending_reconciliation"; eventCount: 0; reconciliationId: string };
+
 // ─── Operator governance: identity, policy, proposals, and audit ────────────
 
 export const ACTOR_KINDS = ["human", "service", "system"] as const;
@@ -240,6 +282,7 @@ export interface ServiceActorContext extends ActorContextBase {
   kind: "service";
   serviceIdentityId: string;
   credentialId: string;
+  ownerUserId: string;
 }
 
 export interface SystemActorContext extends ActorContextBase {
@@ -312,7 +355,6 @@ export const ACTION_TYPES = [
   "entry.create",
   "entry.append",
   "entry.update",
-  "entry.merge",
   "entry.restore",
   "entry.status.set",
   "entry.epistemic-status.set",

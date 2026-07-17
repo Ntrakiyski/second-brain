@@ -1,8 +1,14 @@
 # ADR-0001: Episodes as Immutable Source Ledger
 
-**Status:** Accepted  
+**Status:** Superseded 2026-07-16 by the synchronous versioning contract
 **Date:** 2026-07-13  
 **Deciders:** Nikolay Trakiyski  
+
+> Historical decision record. `src/entry-version-service.ts` now commits the
+> entry projection, immutable episode, one document envelope, evidence rows,
+> and cleanup intent atomically. Provenance failure fails the mutation; it is
+> never fire-and-forget. Legacy entries receive an immutable baseline on their
+> first versioned mutation.
 
 ## Context
 

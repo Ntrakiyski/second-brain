@@ -13,6 +13,7 @@ import type { Env } from "./types";
 import { apiHandler } from "./api-handler";
 import { defaultHandler } from "./routes";
 import { resolveUserByApiKey } from "./auth";
+import { resolveServiceCredential } from "./service-identities";
 import { initializeDatabase } from "./db";
 import {
   runNightlyCompression,
@@ -20,6 +21,10 @@ import {
   detectCrossUserContradictions,
 } from "./lifecycle";
 import { runScheduledIntegrationSync } from "./integrations-mirror";
+import { drainVectorCleanupQueue } from "./vector-cleanup";
+import { resumePendingDeactivations } from "./deactivation";
+import { reconcilePendingOverlapAwareness } from "./awareness-events";
+import { reconcileMandatoryAuditCompletions } from "./mandatory-audit";
 
 const oauthProvider = new OAuthProvider({
   apiRoute: "/mcp",
@@ -36,7 +41,18 @@ const oauthProvider = new OAuthProvider({
     if (token === typedEnv.AUTH_TOKEN) return null;
     await initializeDatabase(typedEnv);
     const principal = await resolveUserByApiKey(token, typedEnv);
-    return principal ? { props: { userId: principal.user_id } } : null;
+    if (principal) return { props: { actorKind: "human", userId: principal.user_id } };
+    const service = await resolveServiceCredential(token, typedEnv);
+    return service ? {
+      props: {
+        actorKind: "service",
+        serviceIdentityId: service.serviceIdentityId,
+        credentialId: service.credentialId,
+        ownerUserId: service.ownerUserId,
+        authMethod: service.authMethod,
+        scopes: [...service.scopes],
+      },
+    } : null;
   },
 });
 
@@ -55,5 +71,25 @@ export default {
       ),
     );
     ctx.waitUntil(runScheduledIntegrationSync(env));
+    ctx.waitUntil(
+      initializeDatabase(env)
+        .then(() => drainVectorCleanupQueue(env))
+        .catch((error) => console.error("Vector cleanup reconciliation failed (non-fatal):", error)),
+    );
+    ctx.waitUntil(
+      initializeDatabase(env)
+        .then(() => resumePendingDeactivations(env))
+        .catch((error) => console.error("User deactivation reconciliation failed (non-fatal):", error)),
+    );
+    ctx.waitUntil(
+      initializeDatabase(env)
+        .then(() => reconcilePendingOverlapAwareness(env))
+        .catch((error) => console.error("Overlap-awareness reconciliation failed (non-fatal):", error)),
+    );
+    ctx.waitUntil(
+      initializeDatabase(env)
+        .then(() => reconcileMandatoryAuditCompletions(env))
+        .catch((error) => console.error("Mandatory-audit reconciliation failed (non-fatal):", error)),
+    );
   },
 };

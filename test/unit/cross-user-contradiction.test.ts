@@ -22,11 +22,12 @@ function insertEntry(db: any, id: string, content: string, tags: string[], owner
     recorded_at: null,
     valid_to: null,
     epistemic_status: "canonical",
+    visibility: "public",
   });
 }
 
-describe("S05 — recall cross-user contradiction detection", () => {
-  it("creates edge_proposals when recall surfaces a cross-user match with similarity ≥ 0.85", async () => {
+describe("S05 — cross-user recall is read-only", () => {
+  it("does not create edge proposals when recall surfaces a high-similarity cross-user match", async () => {
     const db = makeTestDb();
     insertEntry(db, "caller-entry", "I work at Acme Corp", ["work"], OWNER_A);
     insertEntry(db, "other-entry", "I work at Acme Corp now", ["work"], OWNER_B);
@@ -62,25 +63,9 @@ describe("S05 — recall cross-user contradiction detection", () => {
       { waitUntil: vi.fn() } as any,
     );
 
-    console.log("matches count:", result.matches.length);
-    console.log("matches:", result.matches.map(m => m.id));
-    console.log("proposed_edges:", JSON.stringify(result.proposed_edges));
-    console.log("queryMock calls:", queryMock.mock.calls.length);
-
-    expect(result.proposed_edges.length).toBe(1);
-    expect(result.proposed_edges[0]).toMatchObject({
-      source_id: "caller-entry",
-      target_id: "other-entry",
-      type: "contradicts",
-    });
-    expect(result.proposed_edges[0].reason).toContain("similarity");
-
-    // Verify proposal was written to D1
-    const proposal = db.edgeProposals.find((p: any) =>
-      p.source_id === "caller-entry" && p.target_id === "other-entry"
-    );
-    expect(proposal).toBeDefined();
-    expect(proposal.status).toBe("pending");
+    expect(result.matches.map(match => match.id)).toEqual(["caller-entry", "other-entry"]);
+    expect(result.proposed_edges).toEqual([]);
+    expect(db.edgeProposals).toEqual([]);
   });
 
   it("returns empty proposed_edges when no userId is provided", async () => {

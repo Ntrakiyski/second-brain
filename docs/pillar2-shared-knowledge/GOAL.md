@@ -1,5 +1,15 @@
 # Goal: Shared Knowledge Base Enhancements
 
+**Status:** implemented; this file preserves the original planning scope.
+
+> The canonical current contract is [VISION.md](../VISION.md) and
+> [System Architecture](../system-architecture.md). The generic governed
+> `action_proposals` inbox supersedes the legacy contradiction-only inbox for
+> automated work. Nightly similarity is candidate generation only; a strict
+> contradiction classifier, mandatory audit, human review, and execution-time
+> precondition checks are required. Team overlap awareness is durable and is
+> delivered to both owners, while every read rechecks public visibility.
+
 Complete the remaining deliverables of VISION.md Pillar 2 — making the shared knowledge base smarter, transparent, and team-aware.
 
 ## What We're Building

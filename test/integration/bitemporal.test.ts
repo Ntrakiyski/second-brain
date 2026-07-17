@@ -4,6 +4,7 @@ import { makeTestEnv, makeTestDb, makeVectorizeMock, makeKVMock } from "../helpe
 import { req } from "../helpers/make-request";
 import type { Env } from "../../src/testing";
 import { D1Mock } from "../helpers/d1-mock";
+import { TEST_USER_ID } from "../helpers/test-principal";
 
 const ctx = { waitUntil: (_: Promise<any>) => {} } as any;
 
@@ -35,7 +36,7 @@ describe("Bitemporal facts (Ticket 05)", () => {
     env = makeTestEnv(db);
   });
 
-  it("new entries get valid_from and recorded_at set to created_at", async () => {
+  it("new entries anchor valid time and knowledge time to their atomic first version", async () => {
     const res = await worker.fetch(
       req("POST", "/capture", { body: { content: "Test temporal entry" } }),
       env, ctx
@@ -46,10 +47,73 @@ describe("Bitemporal facts (Ticket 05)", () => {
 
     const entry = db.entries.find((e: any) => e.id === data.id);
     expect(entry).toBeDefined();
-    // valid_from should be set by captureEntry (equals created_at)
     expect(entry!.valid_from).toBe(entry!.created_at);
     expect(entry!.recorded_at).toBe(entry!.created_at);
     expect(entry!.valid_to).toBeNull();
+    expect(entry!.revision).toBe(1);
+    expect(entry!.current_episode_id).toEqual(expect.any(String));
+    const episode = db.episodes.find((row: any) => row.id === entry!.current_episode_id);
+    expect(episode).toMatchObject({
+      entry_id: data.id,
+      content: "Test temporal entry",
+      materialized_content: "Test temporal entry",
+      mutation_kind: "capture",
+      created_at: entry!.recorded_at,
+    });
+  });
+
+  it("a semantic contradiction does not infer temporal supersession", async () => {
+    const createdAt = Date.now() - 1_000;
+    db.entries.push({
+      id: "incumbent",
+      content: "I live in NYC",
+      tags: "[]",
+      source: "api",
+      created_at: createdAt,
+      vector_ids: '["incumbent-vector"]',
+      recall_count: 0,
+      importance_score: 0,
+      contradiction_wins: 0,
+      contradiction_losses: 0,
+      owner_user_id: TEST_USER_ID,
+      valid_from: createdAt,
+      valid_to: null,
+      recorded_at: createdAt,
+      epistemic_status: "candidate",
+      revision: 0,
+      current_episode_id: null,
+      visibility: "public",
+    });
+    env = makeTestEnv(db, {
+      VECTORIZE: makeVectorizeMock({
+        query: vi.fn().mockResolvedValue({
+          matches: [makeMatch("incumbent", 0.72)],
+        }),
+      }),
+      AI: makeContradictionAI(
+        '{"contradicts":true,"conflicting_id":"incumbent","reason":"different city"}',
+      ),
+    });
+
+    const result = await captureEntry(
+      "I moved to LA",
+      [],
+      "api",
+      env,
+      ctx,
+      TEST_USER_ID,
+    );
+
+    expect(result.status).toBe("contradiction");
+    if (result.status !== "contradiction") return;
+    const incumbent = db.entries.find((entry: any) => entry.id === "incumbent");
+    const candidate = db.entries.find((entry: any) => entry.id === result.id);
+    expect(incumbent.valid_to).toBeNull();
+    expect(candidate.valid_to).toBeNull();
+    expect(JSON.parse(incumbent.tags)).not.toContain("status:deprecated");
+    expect(JSON.parse(candidate.tags)).toEqual(
+      expect.arrayContaining(["status:draft", "contradiction-candidate"]),
+    );
   });
 
   it("as_of filter excludes entries whose valid_from is after the query timestamp", async () => {

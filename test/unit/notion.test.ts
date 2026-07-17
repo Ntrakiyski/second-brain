@@ -6,6 +6,7 @@ import {
   computeSyncPlan,
   integrationStatus,
   loadIntegration,
+  claimLegacyIntegration,
   notionProvider,
   getProvider,
 } from "../../src/integrations";
@@ -153,9 +154,10 @@ describe("integrationStatus", () => {
   it("summarizes a connected record without exposing credentials", () => {
     const record: IntegrationRecord = {
       provider: "notion",
+      ownerUserId: "user-1",
       authKind: "token",
       credentials: { token: "ntn_secret" },
-      config: {},
+      config: { defaultVisibility: "private" },
       status: "connected",
       workspaceName: "Test Workspace",
       lastSyncedAt: 123,
@@ -180,8 +182,8 @@ describe("provider registry", () => {
   });
 });
 
-describe("loadIntegration legacy migration", () => {
-  it("migrates first-release pageMap/lastEdited blobs to itemMap/version", async () => {
+describe("legacy integration claim", () => {
+  it("requires an explicit user-scoped claim for first-release blobs", async () => {
     const kv = makeMemoryKV();
     await kv.put("integrations:notion", JSON.stringify({
       provider: "notion",
@@ -197,7 +199,8 @@ describe("loadIntegration legacy migration", () => {
       updatedAt: 1,
     }));
 
-    const record = await loadIntegration({ OAUTH_KV: kv }, "notion");
+    expect(await loadIntegration({ OAUTH_KV: kv }, "user-1", "notion")).toBeNull();
+    const record = await claimLegacyIntegration({ OAUTH_KV: kv }, "user-1", "notion");
     expect(record?.itemMap).toEqual({ p1: { entryId: "e1", version: "2026-01-01T00:00:00.000Z" } });
     expect((record as any).pageMap).toBeUndefined();
   });

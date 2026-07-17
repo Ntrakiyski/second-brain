@@ -439,13 +439,9 @@ describe("GET /recall", () => {
     expect(data.results[1].id).toBe("shaky");
   });
 
-  // ── End-to-end: captureEntry WRITES contradiction_wins → recallEntries READS and reranks ──
+  // ── End-to-end: contradiction capture preserves both statements ──
 
-  it("e2e: captureEntry writes contradiction_wins=1; subsequent recall ranks the winner above a peer with imp=3,wins=0 (real rerank, not seeded)", async () => {
-    // Phase 1 — CAPTURE: resolve a contradiction through production captureEntry.
-    //
-    // Seed the non-canonical incumbent "old-fact" that the new entry will beat.
-    // It needs vector_ids so the deprecation path has something to delete from Vectorize.
+  it("e2e: captureEntry records a contradiction without choosing a winner or deprecating either claim", async () => {
     const now = Date.now();
     db.entries.push({
       id: "old-fact",
@@ -458,30 +454,8 @@ describe("GET /recall", () => {
       importance_score: 0,
       contradiction_wins: 0,
       contradiction_losses: 0,
-    });
-
-    // Seed an uncontested peer with importance_score=3, contradiction_wins=0.
-    // Rerank math (verified against src/index.ts rerankWithTimeDecay):
-    //   peer:   imp=3, net=0 → effectiveImp=3 → importanceMultiplier = 0.8+(3/5)*0.4 = 1.04
-    //   winner: imp=0 (unclassified), net=+1 (1 win 0 losses)
-    //           → base=3 (unscored-but-contested neutral midpoint)
-    //           → adj = sign(1)*log1p(1)*1.0 = ln(2) ≈ 0.693
-    //           → effectiveImp = 3+0.693 = 3.693
-    //           → importanceMultiplier = 0.8+(3.693/5)*0.4 = 1.0954
-    //   winner importanceMultiplier (1.0954) > peer (1.04), so winner ranks first.
-    //   Tie-breaker guard: peer is placed FIRST in the Vectorize matches array so that
-    //   without the win boost, the peer would be listed first — the win is the sole differentiator.
-    db.entries.push({
-      id: "peer",
-      content: "Uncontested peer fact",
-      tags: "[]",
-      source: "api",
-      created_at: now - 10000,
-      vector_ids: "[]",
-      recall_count: 0,
-      importance_score: 3,
-      contradiction_wins: 0,
-      contradiction_losses: 0,
+      owner_user_id: "_system",
+      visibility: "public",
     });
 
     const deleteByIdsMock = vi.fn().mockResolvedValue({ mutationId: "m" });
@@ -499,35 +473,19 @@ describe("GET /recall", () => {
     const captureCtx = { waitUntil: (_: Promise<any>) => {} } as any as ExecutionContext;
     const captureResult = await captureEntry("I moved to Seattle", [], "api", captureEnv, captureCtx);
 
-    // Assert production code wrote contradiction_wins=1 on the new entry
     expect(captureResult.status).toBe("contradiction");
     if (captureResult.status !== "contradiction") return;
-    const winnerId = captureResult.id;
-
-    const winnerRow = db.entries.find(e => e.id === winnerId);
-    expect(winnerRow).toBeDefined();
-    expect(winnerRow!.contradiction_wins).toBe(1); // written by production, not seeded
-
-    // Phase 2 — RECALL: the shared db now has winner (wins=1, imp=0) and peer (wins=0, imp=3).
-    // Configure Vectorize to return [peer first, winner second] at equal score 0.9 —
-    // without the win boost the peer would appear first (it's listed first in matches).
-    // The real rerank formula must lift the winner above the peer.
-    const recallEnv = makeTestEnv(db, {
-      VECTORIZE: makeVectorizeMock({
-        query: vi.fn().mockResolvedValue({
-          matches: [makeMatch("peer", 0.9), makeMatch(winnerId, 0.9)],
-        }),
-      }),
-    });
-
-    const res = await worker.fetch(req("GET", "/recall?query=where do I live"), recallEnv, ctx);
-    expect(res.status).toBe(200);
-    const data = await res.json() as any;
-    expect(data.ok).toBe(true);
-    // Winner (contradiction_wins=1, imp=0 → effectiveImp≈3.69) must rank above
-    // peer (contradiction_wins=0, imp=3 → effectiveImp=3.0) even though peer was listed first.
-    expect(data.results[0].id).toBe(winnerId);
-    expect(data.results[1].id).toBe("peer");
+    const candidate = db.entries.find(e => e.id === captureResult.id);
+    const incumbent = db.entries.find(e => e.id === "old-fact");
+    expect(candidate?.contradiction_wins).toBe(0);
+    expect(candidate?.contradiction_losses).toBe(0);
+    expect(JSON.parse(incumbent?.tags ?? "[]")).not.toContain("status:deprecated");
+    expect(deleteByIdsMock).not.toHaveBeenCalled();
+    expect(db.edges).toContainEqual(expect.objectContaining({
+      source_id: captureResult.id,
+      target_id: "old-fact",
+      type: "contradicts",
+    }));
   });
 
   // ── Hybrid recall: keyword fusion surfaces exact-identifier matches ──

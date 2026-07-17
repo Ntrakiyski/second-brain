@@ -1,307 +1,597 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import worker from "../../src/testing";
-import { makeTestEnv, makeTestDb, makeMemoryKV } from "../helpers/make-env";
-import { req } from "../helpers/make-request";
-import type { Env } from "../../src/testing";
-import { D1Mock } from "../helpers/d1-mock";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const ctx = { waitUntil: (_: Promise<any>) => {} } as any;
+const dependencyMocks = vi.hoisted(() => ({
+  commitEntryVersion: vi.fn(),
+  forgetEntry: vi.fn(),
+  initializeDatabase: vi.fn(),
+}));
 
-// ─── Notion API stub ────────────────────────────────────────────────────────
-// A mutable fixture the stubbed global fetch serves: /users/me validates the
-// token, /search returns `pages`, /blocks/:id/children returns `blocks[id]`.
+vi.mock("../../src/entry-version-service", () => ({
+  commitEntryVersion: dependencyMocks.commitEntryVersion,
+}));
+vi.mock("../../src/lifecycle", () => ({
+  forgetEntry: dependencyMocks.forgetEntry,
+}));
+vi.mock("../../src/db", () => ({
+  initializeDatabase: dependencyMocks.initializeDatabase,
+}));
 
-interface NotionFixture {
-  validToken: string;
-  pages: any[];
-  blocks: Record<string, any[]>;
+import type { Env } from "../../src/types";
+import {
+  claimLegacyIntegration,
+  deleteIntegration,
+  integrationKey,
+  loadIntegration,
+  notionProvider,
+  saveIntegration,
+  type IntegrationRecord,
+  type MirrorStore,
+} from "../../src/integrations";
+import {
+  disconnectIntegration,
+  isManagedMirror,
+  makeMirrorStore,
+  runScheduledIntegrationSync,
+} from "../../src/integrations-mirror";
+import { CRON_SYNC_MAX_BATCHES } from "../../src/config";
+
+interface MemoryKv {
+  kv: KVNamespace;
+  values: Map<string, string>;
 }
 
-function notionPage(id: string, title: string, lastEdited: string, archived = false) {
+function memoryKv(): MemoryKv {
+  const values = new Map<string, string>();
+  return {
+    values,
+    kv: {
+      get: async (key: string) => values.get(key) ?? null,
+      put: async (key: string, value: string) => { values.set(key, String(value)); },
+      delete: async (key: string) => { values.delete(key); },
+      list: async (options: { prefix?: string } = {}) => ({
+        keys: [...values.keys()]
+          .filter((key) => !options.prefix || key.startsWith(options.prefix))
+          .map((name) => ({ name })),
+        list_complete: true,
+        cacheStatus: null,
+      }),
+    } as unknown as KVNamespace,
+  };
+}
+
+interface EntryRow {
+  owner_user_id: string;
+  source: string;
+  revision: number;
+  visibility: string;
+  content?: string;
+  tags?: string;
+  valid_from?: number | null;
+  valid_to?: number | null;
+  epistemic_status?: string;
+}
+
+class IntegrationDb {
+  readonly entries = new Map<string, EntryRow>();
+  readonly committedCreates = new Map<string, string>();
+  readonly committedUpdates = new Set<string>();
+  eligibleUsers: { id: string }[] = [];
+  schedulerSql = "";
+
+  prepare(sql: string): D1PreparedStatement {
+    let bindings: unknown[] = [];
+    const statement = {
+      bind: (...values: unknown[]) => {
+        bindings = values;
+        return statement;
+      },
+      first: async () => {
+        if (sql.includes("SELECT ep.entry_id AS entryId")) {
+          const entryId = this.committedCreates.get(String(bindings[2]));
+          return entryId ? { entryId } : null;
+        }
+        if (sql.includes("SELECT id FROM episodes")) {
+          const key = `${String(bindings[0])}:${String(bindings[2])}`;
+          return this.committedUpdates.has(key) ? { id: "episode" } : null;
+        }
+        if (sql.includes("FROM entries WHERE id = ?")) {
+          return this.entries.get(String(bindings[0])) ?? null;
+        }
+        return null;
+      },
+      all: async () => {
+        this.schedulerSql = sql;
+        return { results: this.eligibleUsers };
+      },
+      run: async () => ({ success: true, meta: { changes: 0 } }),
+    };
+    return statement as unknown as D1PreparedStatement;
+  }
+}
+
+function envFor(kv: KVNamespace, db = new IntegrationDb()): Env {
+  return {
+    OAUTH_KV: kv,
+    DB: db as unknown as D1Database,
+    VECTORIZE: {} as VectorizeIndex,
+    AI: {} as Ai,
+    AUTH_TOKEN: "transport-token",
+  } as Env;
+}
+
+function record(
+  ownerUserId: string,
+  options: {
+    token?: string;
+    visibility?: "private" | "public";
+    itemMap?: IntegrationRecord["itemMap"];
+  } = {},
+): IntegrationRecord {
+  return {
+    provider: "notion",
+    ownerUserId,
+    authKind: "token",
+    credentials: { token: options.token ?? `token-${ownerUserId}` },
+    config: { defaultVisibility: options.visibility ?? "private" },
+    status: "connected",
+    workspaceName: `Workspace ${ownerUserId}`,
+    lastSyncedAt: null,
+    lastSyncError: null,
+    itemMap: options.itemMap ?? {},
+    createdAt: 1,
+    updatedAt: 1,
+  };
+}
+
+function notionPage(id: string, title: string, lastEdited: string) {
   return {
     object: "page",
     id,
     last_edited_time: lastEdited,
     url: `https://notion.so/${id}`,
-    archived,
+    archived: false,
     in_trash: false,
     properties: { title: { type: "title", title: [{ plain_text: title }] } },
   };
 }
 
-function paragraph(text: string) {
-  return { object: "block", id: `blk-${text}`, type: "paragraph", has_children: false, paragraph: { rich_text: [{ plain_text: text }] } };
+interface NotionFixture {
+  pages: any[];
+  blocks: Record<string, any[]>;
+  error?: string;
 }
 
-function stubNotionApi(fixture: NotionFixture) {
-  vi.stubGlobal("fetch", vi.fn(async (input: any, init?: any) => {
+function stubNotion(fixtures: Record<string, NotionFixture>): void {
+  vi.stubGlobal("fetch", vi.fn(async (input: string | Request, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input.url;
-    const auth = init?.headers?.Authorization ?? "";
-    if (auth !== `Bearer ${fixture.validToken}`) {
-      return new Response(JSON.stringify({ message: "API token is invalid." }), { status: 401 });
-    }
-    if (url.endsWith("/users/me")) {
-      return new Response(JSON.stringify({ object: "user", type: "bot", name: "Second Brain", bot: { workspace_name: "Test Workspace" } }), { status: 200 });
+    const headers = init?.headers as Record<string, string> | undefined;
+    const token = headers?.Authorization?.replace(/^Bearer\s+/, "") ?? "";
+    const fixture = fixtures[token];
+    if (!fixture || fixture.error) {
+      return new Response(JSON.stringify({ message: fixture?.error ?? "invalid token" }), { status: 401 });
     }
     if (url.endsWith("/search")) {
-      return new Response(JSON.stringify({ results: fixture.pages, has_more: false, next_cursor: null }), { status: 200 });
+      return new Response(JSON.stringify({ results: fixture.pages, has_more: false }), { status: 200 });
     }
-    const m = url.match(/\/blocks\/([^/?]+)\/children/);
-    if (m) {
-      return new Response(JSON.stringify({ results: fixture.blocks[m[1]] ?? [], has_more: false, next_cursor: null }), { status: 200 });
+    const block = url.match(/\/blocks\/([^/?]+)\/children/);
+    if (block) {
+      return new Response(JSON.stringify({ results: fixture.blocks[block[1]] ?? [], has_more: false }), { status: 200 });
+    }
+    if (url.endsWith("/users/me")) {
+      return new Response(JSON.stringify({ bot: { workspace_name: "Workspace" } }), { status: 200 });
     }
     return new Response("not found", { status: 404 });
   }));
 }
 
-describe("integrations routes", () => {
-  let env: Env;
-  let db: D1Mock;
-  let fixture: NotionFixture;
+function paragraph(text: string) {
+  return {
+    object: "block",
+    id: `block-${text}`,
+    type: "paragraph",
+    has_children: false,
+    paragraph: { rich_text: [{ plain_text: text }] },
+  };
+}
 
+function successfulStore(prefix: string): MirrorStore {
+  let counter = 0;
+  return {
+    createEntry: vi.fn(async () => `${prefix}-entry-${++counter}`),
+    updateEntry: vi.fn(async () => true),
+    archiveEntry: vi.fn(async () => true),
+    deleteEntry: vi.fn(async () => true),
+  };
+}
+
+describe("tenant-scoped integration core", () => {
   beforeEach(() => {
-    db = makeTestDb();
-    env = makeTestEnv(db, { OAUTH_KV: makeMemoryKV() });
-    fixture = { validToken: "ntn_valid", pages: [], blocks: {} };
-    stubNotionApi(fixture);
+    dependencyMocks.commitEntryVersion.mockReset();
+    dependencyMocks.forgetEntry.mockReset();
+    dependencyMocks.initializeDatabase.mockReset().mockResolvedValue(undefined);
+    dependencyMocks.forgetEntry.mockResolvedValue({ status: "deleted", vectorCount: 1 });
+    let created = 0;
+    dependencyMocks.commitEntryVersion.mockImplementation(async (input: any) => ({
+      entryId: input.entryId ?? `created-${++created}`,
+      episodeId: "episode",
+      mutationId: input.mutationId,
+      revision: input.entryId ? 2 : 1,
+      created: !input.entryId,
+      snapshotId: input.entryId ? "snapshot" : null,
+      documentId: "document",
+      sectionIds: [],
+      passageIds: [],
+      vectorIds: [],
+      cleanupQueueId: null,
+      cleanupPending: false,
+    }));
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
-  const connect = () =>
-    worker.fetch(req("POST", "/integrations/notion/connect", { body: { token: "ntn_valid" } }), env, ctx);
-  const sync = () =>
-    worker.fetch(req("POST", "/integrations/notion/sync", { body: {} }), env, ctx);
+  it("persists only v2 user keys and isolates the same provider between users", async () => {
+    const memory = memoryKv();
+    const env = envFor(memory.kv);
+    await saveIntegration(env, "user-a", record("user-a"));
+    await saveIntegration(env, "user-b", record("user-b"));
 
-  describe("GET /integrations", () => {
-    it("requires auth", async () => {
-      const res = await worker.fetch(req("GET", "/integrations", { token: null }), env, ctx);
-      expect(res.status).toBe(401);
-    });
+    expect([...memory.values.keys()].sort()).toEqual([
+      "integrations:v2:user-a:notion",
+      "integrations:v2:user-b:notion",
+    ]);
+    expect((await loadIntegration(env, "user-a", "notion"))?.ownerUserId).toBe("user-a");
+    expect((await loadIntegration(env, "user-b", "notion"))?.ownerUserId).toBe("user-b");
 
-    it("lists notion as disconnected by default", async () => {
-      const res = await worker.fetch(req("GET", "/integrations"), env, ctx);
-      expect(res.status).toBe(200);
-      const data = await res.json() as any;
-      expect(data.integrations).toEqual([
-        expect.objectContaining({ provider: "notion", connected: false, itemCount: 0 }),
-      ]);
-    });
+    await deleteIntegration(env, "user-a", "notion");
+    expect(await loadIntegration(env, "user-a", "notion")).toBeNull();
+    expect(await loadIntegration(env, "user-b", "notion")).not.toBeNull();
   });
 
-  describe("POST /integrations/notion/connect", () => {
-    it("requires a token", async () => {
-      const res = await worker.fetch(req("POST", "/integrations/notion/connect", { body: {} }), env, ctx);
-      expect(res.status).toBe(400);
-    });
+  it("defaults missing or invalid visibility to private and rejects owner mismatch", async () => {
+    const memory = memoryKv();
+    memory.values.set(integrationKey("user-a", "notion"), JSON.stringify({
+      ...record("user-a"),
+      config: {},
+    }));
+    expect((await loadIntegration(envFor(memory.kv), "user-a", "notion"))?.config.defaultVisibility)
+      .toBe("private");
 
-    it("rejects a token Notion does not accept, storing nothing", async () => {
-      const res = await worker.fetch(
-        req("POST", "/integrations/notion/connect", { body: { token: "ntn_wrong" } }), env, ctx
-      );
-      expect(res.status).toBe(400);
-      const data = await res.json() as any;
-      expect(data.error).toContain("API token is invalid");
-
-      const status = await (await worker.fetch(req("GET", "/integrations"), env, ctx)).json() as any;
-      expect(status.integrations[0].connected).toBe(false);
-    });
-
-    it("validates the token and stores the connection with the workspace name", async () => {
-      const res = await connect();
-      expect(res.status).toBe(200);
-      const data = await res.json() as any;
-      expect(data.ok).toBe(true);
-      expect(data.workspaceName).toBe("Test Workspace");
-
-      const status = await (await worker.fetch(req("GET", "/integrations"), env, ctx)).json() as any;
-      expect(status.integrations[0]).toMatchObject({ connected: true, workspaceName: "Test Workspace" });
-    });
+    await expect(saveIntegration(
+      envFor(memory.kv),
+      "user-b",
+      record("user-a"),
+    )).rejects.toThrow("owner");
   });
 
-  describe("POST /integrations/notion/sync", () => {
-    it("404s when not connected", async () => {
-      const res = await sync();
-      expect(res.status).toBe(404);
+  it("claims a legacy record only through the explicit helper", async () => {
+    const memory = memoryKv();
+    memory.values.set("integrations:notion", JSON.stringify({
+      ...record("legacy-user"),
+      ownerUserId: undefined,
+      config: {},
+      itemMap: undefined,
+      pageMap: { page: { entryId: "legacy-entry", lastEdited: "v1" } },
+    }));
+    const env = envFor(memory.kv);
+
+    expect(await loadIntegration(env, "user-a", "notion")).toBeNull();
+    const claimed = await claimLegacyIntegration(env, "user-a", "notion");
+    expect(claimed).toMatchObject({
+      ownerUserId: "user-a",
+      config: { defaultVisibility: "private" },
+      itemMap: { page: { entryId: "legacy-entry", version: "v1" } },
     });
-
-    it("mirrors accessible pages into entries with source notion", async () => {
-      fixture.pages = [notionPage("p1", "Project Plan", "2026-01-01T00:00:00.000Z")];
-      fixture.blocks["p1"] = [paragraph("Ship the beta in March")];
-      await connect();
-
-      const res = await sync();
-      expect(res.status).toBe(200);
-      const data = await res.json() as any;
-      expect(data).toMatchObject({ ok: true, created: 1, updated: 0, deleted: 0, remaining: 0, total: 1 });
-
-      expect(db.entries).toHaveLength(1);
-      const entry = db.entries[0];
-      expect(entry.source).toBe("notion");
-      expect(JSON.parse(entry.tags)).toEqual(["notion"]);
-      expect(entry.content).toContain("# Project Plan");
-      expect(entry.content).toContain("https://notion.so/p1");
-      expect(entry.content).toContain("Ship the beta in March");
-
-      const status = await (await worker.fetch(req("GET", "/integrations"), env, ctx)).json() as any;
-      expect(status.integrations[0].itemCount).toBe(1);
-    });
-
-    it("is a no-op when nothing changed", async () => {
-      fixture.pages = [notionPage("p1", "Note", "2026-01-01T00:00:00.000Z")];
-      fixture.blocks["p1"] = [paragraph("test")];
-      await connect();
-      await sync();
-
-      const data = await (await sync()).json() as any;
-      expect(data).toMatchObject({ created: 0, updated: 0, deleted: 0 });
-      expect(db.entries).toHaveLength(1);
-    });
-
-    it("replaces a mirrored entry in place when the page is edited", async () => {
-      fixture.pages = [notionPage("p1", "Note A", "2026-01-01T00:00:00.000Z")];
-      fixture.blocks["p1"] = [paragraph("test")];
-      await connect();
-      await sync();
-      const originalId = db.entries[0].id;
-
-      // The page changes: "test" → "test2", with a newer last_edited_time.
-      fixture.pages = [notionPage("p1", "Note A", "2026-01-08T00:00:00.000Z")];
-      fixture.blocks["p1"] = [paragraph("test2")];
-
-      const data = await (await sync()).json() as any;
-      expect(data).toMatchObject({ created: 0, updated: 1 });
-      expect(db.entries).toHaveLength(1);
-      expect(db.entries[0].id).toBe(originalId); // same entry — graph edges/recall counts survive
-      expect(db.entries[0].content).toContain("test2");
-      expect(db.entries[0].content).not.toContain("test\n");
-    });
-
-    it("deletes the mirror when a page disappears from the listing", async () => {
-      fixture.pages = [notionPage("p1", "Note", "2026-01-01T00:00:00.000Z")];
-      fixture.blocks["p1"] = [paragraph("test")];
-      await connect();
-      await sync();
-      expect(db.entries).toHaveLength(1);
-
-      fixture.pages = []; // page unshared
-      const data = await (await sync()).json() as any;
-      expect(data).toMatchObject({ deleted: 1 });
-      expect(db.entries).toHaveLength(0);
-
-      const status = await (await worker.fetch(req("GET", "/integrations"), env, ctx)).json() as any;
-      expect(status.integrations[0].itemCount).toBe(0);
-    });
-
-    it("deletes the mirror when a page is archived", async () => {
-      fixture.pages = [notionPage("p1", "Note", "2026-01-01T00:00:00.000Z")];
-      fixture.blocks["p1"] = [paragraph("test")];
-      await connect();
-      await sync();
-
-      fixture.pages = [notionPage("p1", "Note", "2026-01-02T00:00:00.000Z", true)];
-      const data = await (await sync()).json() as any;
-      expect(data).toMatchObject({ deleted: 1, created: 0 });
-      expect(db.entries).toHaveLength(0);
-    });
-
-    it("processes large backlogs in bounded batches and reports remaining", async () => {
-      fixture.pages = Array.from({ length: 7 }, (_, i) =>
-        notionPage(`p${i}`, `Note ${i}`, `2026-01-0${i + 1}T00:00:00.000Z`)
-      );
-      for (let i = 0; i < 7; i++) fixture.blocks[`p${i}`] = [paragraph(`body ${i}`)];
-      await connect();
-
-      const first = await (await sync()).json() as any;
-      expect(first).toMatchObject({ created: 5, remaining: 2 });
-      const second = await (await sync()).json() as any;
-      expect(second).toMatchObject({ created: 2, remaining: 0 });
-      expect(db.entries).toHaveLength(7);
-    });
-
-    it("records the error and returns 502 when the Notion API fails", async () => {
-      fixture.pages = [notionPage("p1", "Note", "2026-01-01T00:00:00.000Z")];
-      fixture.blocks["p1"] = [paragraph("test")];
-      await connect();
-      fixture.validToken = "ntn_rotated"; // stored token no longer works
-
-      const res = await sync();
-      expect(res.status).toBe(502);
-
-      const status = await (await worker.fetch(req("GET", "/integrations"), env, ctx)).json() as any;
-      expect(status.integrations[0].status).toBe("error");
-      expect(status.integrations[0].lastSyncError).toContain("API token is invalid");
-    });
+    expect(memory.values.has("integrations:notion")).toBe(false);
+    expect(memory.values.has("integrations:v2:user-a:notion")).toBe(true);
   });
 
-  describe("mirror edit protection", () => {
-    beforeEach(async () => {
-      fixture.pages = [notionPage("p1", "Note", "2026-01-01T00:00:00.000Z")];
-      fixture.blocks["p1"] = [paragraph("test")];
-      await connect();
-      await sync();
+  it("keeps identical external item ids isolated across users", async () => {
+    const memory = memoryKv();
+    const env = envFor(memory.kv);
+    await saveIntegration(env, "user-a", record("user-a", { token: "token-a" }));
+    await saveIntegration(env, "user-b", record("user-b", { token: "token-b" }));
+    stubNotion({
+      "token-a": {
+        pages: [notionPage("same-page", "A", "v1")],
+        blocks: { "same-page": [paragraph("private A content")] },
+      },
+      "token-b": {
+        pages: [notionPage("same-page", "B", "v1")],
+        blocks: { "same-page": [paragraph("private B content")] },
+      },
     });
 
-    it("409s on POST /update for a mirrored entry while connected", async () => {
-      const id = db.entries[0].id;
-      const res = await worker.fetch(req("POST", "/update", { body: { id, content: "manual edit" } }), env, ctx);
-      expect(res.status).toBe(409);
-      const data = await res.json() as any;
-      expect(data.error).toContain("synced from Notion");
-      expect(db.entries[0].content).toContain("test");
-    });
-
-    it("409s on POST /append for a mirrored entry while connected", async () => {
-      const id = db.entries[0].id;
-      const res = await worker.fetch(req("POST", "/append", { body: { id, addition: "manual note" } }), env, ctx);
-      expect(res.status).toBe(409);
-    });
-
-    it("allows edits again after disconnect", async () => {
-      const id = db.entries[0].id;
-      await worker.fetch(req("POST", "/integrations/notion/disconnect", { body: {} }), env, ctx);
-      const res = await worker.fetch(req("POST", "/update", { body: { id, content: "manual edit" } }), env, ctx);
-      expect(res.status).toBe(200);
-    });
+    const a = await notionProvider.sync(env, "user-a", successfulStore("a"));
+    const b = await notionProvider.sync(env, "user-b", successfulStore("b"));
+    expect(a).toMatchObject({ ok: true, created: 1 });
+    expect(b).toMatchObject({ ok: true, created: 1 });
+    expect((await loadIntegration(env, "user-a", "notion"))?.itemMap["same-page"].entryId)
+      .toBe("a-entry-1");
+    expect((await loadIntegration(env, "user-b", "notion"))?.itemMap["same-page"].entryId)
+      .toBe("b-entry-1");
   });
 
-  describe("POST /integrations/notion/disconnect", () => {
-    beforeEach(async () => {
-      fixture.pages = [
-        notionPage("p1", "Note 1", "2026-01-01T00:00:00.000Z"),
-        notionPage("p2", "Note 2", "2026-01-02T00:00:00.000Z"),
-      ];
-      fixture.blocks["p1"] = [paragraph("one")];
-      fixture.blocks["p2"] = [paragraph("two")];
-      await connect();
-      await sync();
+  it("keeps Notion sync bounded and stores only redacted provider errors", async () => {
+    const memory = memoryKv();
+    const env = envFor(memory.kv);
+    await saveIntegration(env, "user-a", record("user-a", { token: "secret-token" }));
+    stubNotion({
+      "secret-token": {
+        pages: [],
+        blocks: {},
+        error: "rejected secret-token",
+      },
+    });
+    const failed = await notionProvider.sync(env, "user-a", successfulStore("a"));
+    expect(failed).toEqual({ ok: false, error: "Notion: rejected [redacted]" });
+    const saved = await loadIntegration(env, "user-a", "notion");
+    expect(saved?.lastSyncError).toBe("Notion: rejected [redacted]");
+    expect(JSON.stringify({ status: saved?.lastSyncError })).not.toContain("secret-token");
+
+    const pages = Array.from({ length: 7 }, (_, index) => notionPage(`p${index}`, `P${index}`, `v${index}`));
+    await saveIntegration(env, "user-b", record("user-b", { token: "token-b" }));
+    stubNotion({
+      "token-b": {
+        pages,
+        blocks: Object.fromEntries(pages.map((page) => [page.id, [paragraph(page.id)]])),
+      },
+    });
+    const bounded = await notionProvider.sync(env, "user-b", successfulStore("b"));
+    expect(bounded).toMatchObject({ ok: true, created: 5, remaining: 2, total: 7 });
+  });
+
+  it("archives removed Notion pages and never invokes the hard-delete capability", async () => {
+    const memory = memoryKv();
+    const env = envFor(memory.kv);
+    await saveIntegration(env, "user-a", record("user-a", {
+      token: "token-a",
+      itemMap: { archived: { entryId: "entry-archived", version: "v1" } },
+    }));
+    const archivedPage = notionPage("archived", "Archived", "v2");
+    archivedPage.archived = true;
+    stubNotion({
+      "token-a": { pages: [archivedPage], blocks: {} },
+    });
+    const store = successfulStore("a");
+
+    const outcome = await notionProvider.sync(env, "user-a", store);
+
+    expect(outcome).toMatchObject({ ok: true, deleted: 1 });
+    expect(store.archiveEntry).toHaveBeenCalledWith("archived", "entry-archived");
+    expect(store.deleteEntry).not.toHaveBeenCalled();
+    expect((await loadIntegration(env, "user-a", "notion"))?.itemMap.archived).toBeUndefined();
+  });
+});
+
+describe("versioned mirror store safety", () => {
+  let memory: MemoryKv;
+  let db: IntegrationDb;
+  let env: Env;
+
+  beforeEach(() => {
+    memory = memoryKv();
+    db = new IntegrationDb();
+    env = envFor(memory.kv, db);
+    dependencyMocks.commitEntryVersion.mockReset().mockResolvedValue({ entryId: "entry-a" });
+    dependencyMocks.forgetEntry.mockReset().mockResolvedValue({ status: "deleted", vectorCount: 1 });
+    dependencyMocks.initializeDatabase.mockReset().mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("creates private versioned mirrors with canonical owner and provenance fields", async () => {
+    const integration = record("user-a");
+    const store = makeMirrorStore(env, "user-a", integration);
+    const entryId = await store.createEntry({
+      externalItemId: "page-1",
+      version: "v1",
+      content: "# Page\nbody",
+      tags: ["notion"],
+      sourceUrl: "https://notion.so/page-1",
+      title: "Page",
     });
 
-    it("404s when not connected", async () => {
-      await worker.fetch(req("POST", "/integrations/notion/disconnect", { body: {} }), env, ctx);
-      const res = await worker.fetch(req("POST", "/integrations/notion/disconnect", { body: {} }), env, ctx);
-      expect(res.status).toBe(404);
+    expect(entryId).toBe("entry-a");
+    expect(dependencyMocks.commitEntryVersion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "capture",
+        actorUserId: "user-a",
+        rawContent: "# Page\nbody",
+        materializedContent: "# Page\nbody",
+        tags: ["notion", "private"],
+        source: "notion",
+        sourceUrl: "https://notion.so/page-1",
+        contentType: "research",
+        title: "Page",
+        mutationId: "integration:notion:page-1:v1",
+      }),
+      env,
+    );
+  });
+
+  it("honors explicit public defaults without leaking private projection tags", async () => {
+    const store = makeMirrorStore(env, "user-a", record("user-a", { visibility: "public" }));
+    await store.createEntry({
+      externalItemId: "page-1",
+      version: "v1",
+      content: "public",
+      tags: ["notion", "private"],
+    });
+    expect(dependencyMocks.commitEntryVersion.mock.calls[0][0].tags).toEqual(["notion"]);
+  });
+
+  it("updates only the exact caller-owned item-map entry with a revision guard", async () => {
+    const integration = record("user-a", {
+      itemMap: { page: { entryId: "entry-a", version: "v1" } },
+    });
+    db.entries.set("entry-a", {
+      owner_user_id: "user-a",
+      source: "notion",
+      revision: 7,
+      visibility: "private",
+    });
+    const updated = await makeMirrorStore(env, "user-a", integration).updateEntry("entry-a", {
+      externalItemId: "page",
+      version: "v2",
+      content: "updated",
+      tags: ["notion"],
+    });
+    expect(updated).toBe(true);
+    expect(dependencyMocks.commitEntryVersion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "update",
+        actorUserId: "user-a",
+        entryId: "entry-a",
+        expectedRevision: 7,
+        tags: ["notion", "private"],
+      }),
+      env,
+    );
+
+    await expect(makeMirrorStore(env, "user-a", integration).updateEntry("entry-a", {
+      externalItemId: "not-page",
+      version: "v3",
+      content: "attack",
+      tags: [],
+    })).rejects.toThrow("item map");
+  });
+
+  it("blocks cross-user update and delete even when a map is corrupted", async () => {
+    db.entries.set("entry-b", {
+      owner_user_id: "user-b",
+      source: "notion",
+      revision: 1,
+      visibility: "private",
+    });
+    const corrupted = record("user-a", {
+      itemMap: { page: { entryId: "entry-b", version: "v1" } },
+    });
+    const store = makeMirrorStore(env, "user-a", corrupted);
+    await expect(store.updateEntry("entry-b", {
+      externalItemId: "page",
+      version: "v2",
+      content: "attack",
+      tags: [],
+    })).rejects.toThrow("owner mismatch");
+    await expect(store.deleteEntry("page", "entry-b")).rejects.toThrow("owner mismatch");
+    await expect(store.archiveEntry("page", "entry-b")).rejects.toThrow("owner mismatch");
+    expect(dependencyMocks.commitEntryVersion).not.toHaveBeenCalled();
+    expect(dependencyMocks.forgetEntry).not.toHaveBeenCalled();
+  });
+
+  it("archives an upstream-removed mirror through a versioned snapshot without hard forget", async () => {
+    const integration = record("user-a", {
+      itemMap: { page: { entryId: "entry-a", version: "v1" } },
+    });
+    db.entries.set("entry-a", {
+      owner_user_id: "user-a",
+      source: "notion",
+      revision: 4,
+      visibility: "private",
+      content: "Preserved source content",
+      tags: '["notion","private"]',
+      valid_from: 100,
+      valid_to: null,
+      epistemic_status: "canonical",
     });
 
-    it("keeps mirrored memories by default", async () => {
-      const res = await worker.fetch(req("POST", "/integrations/notion/disconnect", { body: {} }), env, ctx);
-      const data = await res.json() as any;
-      expect(data).toMatchObject({ ok: true, purged: 0, kept: 2 });
-      expect(db.entries).toHaveLength(2);
+    expect(await makeMirrorStore(env, "user-a", integration).archiveEntry("page", "entry-a"))
+      .toBe(true);
+    expect(dependencyMocks.commitEntryVersion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "status",
+        actorUserId: "user-a",
+        entryId: "entry-a",
+        expectedRevision: 4,
+        materializedContent: "Preserved source content",
+        tags: expect.arrayContaining(["notion", "private", "source-archived", "status:deprecated"]),
+      }),
+      env,
+    );
+    expect(dependencyMocks.forgetEntry).not.toHaveBeenCalled();
+  });
 
-      const status = await (await worker.fetch(req("GET", "/integrations"), env, ctx)).json() as any;
-      expect(status.integrations[0].connected).toBe(false);
-    });
+  it("recognizes a managed mirror only by caller and exact item-map entry", async () => {
+    await saveIntegration(env, "user-a", record("user-a", {
+      itemMap: { page: { entryId: "entry-a", version: "v1" } },
+    }));
+    await saveIntegration(env, "user-b", record("user-b", {
+      itemMap: { page: { entryId: "entry-b", version: "v1" } },
+    }));
 
-    it("purges mirrored memories when asked", async () => {
-      const res = await worker.fetch(
-        req("POST", "/integrations/notion/disconnect", { body: { purge: true } }), env, ctx
-      );
-      const data = await res.json() as any;
-      expect(data).toMatchObject({ ok: true, purged: 2, kept: 0 });
-      expect(db.entries).toHaveLength(0);
+    expect(await isManagedMirror("entry-a", "notion", "user-a", env)).toBe(true);
+    expect(await isManagedMirror("entry-b", "notion", "user-a", env)).toBe(false);
+    expect(await isManagedMirror("entry-b", "notion", "user-b", env)).toBe(true);
+    expect(await isManagedMirror("entry-a", "unknown", "user-a", env)).toBe(false);
+  });
+
+  it("purges and disconnects only the caller's mirrors", async () => {
+    db.entries.set("entry-a", {
+      owner_user_id: "user-a",
+      source: "notion",
+      revision: 1,
+      visibility: "private",
     });
+    db.entries.set("entry-b", {
+      owner_user_id: "user-b",
+      source: "notion",
+      revision: 1,
+      visibility: "private",
+    });
+    await saveIntegration(env, "user-a", record("user-a", {
+      itemMap: { same: { entryId: "entry-a", version: "v1" } },
+    }));
+    await saveIntegration(env, "user-b", record("user-b", {
+      itemMap: { same: { entryId: "entry-b", version: "v1" } },
+    }));
+
+    expect(await disconnectIntegration(env, "user-a", "notion", true)).toEqual({
+      ok: true,
+      purged: 1,
+      kept: 0,
+    });
+    expect(dependencyMocks.forgetEntry).toHaveBeenCalledTimes(1);
+    expect(dependencyMocks.forgetEntry).toHaveBeenCalledWith("entry-a", env);
+    expect(await loadIntegration(env, "user-a", "notion")).toBeNull();
+    expect((await loadIntegration(env, "user-b", "notion"))?.itemMap.same.entryId).toBe("entry-b");
+  });
+});
+
+describe("scheduled integration tenancy", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("syncs only active, non-deactivating users and preserves a global batch bound", async () => {
+    const memory = memoryKv();
+    const db = new IntegrationDb();
+    db.eligibleUsers = [{ id: "active" }];
+    const env = envFor(memory.kv, db);
+    await saveIntegration(env, "active", record("active"));
+    await saveIntegration(env, "inactive", record("inactive"));
+    await saveIntegration(env, "deactivating", record("deactivating"));
+    dependencyMocks.initializeDatabase.mockReset().mockResolvedValue(undefined);
+
+    const sync = vi.spyOn(notionProvider, "sync").mockResolvedValue({
+      ok: true,
+      created: 0,
+      updated: 0,
+      deleted: 0,
+      failed: 0,
+      remaining: 1,
+      total: 1,
+    });
+    await runScheduledIntegrationSync(env);
+
+    expect(dependencyMocks.initializeDatabase).toHaveBeenCalledWith(env);
+    expect(db.schedulerSql).toContain("u.status = 'active'");
+    expect(db.schedulerSql).toContain("user_deactivations");
+    expect(sync).toHaveBeenCalledTimes(CRON_SYNC_MAX_BATCHES);
+    expect(new Set(sync.mock.calls.map((call) => call[1]))).toEqual(new Set(["active"]));
   });
 });

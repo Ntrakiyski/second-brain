@@ -152,7 +152,7 @@ describe("ordered database migrations", () => {
     await initializeDatabase(makeEnv(db));
 
     expect(getDbReady()).toBe(true);
-    expect(db.versions()).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(db.versions()).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     expect(db.columns("entries")).toEqual(expect.arrayContaining([
       "owner_user_id",
       "retention_score",
@@ -199,6 +199,9 @@ describe("ordered database migrations", () => {
       "security_events",
       "action_proposals",
       "proposal_events",
+      "awareness_events",
+      "overlap_awareness_reconciliation",
+      "edge_versions",
     ]));
   });
 
@@ -208,7 +211,7 @@ describe("ordered database migrations", () => {
     expect(db.versions()).toEqual([]);
     await initializeDatabase(makeEnv(db));
 
-    expect(db.versions()).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(db.versions()).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     expect(db.sqlite.prepare(
       `SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_entries_owner'`,
     ).get()).toMatchObject({ name: "idx_entries_owner" });
@@ -275,12 +278,19 @@ describe("ordered database migrations", () => {
       epistemic_status: "canonical",
     });
     expect(system.status).toBe("inactive");
-    expect(db.columns("edges")).toContain("confidence");
-    expect(db.versions()).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(db.columns("edges")).toEqual(expect.arrayContaining([
+      "confidence",
+      "revision",
+      "last_actor_kind",
+      "last_actor_id",
+      "last_mutation_kind",
+      "last_mutation_id",
+    ]));
+    expect(db.versions()).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
 
     _resetDbReady();
     await initializeDatabase(makeEnv(db));
-    expect(db.versions()).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(db.versions()).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     expect(db.sqlite.prepare(
       `SELECT COUNT(*) AS count FROM users WHERE username = '_system'`,
     ).get()).toMatchObject({ count: 1 });
@@ -427,7 +437,7 @@ describe("ordered database migrations", () => {
 
     db.failOn = null;
     await initializeDatabase(makeEnv(db));
-    expect(db.versions()).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(db.versions()).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     expect(db.columns("entries")).toContain("visibility");
     expect(db.columns("edge_proposals")).toContain("resolved_by");
   });
@@ -585,12 +595,143 @@ describe("ordered database migrations", () => {
 
     db.failOn = null;
     await initializeDatabase(makeEnv(db));
-    expect(db.versions()).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(db.versions()).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     expect(db.columns("agent_runs")).toContain("actor_kind");
     expect(db.columns("agent_events")).toContain("sequence");
     expect(db.sqlite.prepare(
       `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'action_proposals'`,
     ).get()).toEqual({ name: "action_proposals" });
+  });
+
+  it("rolls v7 overlap-awareness tables back together, then retries", async () => {
+    db.failOn = /CREATE INDEX IF NOT EXISTS idx_awareness_events_pair/;
+
+    await expect(initializeDatabase(makeEnv(db))).rejects.toThrow(
+      "Database migration 7 (overlap_awareness) failed",
+    );
+
+    expect(db.versions()).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(db.sqlite.prepare(
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'awareness_events'`,
+    ).get()).toBeUndefined();
+    expect(db.sqlite.prepare(
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'overlap_awareness_reconciliation'`,
+    ).get()).toBeUndefined();
+
+    db.failOn = null;
+    await initializeDatabase(makeEnv(db));
+    expect(db.versions()).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(db.sqlite.prepare(
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'awareness_events'`,
+    ).get()).toEqual({ name: "awareness_events" });
+    expect(db.sqlite.prepare(
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'overlap_awareness_reconciliation'`,
+    ).get()).toEqual({ name: "overlap_awareness_reconciliation" });
+  });
+
+  it("backfills one document envelope per episode and enforces the invariant", async () => {
+    db.failOn = /CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_episode_unique/;
+    await expect(initializeDatabase(makeEnv(db))).rejects.toThrow(
+      "Database migration 8 (episode_document_invariant) failed",
+    );
+    expect(db.versions()).toEqual([1, 2, 3, 4, 5, 6, 7]);
+
+    db.sqlite.exec(`
+      INSERT INTO entries (
+        id, content, tags, source, created_at, vector_ids,
+        owner_user_id, revision
+      ) VALUES ('entry-doc-backfill', 'Current state', '[]', 'api', 100, '[]', 'owner-1', 3);
+      INSERT INTO episodes (
+        id, entry_id, content, content_type, source, created_at,
+        materialized_content, content_hash, mutation_id, mutation_kind,
+        owner_user_id, source_url
+      ) VALUES (
+        'episode-doc-backfill', 'entry-doc-backfill', 'Raw state', 'text',
+        'api', 100, 'Current state', 'content-hash', 'mutation-1',
+        'capture', 'owner-1', NULL
+      );
+    `);
+
+    db.failOn = null;
+    await initializeDatabase(makeEnv(db));
+    expect(db.versions()).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    const documents = db.sqlite.prepare(
+      `SELECT episode_id, owner_user_id, content_type, content_hash, version
+       FROM documents WHERE episode_id = 'episode-doc-backfill'`,
+    ).all();
+    expect(documents).toEqual([{
+      episode_id: "episode-doc-backfill",
+      owner_user_id: "owner-1",
+      content_type: "text",
+      content_hash: "content-hash",
+      version: "3",
+    }]);
+    expect(() => db.sqlite.exec(`
+      INSERT INTO documents (
+        id, title, content_type, created_at, episode_id, owner_user_id
+      ) VALUES ('duplicate-document', 'Duplicate', 'text', 200, 'episode-doc-backfill', 'owner-1');
+    `)).toThrow();
+  });
+
+  it("backfills edge version history and records update/delete revisions", async () => {
+    db.failOn = /CREATE TRIGGER IF NOT EXISTS edge_versions_after_insert/;
+    await expect(initializeDatabase(makeEnv(db))).rejects.toThrow(
+      "Database migration 10 (audit_and_edge_history) failed",
+    );
+    expect(db.versions()).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(db.columns("edges")).not.toContain("revision");
+    expect(db.sqlite.prepare(
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'edge_versions'`,
+    ).get()).toBeUndefined();
+
+    db.sqlite.exec(`
+      INSERT INTO edges (
+        id, source_id, target_id, type, weight, provenance, metadata,
+        confidence, created_at, updated_at
+      ) VALUES (
+        'legacy-edge', 'source-a', 'target-b', 'supports', 0.7,
+        'explicit', '{"confidence":0.7}', 0.7, 100, 110
+      );
+    `);
+
+    db.failOn = null;
+    await initializeDatabase(makeEnv(db));
+    expect(db.versions()).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(db.columns("edges")).toContain("revision");
+    expect(db.sqlite.prepare(`
+      SELECT edge_id, revision, is_deleted, mutation_kind, actor_kind,
+        actor_id, recorded_at
+      FROM edge_versions WHERE edge_id = 'legacy-edge'
+    `).all()).toEqual([{
+      edge_id: "legacy-edge",
+      revision: 1,
+      is_deleted: 0,
+      mutation_kind: "legacy",
+      actor_kind: "system",
+      actor_id: "_migration",
+      recorded_at: 110,
+    }]);
+
+    db.sqlite.exec(`
+      UPDATE edges
+      SET revision = revision + 1,
+          updated_at = 200,
+          last_actor_kind = 'human',
+          last_actor_id = 'reviewer',
+          last_mutation_kind = 'explicit-link',
+          last_mutation_id = 'mutation-2'
+      WHERE id = 'legacy-edge';
+      DELETE FROM edges WHERE id = 'legacy-edge';
+    `);
+    expect(db.sqlite.prepare(`
+      SELECT revision, is_deleted, mutation_kind, actor_id
+      FROM edge_versions WHERE edge_id = 'legacy-edge'
+      ORDER BY revision
+    `).all()).toEqual([
+      { revision: 1, is_deleted: 0, mutation_kind: "legacy", actor_id: "_migration" },
+      { revision: 2, is_deleted: 0, mutation_kind: "explicit-link", actor_id: "reviewer" },
+      { revision: 3, is_deleted: 1, mutation_kind: "explicit-link", actor_id: "reviewer" },
+    ]);
   });
 
   it("propagates migration failure, rolls back its version, and permits retry", async () => {
@@ -608,7 +749,7 @@ describe("ordered database migrations", () => {
     await initializeDatabase(makeEnv(db));
 
     expect(getDbReady()).toBe(true);
-    expect(db.versions()).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(db.versions()).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     expect(db.columns("entries")).toContain("owner_user_id");
   });
 
@@ -645,7 +786,7 @@ describe("ordered database migrations", () => {
     `);
 
     await expect(initializeDatabase(makeEnv(db))).rejects.toThrow(
-      "Database schema validation failed",
+      "Database migration 8 (episode_document_invariant) failed",
     );
     expect(getDbReady()).toBe(false);
   });
@@ -669,7 +810,7 @@ describe("ordered database migrations", () => {
     await initializeDatabase(makeEnv(db));
 
     expect(getDbReady()).toBe(true);
-    expect(db.versions()).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(db.versions()).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     expect(db.columns("entries")).toContain("current_episode_id");
     expect(db.columns("episodes")).toContain("materialized_content");
   });

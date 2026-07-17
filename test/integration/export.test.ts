@@ -36,14 +36,14 @@ describe("GET /export", () => {
     expect(res.status).toBe(401);
   });
 
-  it("returns ALL entries when the count exceeds the /list cap of 100", async () => {
+  it("returns all public entries when the count exceeds the /list cap of 100", async () => {
     for (let i = 0; i < 150; i++) seedEntry(db, `e${i}`, `Memory ${i}`, [], 1000 + i);
 
     const res = await worker.fetch(req("GET", "/export"), env, ctx);
     expect(res.status).toBe(200);
     const data = await res.json() as any;
     expect(data.ok).toBe(true);
-    expect(data.version).toBe(2);
+    expect(data.version).toBe(3);
     expect(typeof data.exported_at).toBe("number");
     expect(data.entries).toHaveLength(150);
     // newest first

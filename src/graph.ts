@@ -59,6 +59,36 @@ export type EdgeType = keyof typeof EDGE_TYPES;
 export const PROVENANCE_VALUES = ["explicit", "inferred", "system"] as const;
 export type EdgeProvenance = (typeof PROVENANCE_VALUES)[number];
 
+export type EdgeActorKind = "human" | "service" | "system";
+
+export interface EdgeMutationContext {
+  actorKind: EdgeActorKind;
+  actorId: string;
+  mutationKind: string;
+  mutationId?: string;
+}
+
+export interface EdgeVersion {
+  id: string;
+  edge_id: string;
+  source_id: string;
+  target_id: string;
+  type: EdgeType;
+  weight: number;
+  provenance: EdgeProvenance;
+  metadata: string;
+  confidence: number;
+  edge_created_at: number;
+  edge_updated_at: number;
+  revision: number;
+  is_deleted: number;
+  mutation_kind: string;
+  mutation_id: string | null;
+  actor_kind: EdgeActorKind;
+  actor_id: string;
+  recorded_at: number;
+}
+
 const DEFAULT_EDGE_WEIGHT = 0.5;
 
 export function isValidEdgeType(type: string): type is EdgeType {
@@ -86,9 +116,18 @@ export async function createEdge(
   sourceId: string,
   targetId: string,
   type: string,
-  opts: { weight?: number; provenance?: EdgeProvenance; metadata?: Record<string, unknown>; confidence?: number },
+  opts: {
+    weight?: number;
+    provenance?: EdgeProvenance;
+    metadata?: Record<string, unknown>;
+    confidence?: number;
+    actorKind?: EdgeActorKind;
+    actorId?: string;
+    mutationKind?: string;
+    mutationId?: string;
+  },
   env: Env,
-): Promise<{ source_id: string; target_id: string; type: EdgeType } | null> {
+): Promise<{ id: string; source_id: string; target_id: string; type: EdgeType; revision: number } | null> {
   if (!isValidEdgeType(type)) return null;
   if (sourceId === targetId) return null;
 
@@ -96,20 +135,14 @@ export async function createEdge(
   // graph partition: because edges do not carry their own ACL, allowing a private
   // endpoint to connect to a public one could disclose the private entry id through
   // an otherwise-public relationship query.
-  const srcRow = await env.DB.prepare("SELECT tags, owner_user_id FROM entries WHERE id = ?").bind(sourceId).first() as { tags: string; owner_user_id: string } | null;
-  const tgtRow = await env.DB.prepare("SELECT tags, owner_user_id FROM entries WHERE id = ?").bind(targetId).first() as { tags: string; owner_user_id: string } | null;
+  const srcRow = await env.DB.prepare("SELECT visibility, owner_user_id FROM entries WHERE id = ?").bind(sourceId).first() as { visibility: string; owner_user_id: string } | null;
+  const tgtRow = await env.DB.prepare("SELECT visibility, owner_user_id FROM entries WHERE id = ?").bind(targetId).first() as { visibility: string; owner_user_id: string } | null;
   if (!srcRow || !tgtRow) return null;
 
-  const privateFlag = (tags: string): boolean | null => {
-    try {
-      const parsed = JSON.parse(tags ?? "[]");
-      return Array.isArray(parsed) ? parsed.includes("private") : null;
-    } catch {
-      return null;
-    }
-  };
-  const srcPrivate = privateFlag(srcRow.tags);
-  const tgtPrivate = privateFlag(tgtRow.tags);
+  const privateFlag = (visibility: string): boolean | null =>
+    visibility === "private" ? true : visibility === "public" ? false : null;
+  const srcPrivate = privateFlag(srcRow.visibility);
+  const tgtPrivate = privateFlag(tgtRow.visibility);
   if (srcPrivate === null || tgtPrivate === null) return null;
   if (srcPrivate !== tgtPrivate) return null;
   if (srcPrivate && srcRow.owner_user_id !== tgtRow.owner_user_id) return null;
@@ -125,19 +158,54 @@ export async function createEdge(
   const meta = { ...(opts.metadata ?? {}), confidence };
   const metadata = JSON.stringify(meta);
   const now = Date.now();
+  const mutationId = opts.mutationId ?? crypto.randomUUID();
+  const actorKind = opts.actorKind ?? "system";
+  const actorId = opts.actorId ?? (provenance === "inferred" ? "_graph_inference" : "_legacy_graph_writer");
+  const mutationKind = opts.mutationKind ?? `${provenance}-upsert`;
+  // If the relationship was previously removed, continue its revision lineage
+  // instead of silently creating a disconnected audit trail.
+  const prior = await env.DB.prepare(
+    `SELECT edge_id, revision FROM edge_versions
+     WHERE source_id = ? AND target_id = ? AND type = ?
+     ORDER BY revision DESC, recorded_at DESC LIMIT 1`,
+  ).bind(source, target, type).first<{ edge_id: string; revision: number }>();
+  const edgeId = prior?.edge_id ?? crypto.randomUUID();
+  const initialRevision = Number(prior?.revision ?? 0) + 1;
 
   await env.DB.prepare(
-    `INSERT INTO edges (id, source_id, target_id, type, weight, provenance, metadata, confidence, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO edges (
+       id, source_id, target_id, type, weight, provenance, metadata,
+       confidence, created_at, updated_at, revision, last_actor_kind,
+       last_actor_id, last_mutation_kind, last_mutation_id
+     )
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(source_id, target_id, type) DO UPDATE SET
        weight = max(edges.weight, excluded.weight),
        confidence = max(edges.confidence, excluded.confidence),
        provenance = CASE WHEN excluded.confidence >= edges.confidence THEN excluded.provenance ELSE edges.provenance END,
        metadata = CASE WHEN excluded.confidence >= edges.confidence THEN excluded.metadata ELSE edges.metadata END,
-       updated_at = excluded.updated_at`
-  ).bind(crypto.randomUUID(), source, target, type, weight, provenance, metadata, confidence, now, now).run();
+       updated_at = excluded.updated_at,
+       revision = edges.revision + 1,
+       last_actor_kind = excluded.last_actor_kind,
+       last_actor_id = excluded.last_actor_id,
+       last_mutation_kind = excluded.last_mutation_kind,
+       last_mutation_id = excluded.last_mutation_id`
+  ).bind(
+    edgeId, source, target, type, weight, provenance, metadata, confidence,
+    now, now, initialRevision, actorKind, actorId, mutationKind, mutationId,
+  ).run();
 
-  return { source_id: source, target_id: target, type };
+  const current = await env.DB.prepare(
+    `SELECT id, source_id, target_id, type, revision FROM edges
+     WHERE source_id = ? AND target_id = ? AND type = ?`,
+  ).bind(source, target, type).first<{
+    id: string;
+    source_id: string;
+    target_id: string;
+    type: EdgeType;
+    revision: number;
+  }>();
+  return current ?? { id: edgeId, source_id: source, target_id: target, type, revision: initialRevision };
 }
 
 // The single remover for edges. The WHERE is order-agnostic — it matches directed
@@ -151,15 +219,159 @@ export async function deleteEdge(
   targetId: string,
   type: string | undefined,
   env: Env,
+  context?: EdgeMutationContext,
 ): Promise<number> {
-  let sql = `DELETE FROM edges WHERE ((source_id = ? AND target_id = ?) OR (source_id = ? AND target_id = ?))`;
+  let predicate = `((source_id = ? AND target_id = ?) OR (source_id = ? AND target_id = ?))`;
   const bindings: string[] = [sourceId, targetId, targetId, sourceId];
   if (type) {
-    sql += ` AND type = ?`;
+    predicate += ` AND type = ?`;
     bindings.push(type);
   }
-  const result = await env.DB.prepare(sql).bind(...bindings).run();
+  const mutationId = context?.mutationId ?? crypto.randomUUID();
+  const now = Date.now();
+  const results = await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE edges
+       SET revision = revision + 1, updated_at = ?, last_actor_kind = ?,
+           last_actor_id = ?, last_mutation_kind = ?, last_mutation_id = ?
+       WHERE ${predicate}`,
+    ).bind(
+      now,
+      context?.actorKind ?? "system",
+      context?.actorId ?? "_legacy_graph_writer",
+      context?.mutationKind ?? "explicit-remove",
+      mutationId,
+      ...bindings,
+    ),
+    env.DB.prepare(`DELETE FROM edges WHERE ${predicate}`).bind(...bindings),
+  ]);
+  const result = results[1];
   return result.meta.changes ?? 0;
+}
+
+interface EdgeEndpointAccess {
+  id: string;
+  owner_user_id: string;
+  visibility: string;
+}
+
+async function edgeEndpointsVisible(
+  sourceId: string,
+  targetId: string,
+  userId: string,
+  env: Pick<Env, "DB">,
+): Promise<boolean> {
+  for (const id of [sourceId, targetId]) {
+    const row = await env.DB.prepare(
+      `SELECT id, owner_user_id, visibility FROM entries WHERE id = ?`,
+    ).bind(id).first<EdgeEndpointAccess>();
+    if (!row) return false;
+    if (row.owner_user_id !== userId && row.visibility !== "public") return false;
+  }
+  return true;
+}
+
+/** Return one relationship's immutable ledger without exposing private endpoints. */
+export async function getEdgeHistory(
+  edgeId: string,
+  userId: string,
+  env: Pick<Env, "DB">,
+): Promise<EdgeVersion[] | null> {
+  const { results } = await env.DB.prepare(
+    `SELECT id, edge_id, source_id, target_id, type, weight, provenance,
+            metadata, confidence, edge_created_at, edge_updated_at, revision,
+            is_deleted, mutation_kind, mutation_id, actor_kind, actor_id,
+            recorded_at
+     FROM edge_versions WHERE edge_id = ?
+     ORDER BY revision DESC LIMIT 100`,
+  ).bind(edgeId).all<EdgeVersion>();
+  if (!results.length) return null;
+  const latest = results[0];
+  if (!await edgeEndpointsVisible(latest.source_id, latest.target_id, userId, env)) return null;
+  return results;
+}
+
+/**
+ * Restore an exact historical relationship state as a new revision. This is a
+ * projection restore, never a rewrite of old events. Callers must authenticate
+ * a human user; service identities intentionally have no direct restore tool.
+ */
+export async function restoreEdgeVersion(
+  edgeId: string,
+  revision: number,
+  userId: string,
+  env: Env,
+): Promise<{ id: string; source_id: string; target_id: string; type: EdgeType; revision: number } | null> {
+  const selected = await env.DB.prepare(
+    `SELECT id, edge_id, source_id, target_id, type, weight, provenance,
+            metadata, confidence, edge_created_at, edge_updated_at, revision,
+            is_deleted, mutation_kind, mutation_id, actor_kind, actor_id,
+            recorded_at
+     FROM edge_versions WHERE edge_id = ? AND revision = ?`,
+  ).bind(edgeId, revision).first<EdgeVersion>();
+  if (!selected || !isValidEdgeType(selected.type)) return null;
+  if (!await edgeEndpointsVisible(selected.source_id, selected.target_id, userId, env)) return null;
+
+  const source = await env.DB.prepare(
+    `SELECT visibility, owner_user_id FROM entries WHERE id = ?`,
+  ).bind(selected.source_id).first<{ visibility: string; owner_user_id: string }>();
+  const target = await env.DB.prepare(
+    `SELECT visibility, owner_user_id FROM entries WHERE id = ?`,
+  ).bind(selected.target_id).first<{ visibility: string; owner_user_id: string }>();
+  if (!source || !target || source.visibility !== target.visibility) return null;
+  if (source.visibility === "private" && source.owner_user_id !== target.owner_user_id) return null;
+  if (source.visibility !== "private" && source.visibility !== "public") return null;
+
+  const current = await env.DB.prepare(
+    `SELECT id, revision FROM edges
+     WHERE source_id = ? AND target_id = ? AND type = ?`,
+  ).bind(selected.source_id, selected.target_id, selected.type)
+    .first<{ id: string; revision: number }>();
+  // A distinct live lineage for the same canonical relationship must be
+  // resolved deliberately instead of being overwritten by a restore.
+  if (current && current.id !== edgeId) return null;
+
+  const latest = await env.DB.prepare(
+    `SELECT MAX(revision) AS revision FROM edge_versions WHERE edge_id = ?`,
+  ).bind(edgeId).first<{ revision: number | null }>();
+  const nextRevision = Math.max(Number(latest?.revision ?? 0), Number(current?.revision ?? 0)) + 1;
+  const now = Date.now();
+  const mutationId = crypto.randomUUID();
+  const write = await env.DB.prepare(
+    `INSERT INTO edges (
+       id, source_id, target_id, type, weight, provenance, metadata,
+       confidence, created_at, updated_at, revision, last_actor_kind,
+       last_actor_id, last_mutation_kind, last_mutation_id
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'human', ?, 'restore', ?)
+     ON CONFLICT(source_id, target_id, type) DO UPDATE SET
+       weight = excluded.weight,
+       provenance = excluded.provenance,
+       metadata = excluded.metadata,
+       confidence = excluded.confidence,
+       updated_at = excluded.updated_at,
+       revision = edges.revision + 1,
+       last_actor_kind = 'human',
+       last_actor_id = excluded.last_actor_id,
+       last_mutation_kind = 'restore',
+       last_mutation_id = excluded.last_mutation_id
+     WHERE edges.id = excluded.id`,
+  ).bind(
+    edgeId, selected.source_id, selected.target_id, selected.type,
+    selected.weight, selected.provenance, selected.metadata,
+    selected.confidence, selected.edge_created_at, now, nextRevision, userId,
+    mutationId,
+  ).run();
+  if ((write.meta.changes ?? 0) !== 1) return null;
+
+  return await env.DB.prepare(
+    `SELECT id, source_id, target_id, type, revision FROM edges WHERE id = ?`,
+  ).bind(edgeId).first<{
+    id: string;
+    source_id: string;
+    target_id: string;
+    type: EdgeType;
+    revision: number;
+  }>();
 }
 
 // ─── Graph traversal ────────────────────────────────────────────────────────────
@@ -242,8 +454,8 @@ export async function expandGraph(
       allowed = candidates.filter(c => !deprecated.has(c.id));
     }
 
-    // Visibility filter: skip other users' private entries
-    if (userId && allowed.length) {
+    // Visibility filter: anonymous callers get public entries only.
+    if (allowed.length) {
       const candidateIds = [...new Set(allowed.map(c => c.id))];
       const visibleIds = await filterVisibleIds(candidateIds, userId, env);
       const visibleSet = new Set(visibleIds);
@@ -266,19 +478,17 @@ export async function expandGraph(
 
 // Filter entry IDs to only those visible to the given user: own entries + all public.
 // Used by expandGraph and runGraphPass to enforce visibility during traversal.
-export async function filterVisibleIds(ids: string[], userId: string, env: Env): Promise<string[]> {
+export async function filterVisibleIds(ids: string[], userId: string | undefined, env: Env): Promise<string[]> {
   if (!ids.length) return [];
   const visible: string[] = [];
   for (let i = 0; i < ids.length; i += D1_MAX_BOUND_PARAMS) {
     const batch = ids.slice(i, i + D1_MAX_BOUND_PARAMS);
     const ph = batch.map(() => "?").join(", ");
     const { results } = await env.DB.prepare(
-      `SELECT id, tags, owner_user_id FROM entries WHERE id IN (${ph})`
-    ).bind(...batch).all() as { results: { id: string; tags: string; owner_user_id: string }[] };
+      `SELECT id, visibility, owner_user_id FROM entries WHERE id IN (${ph})`
+    ).bind(...batch).all() as { results: { id: string; visibility: string; owner_user_id: string }[] };
     for (const r of results) {
-      const tags: string[] = JSON.parse(r.tags ?? "[]");
-      if (tags.includes("private") && r.owner_user_id !== userId) continue;
-      visible.push(r.id);
+      if ((userId && r.owner_user_id === userId) || r.visibility === "public") visible.push(r.id);
     }
   }
   return visible;
@@ -292,7 +502,7 @@ async function hydrateGraphEntries(ids: string[], env: Env): Promise<Map<string,
     const batch = ids.slice(i, i + D1_MAX_BOUND_PARAMS);
     const ph = batch.map(() => "?").join(", ");
     const { results } = await env.DB.prepare(
-      `SELECT id, content, tags, source, created_at, owner_user_id FROM entries WHERE id IN (${ph})`
+      `SELECT id, content, tags, source, created_at, owner_user_id, visibility FROM entries WHERE id IN (${ph})`
     ).bind(...batch).all() as { results: Record<string, any>[] };
     for (const r of results) map.set(r.id as string, r);
   }
@@ -323,9 +533,8 @@ export async function getConnections(id: string, type: string | undefined, env: 
   for (const n of neighbors) {
     const row = rows.get(n.id);
     if (!row) continue; // neighbor was deleted (cascade should prevent this) — skip dangling
-    // Visibility filter: exclude other users' private entries
     const tags: string[] = JSON.parse(row.tags ?? "[]");
-    if (userId && tags.includes("private") && (row as any).owner_user_id !== userId) continue;
+    if (!((userId && row.owner_user_id === userId) || row.visibility === "public")) continue;
     out.push({
       id: n.id,
       content: row.content as string,
@@ -394,7 +603,7 @@ export async function buildGraph(opts: { seed?: string; limit?: number; userId?:
     const batch = nodeIds.slice(i, i + D1_MAX_BOUND_PARAMS);
     const ph = batch.map(() => "?").join(", ");
     const { results } = await env.DB.prepare(
-      `SELECT id, content, tags, importance_score, created_at, owner_user_id FROM entries WHERE id IN (${ph})`
+      `SELECT id, content, tags, importance_score, created_at, owner_user_id, visibility FROM entries WHERE id IN (${ph})`
     ).bind(...batch).all() as { results: Record<string, any>[] };
     for (const r of results) nodeRows.set(r.id as string, r);
   }
@@ -404,8 +613,7 @@ export async function buildGraph(opts: { seed?: string; limit?: number; userId?:
     const r = nodeRows.get(id);
     if (!r) continue;
     const tags: string[] = JSON.parse(r.tags ?? "[]");
-    // Visibility filter: exclude other users' private entries
-    if (opts.userId && tags.includes("private") && (r as any).owner_user_id !== opts.userId) continue;
+    if (!((opts.userId && r.owner_user_id === opts.userId) || r.visibility === "public")) continue;
     nodes.push({
       id,
       label: (r.content as string).slice(0, 80),

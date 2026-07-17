@@ -1,8 +1,14 @@
 # ADR-0002: Snapshots Before Every Mutation
 
-**Status:** Accepted  
+**Status:** Amended 2026-07-16
 **Date:** 2026-07-13  
 **Deciders:** Nikolay Trakiyski  
+
+> Snapshot creation is now synchronous and guarded by the same revision check
+> as the mutation. It covers every user-visible entry-state transition,
+> including lifecycle, epistemic status, and visibility. Derived counters and
+> ranking metadata are intentionally not user-visible versions. Restore still
+> creates a new identity and lineage.
 
 ## Context
 

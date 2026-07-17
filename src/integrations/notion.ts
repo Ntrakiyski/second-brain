@@ -8,7 +8,7 @@
  */
 
 import type { IntegrationEnv, IntegrationProvider, ItemMapEntry, MirrorStore, SyncOutcome } from "./framework";
-import { loadIntegration, saveIntegration } from "./framework";
+import { loadIntegration, redactIntegrationError, saveIntegration } from "./framework";
 
 // ─── API client ───────────────────────────────────────────────────────────────
 
@@ -192,7 +192,7 @@ export function buildPageContent(title: string, url: string, text: string): stri
 
 export interface SyncPlan {
   changed: NotionPageMeta[]; // new or edited, oldest first so partial batches converge
-  deleted: string[];         // page ids whose mirrors should be removed
+  deleted: string[];         // compatibility name: mirrors to archive, never hard-delete
 }
 
 export function computeSyncPlan(
@@ -205,7 +205,7 @@ export function computeSyncPlan(
     .sort((a, b) => (a.lastEdited < b.lastEdited ? -1 : 1));
 
   const deleted: string[] = [];
-  // Archived/trashed pages are an explicit delete signal even on a truncated listing.
+  // Archived/trashed pages are an explicit source-removal signal even on a truncated listing.
   for (const p of pages) {
     if (p.archived && itemMap[p.id]) deleted.push(p.id);
   }
@@ -223,8 +223,12 @@ export function computeSyncPlan(
 
 // ─── Sync loop ────────────────────────────────────────────────────────────────
 
-async function runNotionSync(env: IntegrationEnv, store: MirrorStore): Promise<SyncOutcome> {
-  const record = await loadIntegration(env, notionProvider.id);
+async function runNotionSync(
+  env: IntegrationEnv,
+  userId: string,
+  store: MirrorStore,
+): Promise<SyncOutcome> {
+  const record = await loadIntegration(env, userId, notionProvider.id);
   if (!record) return { ok: false, error: "Notion is not connected" };
 
   let pages: NotionPageMeta[];
@@ -233,9 +237,9 @@ async function runNotionSync(env: IntegrationEnv, store: MirrorStore): Promise<S
     ({ pages, complete } = await notionListPages(record.credentials.token));
   } catch (e) {
     record.status = "error";
-    record.lastSyncError = e instanceof Error ? e.message : String(e);
+    record.lastSyncError = redactIntegrationError(e, [record.credentials.token]);
     record.updatedAt = Date.now();
-    await saveIntegration(env, record);
+    await saveIntegration(env, userId, record);
     return { ok: false, error: record.lastSyncError };
   }
 
@@ -248,19 +252,30 @@ async function runNotionSync(env: IntegrationEnv, store: MirrorStore): Promise<S
       const text = await notionFetchPageText(record.credentials.token, page.id);
       const content = buildPageContent(page.title, page.url, text);
       const existing = record.itemMap[page.id];
-      if (existing && await store.updateEntry(existing.entryId, content)) {
+      const write = {
+        externalItemId: page.id,
+        version: page.lastEdited,
+        content,
+        tags: [notionProvider.id],
+        sourceUrl: page.url || null,
+        title: page.title,
+      };
+      if (existing && await store.updateEntry(existing.entryId, write)) {
         record.itemMap[page.id] = { entryId: existing.entryId, version: page.lastEdited };
         updated++;
       } else {
         // New page — or its mirror was deleted out-of-band; (re-)create it.
-        const entryId = await store.createEntry(content, [notionProvider.id], notionProvider.id);
+        const entryId = await store.createEntry(write);
         record.itemMap[page.id] = { entryId, version: page.lastEdited };
         created++;
       }
     } catch (e) {
       // Per-page failure is non-fatal: the itemMap doesn't advance for this
       // page, so the next sync retries it.
-      console.error(`Notion sync failed for page ${page.id} (non-fatal):`, e);
+      console.error(
+        `Notion sync failed for page ${page.id} (non-fatal):`,
+        redactIntegrationError(e, [record.credentials.token]),
+      );
       failed++;
     }
   }
@@ -270,11 +285,16 @@ async function runNotionSync(env: IntegrationEnv, store: MirrorStore): Promise<S
     const mapped = record.itemMap[pageId];
     if (!mapped) continue;
     try {
-      await store.deleteEntry(mapped.entryId);
+      // Unattended source sync may only archive/deprecate. Hard forget is an
+      // explicit human-only compliance action exposed by disconnect+purge.
+      await store.archiveEntry(pageId, mapped.entryId);
       delete record.itemMap[pageId];
       deleted++;
     } catch (e) {
-      console.error(`Notion mirror delete failed for page ${pageId} (non-fatal):`, e);
+      console.error(
+        `Notion mirror archive failed for page ${pageId} (non-fatal):`,
+        redactIntegrationError(e, [record.credentials.token]),
+      );
     }
   }
 
@@ -282,7 +302,7 @@ async function runNotionSync(env: IntegrationEnv, store: MirrorStore): Promise<S
   record.lastSyncedAt = Date.now();
   record.lastSyncError = null;
   record.updatedAt = Date.now();
-  await saveIntegration(env, record);
+  await saveIntegration(env, userId, record);
 
   return {
     ok: true,

@@ -118,9 +118,11 @@ export {
   GraphNeighbor,
   Connection,
   getConnections,
+  getEdgeHistory,
   GraphNode,
   GraphView,
   buildGraph,
+  restoreEdgeVersion,
   neighborsFromVectorQuery,
   filterVisibleIds,
 } from "./graph";
@@ -206,6 +208,34 @@ export {
   getAutonomyStats,
 } from "./autonomy";
 export type { GateResult } from "./autonomy";
+
+export {
+  commitEntryVersion,
+  EntryVersionError,
+  EntryVersionValidationError,
+  EntryVersionNotFoundError,
+  EntryVersionOwnershipError,
+  EntryVersionRevisionConflictError,
+  EntryVersionVectorStageError,
+  EntryVersionCommitError,
+} from "./entry-version-service";
+
+export { drainVectorCleanupQueue } from "./vector-cleanup";
+export type { VectorCleanupResult } from "./vector-cleanup";
+export {
+  stageOverlapAwarenessIntent,
+  discardOverlapAwarenessIntent,
+  reconcileOverlapAwarenessIntent,
+  reconcilePendingOverlapAwareness,
+  listAwarenessEvents,
+  markAwarenessEventRead,
+} from "./awareness-events";
+export type {
+  CommitEntryVersionInput,
+  CommitEntryVersionResult,
+  EntryVersionErrorCode,
+  VersionedMutationKind,
+} from "./entry-version-service";
 
 export {
   INTEGRATION_PROVIDERS,

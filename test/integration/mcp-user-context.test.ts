@@ -119,7 +119,7 @@ describe("MCP user context — per-user scoping", () => {
       }
     });
 
-    it("defaults to empty owner_user_id when no userId", async () => {
+    it("uses the canonical system owner when no userId is provided", async () => {
       const { ctx } = makeCtx();
       const result = await captureEntry(
         "Test note without user",
@@ -133,7 +133,7 @@ describe("MCP user context — per-user scoping", () => {
         const row = await db.prepare(
           `SELECT owner_user_id FROM entries WHERE id = ?`
         ).bind(result.id).first() as { owner_user_id: string } | null;
-        expect(row?.owner_user_id ?? "").toBe("");
+        expect(row?.owner_user_id).toBe("_system");
       }
     });
   });

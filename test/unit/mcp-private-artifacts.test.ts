@@ -3,11 +3,21 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { buildMcpServer } from "../../src/mcp";
 import { makeTestDb, makeTestEnv } from "../helpers/make-env";
 import { D1Mock } from "../helpers/d1-mock";
+import type { HumanActorContext } from "../../src/types";
 
 const ctx = {
   waitUntil: (_: Promise<any>) => {},
   passThroughOnException: () => {},
 } as unknown as ExecutionContext;
+
+const humanActor = (userId: string): HumanActorContext => ({
+  kind: "human" as const,
+  actorId: userId,
+  userId,
+  role: "member" as const,
+  authMethod: "test",
+  scopes: new Set(),
+});
 
 function callTool(server: ReturnType<typeof buildMcpServer>, name: string, input: Record<string, unknown>) {
   return (server as any)._registeredTools[name].handler(input, {});
@@ -29,7 +39,7 @@ describe("MCP private child artifacts", () => {
       id: "hidden-passage", entry_id: "hidden", content: "passage secret",
       section: "Secret", start_offset: 0, end_offset: 14, created_at: 1,
     });
-    const server = buildMcpServer(makeTestEnv(db), ctx, "alice");
+    const server = buildMcpServer(makeTestEnv(db), ctx, humanActor("alice"));
 
     const hidden = await callTool(server, "passages", { entry_id: "hidden" });
     db.entries = db.entries.filter((entry: any) => entry.id !== "hidden");
@@ -48,7 +58,7 @@ describe("MCP private child artifacts", () => {
       id: "secret-snapshot", entry_id: "history", content: "historical secret",
       tags: "[]", source: "api", created_at: 1,
     });
-    const server = buildMcpServer(makeTestEnv(db), ctx, "alice");
+    const server = buildMcpServer(makeTestEnv(db), ctx, humanActor("alice"));
 
     const result = await callTool(server, "restore", {
       entry_id: "history",
@@ -65,7 +75,7 @@ describe("MCP private child artifacts", () => {
       { id: "private", content: "private", tags: JSON.stringify(["private"]), source: "api", created_at: 1, vector_ids: "[]", owner_user_id: "alice" },
       { id: "hidden", content: "hidden", tags: JSON.stringify(["private"]), source: "api", created_at: 1, vector_ids: "[]", owner_user_id: "bob" },
     );
-    const server = buildMcpServer(makeTestEnv(db), ctx, "alice");
+    const server = buildMcpServer(makeTestEnv(db), ctx, humanActor("alice"));
 
     const boundary = await callTool(server, "link", { source_id: "public", target_id: "private", type: "relates_to" });
     const hidden = await callTool(server, "link", { source_id: "public", target_id: "hidden", type: "relates_to" });

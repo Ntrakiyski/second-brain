@@ -44,20 +44,22 @@ The team layer. Multiple users and agents share a collective memory with visibil
 - Visibility enforcement — private entries stay private, public entries shared
 
 ### 3. Operator
-The agent that operates the memory. Hermes connects to Second Brain via MCP and acts as the memory's brain — reading, writing, linking, retrieving, classifying, compressing. The operator is the bridge between raw storage and intelligent knowledge management. It follows rules, respects governance, and never acts without bounds.
+The governed control plane for any agent that operates the memory. It sits between an operator runtime and Second Brain's storage services, enforcing identity, scope, policy, approval, and audit rules on every action. Hermes is the first intended operator runtime, but it is a replaceable client of this layer — never the memory's canonical store or a privileged database process.
 
 **What this means:**
-- Any MCP-compatible agent can operate the memory — not just one vendor
-- Operator follows autonomy levels: automatic (search, draft, link), gated (canonical, merge), never (delete)
-- All mutations go through MCP tools — no direct database access
-- Every action is auditable — logged to agent_runs and agent_events
-- Governance: Hermes proposes, humans approve
+- Any compatible agent can operate the memory through governed MCP/API tools — not just one vendor or runtime
+- Every operator authenticates as a dedicated, scoped service identity that humans can rotate, suspend, or revoke
+- Operator follows autonomy levels: automatic (read and constrained private draft), gated (all consequential knowledge changes), never (hard delete and access-control changes)
+- All mutations go through policy-enforced application tools — no direct D1, Vectorize, or R2 access
+- Every governed mutation has a fail-closed audit envelope in `agent_runs` and `agent_events`
+- Governance: operators propose, humans approve; execution rechecks policy and preconditions
 
 **Deliverables:**
-- Hermes charter — defined agent ↔ memory boundary via MCP
+- [Canonical Hermes charter](research/hermes-living-knowledge-agent-charter.md) — defined agent ↔ memory boundary
+- Service identities — least-privilege scopes, expiry, rotation, suspension, and revocation
 - Autonomy levels — automatic / gated / never, enforced per action
-- MCP tool interface — 10+ tools for agents to operate memory
-- Audit logging — every agent action tracked to `agent_runs` and `agent_events`
+- Governed MCP/API interface — actor-neutral tools for agents to operate memory
+- Mandatory audit logging — every governed mutation tracked to `agent_runs` and `agent_events`
 - Proposal inbox — gated actions surface to humans before execution
 
 ### 4. Autonomous Operations
@@ -96,3 +98,17 @@ The operator as a team partner — not just memory, but a colleague. The system 
 | Passive storage | Active agent with priorities, budgets, governance |
 
 The competitors built better shovels. We're building the gardener.
+
+---
+
+## Delivery Sequence
+
+The operator product and the Hermes runtime are deliberately separate deliverables:
+
+1. **Pillar 1 — Memory:** establish immutable provenance, versioned state, temporal recall, evidence, and reversible user-visible history.
+2. **Pillar 2 — Shared Knowledge Base:** establish explicit visibility, team ownership, role governance, and tenant-safe integrations.
+3. **Pillar 3 — Operator control plane:** establish service identities, policy decisions, mandatory audit, human-reviewed proposals, and governed execution.
+4. **Deploy Hermes last:** connect Hermes through the same governed MCP/API surface available to any replacement operator. Follow the [operator runtime and deployment guide](operator-runtime-deployment.md).
+5. **Pillar 4 — Autonomous Operations:** expand schedules and unattended work only after the Hermes shadow/pilot stages meet the safety and quality gates.
+
+Hermes must not be used to compensate for missing guarantees in Pillars 1–3. Replacing Hermes must require a credential rotation and runtime change, not a data migration or storage rewrite.

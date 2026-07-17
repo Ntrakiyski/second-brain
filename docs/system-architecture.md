@@ -128,7 +128,7 @@ The backend is organized across multiple TypeScript modules (re-exported through
 
 Two handler paths wrapped in `OAuthProvider`:
 
-- **`apiHandler`** — serves `/mcp` (MCP protocol), resolves per-user identity from `X-Second-Brain-User` + `X-Second-Brain-User-Key` headers
+- **`apiHandler`** — serves `/mcp` (MCP protocol), resolves a verified human or service actor, and revalidates persisted service identity/credential state before building the actor-scoped tool surface
 - **`defaultHandler`** — all REST routes (`/recall`, `/remember`, `/forget`, `/link`, `/list`, `/graph`, `/health`, etc.) + static assets from `public/`
 
 The `OAuthProvider` (from `@cloudflare/workers-oauth-provider`) auto-serves:
@@ -679,10 +679,12 @@ Stored as entry tagged `["auto-pattern"]`. Hidden from normal recall until confi
 
 ## 11. Auth & Multi-User
 
-### Two-Layer Auth
+### Human Request Auth
 
 1. **Deployment token** (`AUTH_TOKEN` secret) — Bearer header on every request
 2. **User credentials** — `X-Second-Brain-User` (username) + `X-Second-Brain-User-Key` (`sbu_xxx.yyy` format)
+
+MCP clients may instead authenticate directly with a personal API key. Automated operators use dedicated service credentials and the actor/scoping path described in section 13; the deployment token is never treated as an identity.
 
 ### User Key Format
 
@@ -690,10 +692,10 @@ Stored as entry tagged `["auto-pattern"]`. Hidden from normal recall until confi
 
 ### Visibility Enforcement
 
-`buildVisibilityClause(userId)` at `:1373`:
+`buildVisibilityClause(userId)`:
 
 ```sql
-(owner_user_id = ? OR tags NOT LIKE '%"private"%')
+(owner_user_id = ? OR visibility = 'public')
 ```
 
 Applied to every entry-reading query. Users see:
@@ -724,33 +726,45 @@ Provider pattern in `src/integrations/`:
 
 ## 13. Agent Governance (Pillar 3 — Operator)
 
-Infrastructure for external agents (e.g., Hermes) to operate on Second Brain with auditability and human oversight.
+Infrastructure for external agents to operate on Second Brain with least-privilege identity, fail-closed audit, and human oversight. The normative runtime boundary is [Operator Runtime and Hermes Deployment](operator-runtime-deployment.md); Hermes behavior is governed by the [canonical charter](research/hermes-living-knowledge-agent-charter.md).
 
-### Audit Logging (`src/audit.ts`)
+Hermes is a replaceable client of this control plane. It is not a storage component and never receives direct D1, Vectorize, R2, migration, or deployment access.
 
-Every MCP session and tool call is logged to D1:
+### Actor and service identity
 
-- **`agent_runs`** — one row per MCP session (user_id, started_at, completed_at, tool_count)
-- **`agent_events`** — one row per tool invocation (run_id, tool_name, input_summary, output_summary, duration_ms, error)
+- Human, service, and internal-system actors use explicit actor contexts.
+- Service identities have a human owner, status, autonomy profile, and independently rotatable credentials.
+- Raw service secrets are shown once; D1 stores hashes, credential prefixes, scopes, status, expiry, and usage metadata.
+- Authentication rechecks persisted identity status, credential status, expiry, and granted scopes. A request cannot expand scopes carried by its credential.
+- The default Hermes identity can read, create constrained private drafts, and create/read proposals. Approved-execution scopes are excluded by default.
 
-The `audited()` wrapper in `src/mcp.ts` automatically intercepts every tool handler — no per-tool instrumentation needed.
+### Policy (`src/operator-policy.ts`)
 
-### Autonomy Governance (`src/autonomy.ts`)
+Each governed request produces `allow`, `proposal_required`, or `deny` with the policy version, required/granted scopes, and reason:
 
-Each MCP tool has a governance level defined in `TOOL_AUTONOMY` (`src/config.ts`):
+| Service action | Decision |
+|---|---|
+| Visibility-scoped read with `memory:read` | Direct allow |
+| Create private + draft + epistemic-candidate entry, with merge/auto-deprecation disabled | Direct allow with draft/audit/run scopes |
+| Append, update, merge, restore, status/epistemic change, or edge mutation | Human-reviewable proposal required |
+| Approve/reject a proposal | Denied; human-only |
+| Hard forget, direct unlink, permissions, credentials, deployment, or storage access | Denied |
 
-| Level | Behavior | Tools |
-|-------|----------|-------|
-| `automatic` | Executes without approval | recall, list_recent, connections, passages, list-proposals |
-| `gated` | Requires human approval | remember, append, update, link, unlink, set_status, propose_edge, approve/reject-proposal, restore |
-| `never` | Blocked for autonomous agents | forget |
+### Mandatory audit (`src/mandatory-audit.ts`)
 
-`checkToolAutonomy(toolName)` returns `{ allowed: true/false, reason, level }`. Unknown tools default to `gated`.
+Every governed mutation first persists a requested row/event, then runs one bounded mutation, then records success or failure. If the requested audit cannot be persisted, the mutation does not run.
+
+- **`agent_runs`** — actor/service/credential attribution, policy/scopes, correlation/proposal/target IDs, status, and redacted request/result hashes.
+- **`agent_events`** — ordered requested/policy/started/succeeded/failed events for the run.
+
+### Action proposals (`src/action-proposals.ts`)
+
+Consequential service actions are stored as idempotent proposals with action type, payload hash, targets, expected revision/preconditions, risk, expiry, evidence, policy version, reviewer, and execution result. Only a human can approve/reject. Execution uses compare-and-set status transitions and rechecks current policy and preconditions; approval alone is not authority to bypass them.
 
 ### Scheduled Jobs
 
 - **Second Brain cron** (`0 1 * * *`): nightly compression, graph pass, integration sync, cross-user contradiction detection
-- **Hermes** (external agent): morning digest, source scouting, research execution, knowledge extraction — runs as scheduled MCP sessions, all audited via `agent_runs`/`agent_events`
+- **Hermes** (external and replaceable): source scouting, bounded research, maintenance proposals, and morning digest through governed MCP/API calls only. It is deployed after Pillars 1–3 and starts in read-only shadow mode.
 
 ---
 

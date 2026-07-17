@@ -12,6 +12,7 @@ import { apiHandler } from "../../src/api-handler";
 import { buildMcpServer } from "../../src/mcp";
 import { makeTestDb, makeTestEnv } from "../helpers/make-env";
 import { req } from "../helpers/make-request";
+import type { HumanActorContext } from "../../src/types";
 
 const MCP_BODY = { jsonrpc: "2.0", id: 1, method: "initialize" };
 
@@ -22,6 +23,15 @@ function makeCtx(props?: unknown): ExecutionContext {
     passThroughOnException: () => {},
   } as unknown as ExecutionContext;
 }
+
+const humanActor = (userId: string): HumanActorContext => ({
+  kind: "human" as const,
+  actorId: userId,
+  userId,
+  role: "member" as const,
+  authMethod: "test",
+  scopes: new Set(),
+});
 
 async function addUser(
   db: ReturnType<typeof makeTestDb>,
@@ -198,7 +208,12 @@ describe("MCP API identity guard", () => {
     expect(await response.text()).toBe("mcp");
     expect(vi.mocked(createMcpHandler).mock.calls[0]?.[1]).toEqual({
       authContext: {
-        props: { userId: "oauth-alice", actorSource: "oauth_props" },
+        props: {
+          actorKind: "human",
+          actorId: "oauth-alice",
+          ownerUserId: "oauth-alice",
+          actorSource: "oauth_props",
+        },
       },
     });
   });
@@ -215,7 +230,12 @@ describe("MCP API identity guard", () => {
     expect(response.status).toBe(200);
     expect(vi.mocked(createMcpHandler).mock.calls[0]?.[1]).toEqual({
       authContext: {
-        props: { userId: "user-alice", actorSource: "user_credentials" },
+        props: {
+          actorKind: "human",
+          actorId: "user-alice",
+          ownerUserId: "user-alice",
+          actorSource: "user_credentials",
+        },
       },
     });
   });
@@ -238,10 +258,10 @@ describe("MCP API identity guard", () => {
 
   it("refuses direct construction with an invalid actor", () => {
     expect(isValidMcpActorId("scoped-agent")).toBe(true);
-    expect(() => buildMcpServer(makeTestEnv(), makeCtx(), "")).toThrow(
+    expect(() => buildMcpServer(makeTestEnv(), makeCtx(), humanActor(""))).toThrow(
       "A verified, scoped MCP actor is required",
     );
-    expect(() => buildMcpServer(makeTestEnv(), makeCtx(), "anonymous")).toThrow(
+    expect(() => buildMcpServer(makeTestEnv(), makeCtx(), humanActor("anonymous"))).toThrow(
       "A verified, scoped MCP actor is required",
     );
   });

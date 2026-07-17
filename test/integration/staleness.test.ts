@@ -3,6 +3,7 @@ import { detectStaleness } from "../../src/testing";
 import { makeTestEnv, makeTestDb } from "../helpers/make-env";
 import type { Env } from "../../src/testing";
 import { D1Mock } from "../helpers/d1-mock";
+import { TEST_USER_ID } from "../helpers/test-principal";
 
 describe("Staleness detection (Ticket 06)", () => {
   let env: Env;
@@ -18,14 +19,16 @@ describe("Staleness detection (Ticket 06)", () => {
     db.entries.push({
       id: "expired-1", content: "Expired fact", tags: "[]", source: "api",
       created_at: now - 200000, vector_ids: "[]", recall_count: 0, importance_score: 0,
-      contradiction_wins: 0, contradiction_losses: 0, owner_user_id: "",
+      contradiction_wins: 0, contradiction_losses: 0, owner_user_id: TEST_USER_ID,
+      visibility: "public",
       valid_from: now - 200000, valid_to: now - 100000, recorded_at: now - 200000,
       epistemic_status: "canonical",
     });
     db.entries.push({
       id: "active-1", content: "Active fact", tags: "[]", source: "api",
       created_at: now - 200000, vector_ids: "[]", recall_count: 0, importance_score: 0,
-      contradiction_wins: 0, contradiction_losses: 0, owner_user_id: "",
+      contradiction_wins: 0, contradiction_losses: 0, owner_user_id: TEST_USER_ID,
+      visibility: "public",
       valid_from: now - 200000, valid_to: null, recorded_at: now - 200000,
       epistemic_status: "canonical",
     });
@@ -43,7 +46,8 @@ describe("Staleness detection (Ticket 06)", () => {
     db.entries.push({
       id: "low-conf-entry", content: "Low confidence", tags: "[]", source: "api",
       created_at: now - 200000, vector_ids: "[]", recall_count: 0, importance_score: 0,
-      contradiction_wins: 0, contradiction_losses: 0, owner_user_id: "",
+      contradiction_wins: 0, contradiction_losses: 0, owner_user_id: TEST_USER_ID,
+      visibility: "public",
       valid_from: now - 200000, valid_to: null, recorded_at: now - 200000,
       epistemic_status: "canonical",
     });
@@ -51,6 +55,7 @@ describe("Staleness detection (Ticket 06)", () => {
     db.edges.push({
       source_id: "source-1", target_id: "low-conf-entry", type: "relates_to",
       weight: 0.3, provenance: "inferred", metadata: JSON.stringify({ confidence: 0.3 }),
+      confidence: 0.3,
       created_at: now, updated_at: now,
     });
 
@@ -65,7 +70,8 @@ describe("Staleness detection (Ticket 06)", () => {
     db.entries.push({
       id: "already-stale", content: "Already stale", tags: "[]", source: "api",
       created_at: now - 200000, vector_ids: "[]", recall_count: 0, importance_score: 0,
-      contradiction_wins: 0, contradiction_losses: 0, owner_user_id: "",
+      contradiction_wins: 0, contradiction_losses: 0, owner_user_id: TEST_USER_ID,
+      visibility: "public",
       valid_from: now - 200000, valid_to: now - 100000, recorded_at: now - 200000,
       epistemic_status: "stale",
     });
@@ -81,13 +87,15 @@ describe("Staleness detection (Ticket 06)", () => {
     db.entries.push({
       id: "high-conf-entry", content: "High confidence", tags: "[]", source: "api",
       created_at: now - 200000, vector_ids: "[]", recall_count: 0, importance_score: 0,
-      contradiction_wins: 0, contradiction_losses: 0, owner_user_id: "",
+      contradiction_wins: 0, contradiction_losses: 0, owner_user_id: TEST_USER_ID,
+      visibility: "public",
       valid_from: now - 200000, valid_to: null, recorded_at: now - 200000,
       epistemic_status: "canonical",
     });
     db.edges.push({
       source_id: "source-2", target_id: "high-conf-entry", type: "relates_to",
       weight: 0.8, provenance: "inferred", metadata: JSON.stringify({ confidence: 0.8 }),
+      confidence: 0.8,
       created_at: now, updated_at: now,
     });
 

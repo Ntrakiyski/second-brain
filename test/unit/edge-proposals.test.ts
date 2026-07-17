@@ -12,7 +12,7 @@ function seedUser(db: D1Mock, id: string, username: string) {
 }
 
 function seedEntry(db: D1Mock, id: string, content: string, owner_user_id = "") {
-  db.entries.push({ id, content, tags: "[]", source: "api", created_at: 1000, vector_ids: "[]", importance_score: 0, owner_user_id });
+  db.entries.push({ id, content, tags: "[]", source: "api", created_at: 1000, vector_ids: "[]", importance_score: 0, owner_user_id, visibility: "public" });
 }
 
 describe("Edge Proposals", () => {
@@ -171,7 +171,7 @@ describe("Edge Proposals", () => {
 
       const res = await worker.fetch(req("POST", "/edge-proposals/self-proposal/approve"), env, ctx);
 
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(409);
       expect(db.edgeProposals.find((proposal: any) => proposal.id === "self-proposal")?.status).toBe("pending");
       expect(db.edges).toHaveLength(0);
     });

@@ -3,6 +3,7 @@ import { compressTag } from "../../src/testing";
 import { makeTestDb, makeTestEnv } from "../helpers/make-env";
 import { D1Mock } from "../helpers/d1-mock";
 import type { Env } from "../../src/testing";
+import { TEST_USER_ID } from "../helpers/test-principal";
 
 function makeSseStream(response: string) {
   return new ReadableStream({
@@ -45,6 +46,8 @@ function seedEntries(db: D1Mock, tag: string, count: number, overrides: Partial<
       vector_ids: "[]",
       recall_count: 0,
       importance_score: 0,
+      owner_user_id: TEST_USER_ID,
+      visibility: "public",
       ...overrides,
     });
   }
@@ -64,7 +67,7 @@ describe("compressTag()", () => {
   it("returns early when fewer than 10 compressible entries exist", async () => {
     seedEntries(db, "work", 9);
     const { ctx } = makeCtx();
-    const result = await compressTag("work", env, ctx);
+    const result = await compressTag("work", env, ctx, TEST_USER_ID);
     expect(result.synthesizedId).toBeNull();
     expect(result.entriesUsed).toBe(0);
   });
@@ -74,9 +77,10 @@ describe("compressTag()", () => {
     db.entries.push({
       id: "rolled", content: "old memory", tags: JSON.stringify(["work", "rolled-up"]),
       source: "api", created_at: Date.now(), vector_ids: "[]", recall_count: 0, importance_score: 0,
+      owner_user_id: TEST_USER_ID, visibility: "public",
     });
     const { ctx } = makeCtx();
-    const result = await compressTag("work", env, ctx);
+    const result = await compressTag("work", env, ctx, TEST_USER_ID);
     // 9 compressible + 1 rolled-up = still < 10 compressible → bail
     expect(result.synthesizedId).toBeNull();
   });
@@ -86,9 +90,10 @@ describe("compressTag()", () => {
     db.entries.push({
       id: "critical", content: "critical memory", tags: JSON.stringify(["work"]),
       source: "api", created_at: Date.now(), vector_ids: "[]", recall_count: 0, importance_score: 4,
+      owner_user_id: TEST_USER_ID, visibility: "public",
     });
     const { ctx } = makeCtx();
-    const result = await compressTag("work", env, ctx);
+    const result = await compressTag("work", env, ctx, TEST_USER_ID);
     // 9 compressible + 1 high-importance (excluded) → bail
     expect(result.synthesizedId).toBeNull();
   });
@@ -104,9 +109,11 @@ describe("compressTag()", () => {
       vector_ids: "[]",
       recall_count: 0,
       importance_score: 0,
+      owner_user_id: TEST_USER_ID,
+      visibility: "public",
     });
     const { ctx } = makeCtx();
-    const result = await compressTag("work", env, ctx);
+    const result = await compressTag("work", env, ctx, TEST_USER_ID);
     expect(result.synthesizedId).toBeNull();
     expect(env.AI.run).not.toHaveBeenCalled();
   });
@@ -116,7 +123,7 @@ describe("compressTag()", () => {
   it("stores a digest entry with clean header (no source_ids)", async () => {
     seedEntries(db, "work", 12);
     const { ctx, drain } = makeCtx();
-    const result = await compressTag("work", env, ctx);
+    const result = await compressTag("work", env, ctx, TEST_USER_ID);
     await drain();
     expect(result.synthesizedId).not.toBeNull();
     const digest = db.entries.find(e => e.id === result.synthesizedId);
@@ -128,7 +135,7 @@ describe("compressTag()", () => {
   it("digest entry is tagged synthesized and with the target tag", async () => {
     seedEntries(db, "work", 12);
     const { ctx, drain } = makeCtx();
-    const result = await compressTag("work", env, ctx);
+    const result = await compressTag("work", env, ctx, TEST_USER_ID);
     await drain();
     const digest = db.entries.find(e => e.id === result.synthesizedId);
     const tags: string[] = JSON.parse(digest.tags);
@@ -139,7 +146,7 @@ describe("compressTag()", () => {
   it("tags all source entries as rolled-up", async () => {
     seedEntries(db, "work", 12);
     const { ctx, drain } = makeCtx();
-    await compressTag("work", env, ctx);
+    await compressTag("work", env, ctx, TEST_USER_ID);
     await drain();
     const sources = db.entries.filter(e => !JSON.parse(e.tags).includes("synthesized"));
     expect(sources.length).toBe(12);
@@ -151,7 +158,7 @@ describe("compressTag()", () => {
   it("appends [Digest: {id}] to each source entry's content", async () => {
     seedEntries(db, "work", 12);
     const { ctx, drain } = makeCtx();
-    const result = await compressTag("work", env, ctx);
+    const result = await compressTag("work", env, ctx, TEST_USER_ID);
     await drain();
     const sources = db.entries.filter(e => !JSON.parse(e.tags).includes("synthesized"));
     sources.forEach(e => {
@@ -162,7 +169,7 @@ describe("compressTag()", () => {
   it("returns entriesUsed equal to the number of source entries", async () => {
     seedEntries(db, "work", 12);
     const { ctx, drain } = makeCtx();
-    const result = await compressTag("work", env, ctx);
+    const result = await compressTag("work", env, ctx, TEST_USER_ID);
     await drain();
     expect(result.entriesUsed).toBe(12);
   });
@@ -170,7 +177,7 @@ describe("compressTag()", () => {
   it("returns the synthesis text", async () => {
     seedEntries(db, "work", 12);
     const { ctx, drain } = makeCtx();
-    const result = await compressTag("work", env, ctx);
+    const result = await compressTag("work", env, ctx, TEST_USER_ID);
     await drain();
     expect(result.text).toBe("Work on the API redesign is progressing well with REST chosen over GraphQL.");
   });
@@ -180,9 +187,10 @@ describe("compressTag()", () => {
     db.entries.push({
       id: "critical", content: "critical strategy decision", tags: JSON.stringify(["work"]),
       source: "api", created_at: Date.now(), vector_ids: "[]", recall_count: 0, importance_score: 5,
+      owner_user_id: TEST_USER_ID, visibility: "public",
     });
     const { ctx, drain } = makeCtx();
-    const result = await compressTag("work", env, ctx);
+    const result = await compressTag("work", env, ctx, TEST_USER_ID);
     await drain();
     // Digest succeeds on the 10 compressible entries
     expect(result.synthesizedId).not.toBeNull();
@@ -197,14 +205,14 @@ describe("compressTag()", () => {
   it("protects entries recalled >= 2 times from compression", async () => {
     seedEntries(db, "work", 12, { recall_count: 5 });
     const { ctx } = makeCtx();
-    const result = await compressTag("work", env, ctx);
+    const result = await compressTag("work", env, ctx, TEST_USER_ID);
     expect(result.synthesizedId).toBeNull();
   });
 
   it("treats never-recalled entries as eligible", async () => {
     seedEntries(db, "work", 12, { recall_count: 0 });
     const { ctx, drain } = makeCtx();
-    const result = await compressTag("work", env, ctx);
+    const result = await compressTag("work", env, ctx, TEST_USER_ID);
     await drain();
     expect(result.synthesizedId).not.toBeNull();
     expect(result.entriesUsed).toBe(12);
@@ -213,7 +221,7 @@ describe("compressTag()", () => {
   it("treats recall_count=1 entries older than 60 days as eligible", async () => {
     seedEntries(db, "work", 12, { recall_count: 1, created_at: Date.now() - 61 * 86400000 });
     const { ctx, drain } = makeCtx();
-    const result = await compressTag("work", env, ctx);
+    const result = await compressTag("work", env, ctx, TEST_USER_ID);
     await drain();
     expect(result.synthesizedId).not.toBeNull();
     expect(result.entriesUsed).toBe(12);
@@ -222,14 +230,14 @@ describe("compressTag()", () => {
   it("protects recall_count=1 entries newer than 60 days", async () => {
     seedEntries(db, "work", 12, { recall_count: 1, created_at: Date.now() - 5 * 86400000 });
     const { ctx } = makeCtx();
-    const result = await compressTag("work", env, ctx);
+    const result = await compressTag("work", env, ctx, TEST_USER_ID);
     expect(result.synthesizedId).toBeNull();
   });
 
   it("protects contradiction survivors (contradiction_wins > 0) from compression", async () => {
     seedEntries(db, "work", 12, { contradiction_wins: 1 });
     const { ctx } = makeCtx();
-    const result = await compressTag("work", env, ctx);
+    const result = await compressTag("work", env, ctx, TEST_USER_ID);
     expect(result.synthesizedId).toBeNull();
   });
 
@@ -240,10 +248,11 @@ describe("compressTag()", () => {
         id: `hot-${i}`, content: `hot ${i}`, tags: JSON.stringify(["work"]),
         source: "api", created_at: Date.now(), vector_ids: "[]",
         recall_count: 9, importance_score: 0, contradiction_wins: 0,
+        owner_user_id: TEST_USER_ID, visibility: "public",
       });
     }
     const { ctx, drain } = makeCtx();
-    const result = await compressTag("work", env, ctx);
+    const result = await compressTag("work", env, ctx, TEST_USER_ID);
     await drain();
     expect(result.entriesUsed).toBe(11);
     for (let i = 0; i < 3; i++) {
@@ -257,7 +266,7 @@ describe("compressTag()", () => {
   it("refuses to compress a kind:* namespaced tag", async () => {
     seedEntries(db, "kind:semantic", 15, { recall_count: 0 });
     const { ctx } = makeCtx();
-    const result = await compressTag("kind:semantic", env, ctx);
+    const result = await compressTag("kind:semantic", env, ctx, TEST_USER_ID);
     expect(result.synthesizedId).toBeNull();
     expect(env.AI.run).not.toHaveBeenCalled();
   });
@@ -265,7 +274,7 @@ describe("compressTag()", () => {
   it("refuses to compress a status:* namespaced tag", async () => {
     seedEntries(db, "status:canonical", 15, { recall_count: 0 });
     const { ctx } = makeCtx();
-    const result = await compressTag("status:canonical", env, ctx);
+    const result = await compressTag("status:canonical", env, ctx, TEST_USER_ID);
     expect(result.synthesizedId).toBeNull();
     expect(env.AI.run).not.toHaveBeenCalled();
   });

@@ -23,12 +23,24 @@ import {
   COMPRESSION_MIN_AGE_MS,
   compressionEligibilitySql,
 } from "./config";
-import { STATUS_PREFIX, KIND_PREFIX, type MemoryStatus } from "./types";
+import {
+  STATUS_PREFIX,
+  KIND_PREFIX,
+  type MemoryStatus,
+  type EpistemicStatus,
+  type ServiceScope,
+  type SystemActorContext,
+} from "./types";
 import { withStatus } from "./tags";
 import { initializeDatabase } from "./db";
-import { captureEntry, createSnapshot } from "./ingest";
+import { captureEntry } from "./ingest";
+import { commitEntryVersion } from "./entry-version-service";
 import { inferEdgesOnWrite } from "./graph";
 import { queryVisibleVectors, vectorMatchParentId } from "./vector-access";
+import { classifyStrictContradiction } from "./duplicates";
+import { createActionProposal } from "./action-proposals";
+import { sha256Hex } from "./governance-utils";
+import { NIGHTLY_CONTRADICTION_SYSTEM_ID } from "./operator-policy";
 
 // ─── Synthesize insight from retrieved memories ───────────────────────────────
 
@@ -166,6 +178,12 @@ type CompressionSource = {
   content: string;
   tags: string[];
   ownerUserId: string;
+  source: string;
+  revision: number;
+  validFrom: number | null;
+  validTo: number | null;
+  epistemicStatus: string;
+  visibility: "private" | "public";
 };
 
 function parseEntryTags(raw: unknown): string[] | null {
@@ -197,8 +215,10 @@ async function authorizeCompressionSources(
     // defending against stale or imperfect query filters, this makes malformed
     // tag metadata fail closed instead of being treated as public.
     const metadata = await env.DB.prepare(
-      `SELECT tags, owner_user_id FROM entries WHERE id = ?`
-    ).bind(id).first<{ tags: string; owner_user_id: string }>();
+      `SELECT tags, owner_user_id, source, revision, valid_from, valid_to,
+              epistemic_status, visibility
+       FROM entries WHERE id = ?`
+    ).bind(id).first<{ tags: string; owner_user_id: string; source: string; revision: number; valid_from: number | null; valid_to: number | null; epistemic_status: string; visibility: string }>();
     if (!metadata) continue;
 
     const tags = parseEntryTags(metadata.tags);
@@ -214,8 +234,21 @@ async function authorizeCompressionSources(
       ? metadata.owner_user_id
       : "";
     if (userId && ownerUserId !== userId) continue;
+    if (metadata.visibility !== "private" && metadata.visibility !== "public") continue;
+    if (!userId && metadata.visibility !== "public") continue;
 
-    sources.push({ id, content, tags, ownerUserId });
+    sources.push({
+      id,
+      content,
+      tags,
+      ownerUserId,
+      source: metadata.source,
+      revision: Number(metadata.revision ?? 0),
+      validFrom: metadata.valid_from ?? null,
+      validTo: metadata.valid_to ?? null,
+      epistemicStatus: metadata.epistemic_status ?? "canonical",
+      visibility: metadata.visibility,
+    });
   }
 
   return sources;
@@ -284,7 +317,7 @@ export async function compressTag(
   const digestTags = [
     "synthesized",
     tag,
-    ...(rows.some(row => row.tags.includes("private")) ? ["private"] : []),
+    ...(rows.some(row => row.visibility === "private") ? ["private"] : []),
   ];
   const result = await captureEntry(content, digestTags, "system", env, ctx, userId);
 
@@ -292,20 +325,30 @@ export async function compressTag(
     return { synthesizedId: null, entriesUsed: 0, text };
   }
 
-  for (const id of rows.map(row => row.id)) {
-    // Snapshot: backup before compression — fire-and-forget (non-fatal)
-    createSnapshot(env, id).catch(e => console.error(`Snapshot creation failed for ${id} (non-fatal):`, e));
+  let rolledUp = 0;
+  for (const row of rows) {
     try {
-      const ownerGuard = userId ? " AND owner_user_id = ?" : "";
-      await env.DB.prepare(
-        `UPDATE entries SET tags = json_insert(tags, '$[#]', 'rolled-up'), content = content || ? WHERE id = ?${ownerGuard}`
-      ).bind(`\n\n[Digest: ${result.id}]`, id, ...(userId ? [userId] : [])).run();
+      const digestReference = `\n\n[Digest: ${result.id}]`;
+      await commitEntryVersion({
+        kind: "compress",
+        actorUserId: row.ownerUserId,
+        entryId: row.id,
+        expectedRevision: row.revision,
+        rawContent: digestReference,
+        materializedContent: row.content + digestReference,
+        tags: row.tags.includes("rolled-up") ? row.tags : [...row.tags, "rolled-up"],
+        source: row.source,
+        validFrom: row.validFrom,
+        validTo: row.validTo,
+        epistemicStatus: row.epistemicStatus as EpistemicStatus,
+      }, env);
+      rolledUp++;
     } catch (e) {
-      console.error(`Failed to update source entry ${id} (non-fatal):`, e);
+      console.error(`Failed to version compressed source entry ${row.id} (non-fatal):`, e);
     }
   }
 
-  return { synthesizedId: result.id, entriesUsed: rows.length, text };
+  return { synthesizedId: result.id, entriesUsed: rolledUp, text };
 }
 
 export async function runNightlyCompression(env: Env, ctx: ExecutionContext): Promise<void> {
@@ -359,33 +402,65 @@ export async function runNightlyCompression(env: Env, ctx: ExecutionContext): Pr
 export async function detectStaleness(env: Env): Promise<void> {
   const now = Date.now();
   const { STALENESS_THRESHOLD_DAYS, STALENESS_CONFIDENCE_THRESHOLD } = await import("./config");
+  const projection = `id, content, tags, source, owner_user_id, revision,
+    valid_from, valid_to, epistemic_status`;
+  const candidates = new Map<string, { row: Record<string, any>; reason: string }>();
 
-  // 1. Entries with valid_to set (superseded by contradicting evidence)
   try {
-    const { meta } = await env.DB.prepare(
-      `UPDATE entries SET epistemic_status = 'stale' WHERE valid_to IS NOT NULL AND epistemic_status != 'stale'`
-    ).run();
-    if (meta?.changes) console.log(`Staleness: ${meta.changes} entries marked stale (valid_to set)`);
+    const { results } = await env.DB.prepare(
+      `SELECT ${projection} FROM entries
+       WHERE valid_to IS NOT NULL AND epistemic_status != 'stale' LIMIT 100`,
+    ).all();
+    for (const row of results as Record<string, any>[]) candidates.set(row.id, { row, reason: "validity-ended" });
   } catch (e) { console.error("Staleness check (valid_to) failed (non-fatal):", e); }
 
-  // 2. Entries with low-confidence incoming edges
   try {
-    const { meta } = await env.DB.prepare(
-      `UPDATE entries SET epistemic_status = 'stale' WHERE id IN (
-        SELECT DISTINCT target_id FROM edges WHERE confidence < ? AND confidence > 0
-      ) AND epistemic_status != 'stale'`
-    ).bind(STALENESS_CONFIDENCE_THRESHOLD).run();
-    if (meta?.changes) console.log(`Staleness: ${meta.changes} entries marked stale (low confidence)`);
+    const { results } = await env.DB.prepare(
+      `SELECT ${projection} FROM entries
+       WHERE id IN (
+         SELECT DISTINCT target_id FROM edges WHERE confidence < ? AND confidence > 0
+       ) AND epistemic_status != 'stale' LIMIT 100`,
+    ).bind(STALENESS_CONFIDENCE_THRESHOLD).all();
+    for (const row of results as Record<string, any>[]) {
+      if (!candidates.has(row.id)) candidates.set(row.id, { row, reason: "low-confidence-evidence" });
+    }
   } catch (e) { console.error("Staleness check (confidence) failed (non-fatal):", e); }
 
-  // 3. Old entries with no recalls
   try {
     const cutoff = now - STALENESS_THRESHOLD_DAYS * 86400000;
-    const { meta } = await env.DB.prepare(
-      `UPDATE entries SET epistemic_status = 'stale' WHERE created_at < ? AND recall_count = 0 AND epistemic_status != 'stale'`
-    ).bind(cutoff).run();
-    if (meta?.changes) console.log(`Staleness: ${meta.changes} entries marked stale (age > ${STALENESS_THRESHOLD_DAYS}d, no recall)`);
+    const { results } = await env.DB.prepare(
+      `SELECT ${projection} FROM entries
+       WHERE created_at < ? AND recall_count = 0 AND epistemic_status != 'stale'
+       LIMIT 100`,
+    ).bind(cutoff).all();
+    for (const row of results as Record<string, any>[]) {
+      if (!candidates.has(row.id)) candidates.set(row.id, { row, reason: "unreinforced-age" });
+    }
   } catch (e) { console.error("Staleness check (age) failed (non-fatal):", e); }
+
+  let marked = 0;
+  for (const { row, reason } of candidates.values()) {
+    if (!row.owner_user_id) continue;
+    try {
+      await commitEntryVersion({
+        kind: "status",
+        actorUserId: row.owner_user_id as string,
+        entryId: row.id as string,
+        expectedRevision: Number(row.revision ?? 0),
+        rawContent: `staleness:${reason}`,
+        materializedContent: row.content as string,
+        tags: JSON.parse(row.tags ?? "[]"),
+        source: row.source as string,
+        validFrom: row.valid_from as number | null,
+        validTo: row.valid_to as number | null,
+        epistemicStatus: "stale",
+      }, env);
+      marked++;
+    } catch (e) {
+      console.error(`Staleness transition failed for ${row.id} (non-fatal):`, e);
+    }
+  }
+  if (marked) console.log(`Staleness: ${marked} entries versioned as stale`);
 }
 
 // ─── Nightly graph maintenance (issue #16) ──────────────────────────────────────
@@ -414,14 +489,14 @@ export async function runGraphPass(env: Env, ctx: ExecutionContext): Promise<voi
   // (2) Backfill: find a bounded batch of entries with no edges yet and link each to
   // its nearest neighbors (same logic as on-write inference). Empty edges table →
   // every entry is unlinked → the graph fills in over successive nightly runs.
-  let unlinked: { id: string; content: string; owner_user_id: string; tags: string }[] = [];
+  let unlinked: { id: string; content: string; owner_user_id: string; tags: string; visibility: string }[] = [];
   try {
     const { results } = await env.DB.prepare(
-      `SELECT id, content, owner_user_id, tags FROM entries
+      `SELECT id, content, owner_user_id, tags, visibility FROM entries
        WHERE id NOT IN (SELECT source_id FROM edges) AND id NOT IN (SELECT target_id FROM edges)
          AND tags NOT LIKE '%"status:deprecated"%'
        ORDER BY created_at DESC LIMIT ${GRAPH_PASS_BACKFILL_LIMIT}`
-    ).all() as { results: { id: string; content: string; owner_user_id: string; tags: string }[] };
+    ).all() as { results: { id: string; content: string; owner_user_id: string; tags: string; visibility: string }[] };
     unlinked = results;
   } catch (e) {
     console.error("Graph backfill query failed (non-fatal):", e);
@@ -432,7 +507,8 @@ export async function runGraphPass(env: Env, ctx: ExecutionContext): Promise<voi
       const entryTags = parseEntryTags(entry.tags);
       if (!entryTags) continue;
 
-      const isPrivate = entryTags.includes("private");
+      const isPrivate = entry.visibility === "private";
+      if (!isPrivate && entry.visibility !== "public") continue;
       const entryOwner = typeof entry.owner_user_id === "string"
         ? entry.owner_user_id
         : "";
@@ -454,7 +530,7 @@ export async function runGraphPass(env: Env, ctx: ExecutionContext): Promise<voi
         // from Vectorize payloads: private↔same-owner-private; public↔public.
         const candidate = entriesById.get(parentId);
         if (!candidate) continue;
-        const candidateIsPrivate = candidate.tags.includes("private");
+        const candidateIsPrivate = candidate.visibility === "private";
         if (isPrivate) {
           if (!candidateIsPrivate || candidate.ownerUserId !== entryOwner) continue;
         } else if (candidateIsPrivate) {
@@ -535,6 +611,17 @@ export async function forgetEntry(id: string, env: Env): Promise<ForgetResult> {
     env.DB.prepare(
       `DELETE FROM edges WHERE source_id = ? OR target_id = ?`
     ).bind(id, id),
+    env.DB.prepare(
+      `DELETE FROM document_sections
+       WHERE document_id IN (
+         SELECT id FROM documents
+         WHERE episode_id IN (SELECT id FROM episodes WHERE entry_id = ?)
+       )`
+    ).bind(id),
+    env.DB.prepare(
+      `DELETE FROM documents
+       WHERE episode_id IN (SELECT id FROM episodes WHERE entry_id = ?)`
+    ).bind(id),
     env.DB.prepare(`DELETE FROM passages WHERE entry_id = ?`).bind(id),
     env.DB.prepare(`DELETE FROM episodes WHERE entry_id = ?`).bind(id),
     env.DB.prepare(`DELETE FROM entry_snapshots WHERE entry_id = ?`).bind(id),
@@ -546,20 +633,36 @@ export async function forgetEntry(id: string, env: Env): Promise<ForgetResult> {
 
 // Deprecate (issue #119): keep the D1 row for audit but make the entry
 // unrecallable by deleting its vectors and tagging it status:deprecated.
-export async function deprecateEntry(id: string, env: Env): Promise<boolean> {
+export async function deprecateEntry(id: string, env: Env, actorUserId?: string): Promise<boolean> {
   const row = await env.DB.prepare(
-    `SELECT tags, vector_ids FROM entries WHERE id = ?`
+    `SELECT content, tags, source, vector_ids, owner_user_id, revision,
+            valid_from, valid_to, epistemic_status
+     FROM entries WHERE id = ?`
   ).bind(id).first() as Record<string, any> | null;
   if (!row) return false;
+  const ownerUserId = row.owner_user_id as string;
+  if (actorUserId && ownerUserId !== actorUserId) return false;
+  if (!ownerUserId) return false;
 
   const tags: string[] = JSON.parse(row.tags ?? "[]");
-  const vectorIds: string[] = JSON.parse(row.vector_ids ?? "[]");
-
-  await env.DB.prepare(`UPDATE entries SET tags = ?, vector_ids = ? WHERE id = ?`)
-    .bind(JSON.stringify(withStatus(tags, "deprecated")), "[]", id).run();
+  const committed = await commitEntryVersion({
+    kind: "status",
+    actorUserId: ownerUserId,
+    entryId: id,
+    expectedRevision: Number(row.revision ?? 0),
+    rawContent: "status:deprecated",
+    materializedContent: row.content as string,
+    tags: withStatus(tags, "deprecated"),
+    source: row.source as string,
+    validFrom: row.valid_from as number | null,
+    validTo: row.valid_to as number | null,
+    epistemicStatus: row.epistemic_status as EpistemicStatus,
+  }, env);
 
   try {
-    if (vectorIds.length) await env.VECTORIZE.deleteByIds(vectorIds);
+    if (committed.vectorIds.length) await env.VECTORIZE.deleteByIds(committed.vectorIds);
+    await env.DB.prepare(`UPDATE entries SET vector_ids = '[]' WHERE id = ? AND revision = ?`)
+      .bind(id, committed.revision).run();
   } catch (e) {
     console.error("Vectorize deleteByIds failed during deprecate (non-fatal):", e);
   }
@@ -568,82 +671,185 @@ export async function deprecateEntry(id: string, env: Env): Promise<boolean> {
 
 // Apply a lifecycle status to an entry (issue #119). 'deprecated' deletes vectors
 // (via deprecateEntry); others swap the status:* tag in place. Returns ok=false if no such entry.
-export async function applyStatus(id: string, status: MemoryStatus, env: Env): Promise<boolean> {
-  if (status === "deprecated") return deprecateEntry(id, env);
-  const row = await env.DB.prepare(`SELECT tags FROM entries WHERE id = ?`).bind(id).first() as Record<string, any> | null;
+export async function applyStatus(id: string, status: MemoryStatus, env: Env, actorUserId?: string): Promise<boolean> {
+  if (status === "deprecated") return deprecateEntry(id, env, actorUserId);
+  const row = await env.DB.prepare(
+    `SELECT content, tags, source, owner_user_id, revision,
+            valid_from, valid_to, epistemic_status
+     FROM entries WHERE id = ?`
+  ).bind(id).first() as Record<string, any> | null;
   if (!row) return false;
+  const ownerUserId = row.owner_user_id as string;
+  if (!ownerUserId || (actorUserId && ownerUserId !== actorUserId)) return false;
   const tags: string[] = JSON.parse(row.tags ?? "[]");
-  await env.DB.prepare(`UPDATE entries SET tags = ? WHERE id = ?`).bind(JSON.stringify(withStatus(tags, status)), id).run();
+  await commitEntryVersion({
+    kind: "status",
+    actorUserId: ownerUserId,
+    entryId: id,
+    expectedRevision: Number(row.revision ?? 0),
+    rawContent: `status:${status}`,
+    materializedContent: row.content as string,
+    tags: withStatus(tags, status),
+    source: row.source as string,
+    validFrom: row.valid_from as number | null,
+    validTo: row.valid_to as number | null,
+    epistemicStatus: row.epistemic_status as EpistemicStatus,
+  }, env);
   return true;
 }
 
 // ─── Nightly cross-user contradiction detection (S06) ─────────────────────────
-// Scans recent public entries and checks for contradictions against other users'
-// entries. Writes proposals to edge_proposals table (deduplicated).
+// Vector similarity only finds candidate pairs. Both endpoints are then
+// re-hydrated and re-authorized from D1 before a strict semantic classifier may
+// create a governed, team-visible action proposal. The scanner can neither
+// approve nor execute the resulting edge.
+const NIGHTLY_CONTRADICTION_SCOPES: readonly ServiceScope[] = [
+  "proposal:create",
+  "audit:write",
+  "run:write",
+];
+
+const NIGHTLY_CONTRADICTION_ACTOR: SystemActorContext = {
+  kind: "system",
+  actorId: NIGHTLY_CONTRADICTION_SYSTEM_ID,
+  systemId: NIGHTLY_CONTRADICTION_SYSTEM_ID,
+  authMethod: "scheduled-worker",
+  scopes: new Set(NIGHTLY_CONTRADICTION_SCOPES),
+};
+
+interface PublicContradictionEntry {
+  id: string;
+  content: string;
+  owner_user_id: string;
+  visibility: string;
+  revision: number;
+  current_episode_id: string | null;
+}
+
+async function hydratePublicContradictionPair(
+  env: Pick<Env, "DB">,
+  firstId: string,
+  secondId: string,
+): Promise<[PublicContradictionEntry, PublicContradictionEntry] | null> {
+  if (!firstId || !secondId || firstId === secondId) return null;
+  const ids = [firstId, secondId].sort();
+  const { results } = await env.DB.prepare(
+    `SELECT id, content, owner_user_id, visibility, revision, current_episode_id
+     FROM entries WHERE id IN (?, ?)`,
+  ).bind(...ids).all<PublicContradictionEntry>();
+  const byId = new Map(results.map(row => [row.id, row]));
+  const left = byId.get(ids[0]);
+  const right = byId.get(ids[1]);
+  if (!left || !right
+      || left.visibility !== "public" || right.visibility !== "public"
+      || !left.owner_user_id || !right.owner_user_id
+      || left.owner_user_id === right.owner_user_id
+      || !left.content.trim() || !right.content.trim()) return null;
+  return [left, right];
+}
+
 export async function detectCrossUserContradictions(env: Env): Promise<{ scanned: number; proposals: number }> {
+  await initializeDatabase(env);
   const SEVEN_DAYS_AGO = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  const CONTRADICTION_THRESHOLD = 0.85;
+  const CANDIDATE_SIMILARITY_THRESHOLD = 0.85;
   const MAX_ENTRIES = 25;
 
-  // Fetch recent public entries (exclude private)
   const { results: recentEntries } = await env.DB.prepare(
-    `SELECT id, content, owner_user_id FROM entries WHERE created_at >= ? AND tags NOT LIKE '%"private"%' ORDER BY created_at DESC LIMIT ?`
-  ).bind(SEVEN_DAYS_AGO, MAX_ENTRIES).all() as { results: { id: string; content: string; owner_user_id: string }[] };
+    `SELECT id, content, owner_user_id FROM entries
+     WHERE created_at >= ? AND visibility = 'public'
+     ORDER BY created_at DESC LIMIT ?`,
+  ).bind(SEVEN_DAYS_AGO, MAX_ENTRIES).all<{
+    id: string;
+    content: string;
+    owner_user_id: string;
+  }>();
 
   let scanned = 0;
   let proposals = 0;
+  const consideredVersions = new Set<string>();
 
-  for (const entry of recentEntries) {
+  for (const candidateSource of recentEntries) {
     try {
-      // The SQL predicate is a candidate reduction only. Re-authorize the
-      // source against D1 so malformed tags never become implicitly public.
-      const sourceMetadata = await env.DB.prepare(
-        `SELECT tags, owner_user_id FROM entries WHERE id = ?`
-      ).bind(entry.id).first<{ tags: string; owner_user_id: string }>();
-      const sourceTags = parseEntryTags(sourceMetadata?.tags);
-      if (!sourceMetadata || !sourceTags || sourceTags.includes("private")) continue;
-      const sourceOwnerId = typeof sourceMetadata.owner_user_id === "string"
-        ? sourceMetadata.owner_user_id
-        : "";
-      if (!sourceOwnerId) continue;
+      const source = await env.DB.prepare(
+        `SELECT id, content, owner_user_id, visibility, revision, current_episode_id
+         FROM entries WHERE id = ?`,
+      ).bind(candidateSource.id).first<PublicContradictionEntry>();
+      if (!source || source.visibility !== "public" || !source.owner_user_id || !source.content.trim()) continue;
 
       scanned++;
-      const entryVec = await embed(entry.content, env);
-      // Public-only query. The helper uses Vectorize's supported `filter`
-      // option and then authorizes every parent entry against D1.
+      const entryVec = await embed(source.content, env);
       const { matches, entriesById } = await queryVisibleVectors(entryVec, env, { topK: 5 });
 
       for (const match of matches) {
+        if ((match.score ?? 0) < CANDIDATE_SIMILARITY_THRESHOLD) continue;
         const matchEntryId = vectorMatchParentId(match);
         const matchScope = entriesById.get(matchEntryId);
-        if (!matchScope || matchScope.tags.includes("private")) continue;
-        const matchOwnerId = matchScope.ownerUserId;
-        if (!matchOwnerId || matchOwnerId === sourceOwnerId) continue;
-        if (matchEntryId === entry.id) continue;
-        if ((match.score ?? 0) < CONTRADICTION_THRESHOLD) continue;
+        if (!matchScope || matchScope.visibility !== "public"
+            || matchScope.ownerUserId === source.owner_user_id
+            || matchEntryId === source.id) continue;
 
-        // Dedup: check if proposal already exists
+        // Hydrate both current statements together from authoritative D1.
+        // Vector payloads and the earlier source row are candidate hints only.
+        const pair = await hydratePublicContradictionPair(env, source.id, matchEntryId);
+        if (!pair) continue;
+        const [left, right] = pair;
+        const versionIdentity = `${left.id}@${left.revision}|${right.id}@${right.revision}`;
+        if (consideredVersions.has(versionIdentity)) continue;
+        consideredVersions.add(versionIdentity);
+
+        const idempotencyKey = `nightly-contradiction:${await sha256Hex(versionIdentity)}`;
         const existing = await env.DB.prepare(
-          `SELECT id FROM edge_proposals WHERE source_id = ? AND target_id = ? AND type = 'contradicts' AND status = 'pending'`
-        ).bind(matchEntryId, entry.id).first();
+          `SELECT id FROM action_proposals WHERE idempotency_key = ?`,
+        ).bind(idempotencyKey).first<{ id: string }>();
         if (existing) continue;
 
-        const proposalId = crypto.randomUUID();
-        const now = Date.now();
-        await env.DB.prepare(
-          `INSERT INTO edge_proposals (id, source_id, target_id, type, reason, proposed_by, status, created_at) VALUES (?, ?, ?, 'contradicts', ?, ?, 'pending', ?)`
-        ).bind(
-          proposalId,
-          matchEntryId,
-          entry.id,
-          `Nightly contradiction scan (similarity: ${(match.score * 100).toFixed(0)}%)`,
-          "_nightly_scan",
-          now,
-        ).run();
+        const classification = await classifyStrictContradiction(
+          { id: left.id, content: left.content, ownerUserId: left.owner_user_id },
+          { id: right.id, content: right.content, ownerUserId: right.owner_user_id },
+          env,
+        );
+        if (!classification.confirmed) continue;
+
+        const similarity = Number(match.score.toFixed(6));
+        const evidence = {
+          kind: "strict-contradiction-classification",
+          model: LLM_MODEL,
+          confidence: classification.confidence,
+          candidateSimilarity: similarity,
+          reason: classification.reason,
+          left: { entryId: left.id, revision: left.revision, quote: classification.leftQuote },
+          right: { entryId: right.id, revision: right.revision, quote: classification.rightQuote },
+        };
+        await createActionProposal(env, {
+          actor: NIGHTLY_CONTRADICTION_ACTOR,
+          actionType: "edge.publish",
+          payload: {
+            sourceId: left.id,
+            targetId: right.id,
+            type: "contradicts",
+            confidence: classification.confidence,
+            weight: classification.confidence,
+            // Public edge execution only needs a stable proposal subject. The
+            // authoritative endpoint owners remain in expected preconditions.
+            ownerUserId: left.owner_user_id,
+            metadata: {
+              detector: NIGHTLY_CONTRADICTION_SYSTEM_ID,
+              candidateSimilarity: similarity,
+              classificationReason: classification.reason,
+            },
+          },
+          targetIds: [left.id, right.id],
+          visibilityScope: "team",
+          riskLevel: "medium",
+          reason: `Confirmed contradiction: ${classification.reason}`,
+          evidence: [evidence],
+          idempotencyKey,
+          correlationId: idempotencyKey,
+        });
         proposals++;
       }
     } catch (e) {
-      console.error(`Contradiction scan failed for entry ${entry.id} (non-fatal):`, e);
+      console.error(`Contradiction scan failed for entry ${candidateSource.id} (non-fatal):`, e);
     }
   }
 
