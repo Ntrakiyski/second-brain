@@ -130,6 +130,19 @@ The dashboard supports:
 - service identity management for administrators;
 - proposal and awareness inbox surfaces.
 
+### Agent skills
+
+This repo includes practical skill files that humans can hand to Codex, Hermes, or another MCP-connected agent:
+
+- [Second Brain MCP Knowledgebase](.agents/skills/second-brain-mcp-knowledgebase/SKILL.md) — how to use Second Brain through MCP as a governed team knowledgebase.
+- [Hermes Domain Profile](.agents/skills/hermes-domain-profile/SKILL.md) — how to turn “build a scheduled job for X” into a safe domain-agent profile.
+
+These skills are meant to reduce setup friction. The human should be able to tell Hermes:
+
+> Read the Hermes Domain Profile skill and let's build a scheduled job for `<domain or goal>`.
+
+Then Hermes can help define sources, cadence, scopes, outputs, proposal behavior, and safety limits without needing direct storage access.
+
 ### MCP clients
 
 Use Second Brain from any MCP-compatible client. Requests are scoped by deployment token plus user credentials.
@@ -261,6 +274,17 @@ Service/operator tool availability depends on the service identity’s scopes an
 - `GET /health`
 - scheduled cron for graph/compression/integration/audit cleanup work
 - local Workerd smoke script in [scripts/smoke-workerd.sh](scripts/smoke-workerd.sh)
+
+## Future product layer: translation between mental maps
+
+The foundation is the shared knowledge layer. The next product layer is translation: helping one person or agent understand another person's knowledge in their own context.
+
+Planned features:
+
+- **Opportunity mapping:** when a human or agent captures a discovery, the system maps it to related people, projects, domains, and possible use cases.
+- **Personalized explanation:** the same knowledge can be explained differently for Nikolay, Goria, a research scout, an engineering agent, or a quality critic based on their context and goals.
+
+These features should build on the existing provenance, visibility, graph, recall, proposal, and audit foundations. They should not become a separate studio workflow inside this repository.
 
 ## Local development
 
